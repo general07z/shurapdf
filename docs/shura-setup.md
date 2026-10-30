@@ -73,6 +73,20 @@ CRAFT_FONTS_DIR=../craft-fonts cargo run -p pdfcraft --release
 
 In the app, go to **File ▸ Create ▸ Create PDF from Word…**, or **All tools ▸ Create ▸ Word document**.
 
+A **Council build** that starts in Arabic for every user, whatever their Windows language (users can still change it in Preferences):
+
+```bash
+PDFCRAFT_DEFAULT_LANGUAGE=ar CRAFT_FONTS_DIR=../craft-fonts cargo build -p pdfcraft --release
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PDFCRAFT_DEFAULT_LANGUAGE="ar"; $env:CRAFT_FONTS_DIR="..\craft-fonts"; cargo build -p pdfcraft --release
+```
+
+`CRAFT_FONTS_DIR` matters for Arabic: without it the build has no Arabic face for text you add to a PDF (Word conversion uses the system fonts and doesn't need it).
+
 To convert from the command line without the app:
 
 ```bash

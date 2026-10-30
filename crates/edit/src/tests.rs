@@ -7557,3 +7557,49 @@ fn q_inside_a_text_object_restores_the_text_matrices() {
         assert_eq!((lines[0].text.as_str(), lines[0].baseline()), ("Edited", baseline), "{content} after editing");
     }
 }
+
+/// W7: added Arabic text follows Bold and Italic. The script's face has one weight, so bold is
+/// synthetic, as in WordCraft and Word: each Type 3 glyph is filled and stroked (`B`) with a line
+/// 3% of the size, its box grown by half that; italic leans the text matrix by 0.21. Regular text
+/// is drawn as before (`f`, an upright matrix), and the text maps back the same for copy/search.
+#[test]
+fn added_arabic_text_follows_bold_and_italic() {
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping the Arabic bold/italic checks: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let drawn = |bold: bool, italic: bool| {
+        let mut doc = fixture();
+        let text =
+            AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "مجلس الشورى".into(), size: 20.0, bold, italic, ..AddedText::default() };
+        add_content(&mut doc, 0, &Content::Text(text)).unwrap();
+        let doc = reopen(&doc);
+        let Content::Text(t) = &list_added(&doc)[0].content else { panic!() };
+        assert_eq!((t.text.as_str(), t.bold, t.italic), ("مجلس الشورى", bold, italic), "kept for editing");
+        let page = streams(&doc, 0).into_iter().find(|s| s.contains("/PCAr")).unwrap();
+        let p = &pdfcraft_model::pages(&doc)[0];
+        let res = doc.resolve(p.dict.get(b"Resources").unwrap());
+        let fonts = doc.resolve(res.as_dict().unwrap().get(b"Font").unwrap()).as_dict().unwrap().clone();
+        let font = fonts.iter().find(|(k, _)| k.starts_with(b"PCAr")).map(|(_, v)| doc.resolve(v).as_dict().unwrap().clone()).unwrap();
+        let procs = doc.resolve(font.get(b"CharProcs").unwrap()).as_dict().unwrap().clone();
+        let glyphs: Vec<String> = procs.iter().map(|(_, v)| String::from_utf8_lossy(&stream_bytes(&doc, v).unwrap()).into_owned()).collect();
+        let cmap = String::from_utf8_lossy(&stream_bytes(&doc, font.get(b"ToUnicode").unwrap()).unwrap()).into_owned();
+        (page, glyphs, cmap)
+    };
+    let (page, glyphs, cmap) = drawn(false, false);
+    assert!(page.contains(" 1 0 0 1 "), "upright: {page}");
+    assert!(glyphs.iter().filter(|g| g.contains(" m\n")).all(|g| g.ends_with("f\n") && !g.contains(" w 1 j")), "{glyphs:?}");
+    let (bold_page, bold_glyphs, bold_cmap) = drawn(true, false);
+    assert!(bold_page.contains("0 0 0 rg 0 0 0 RG"), "the stroke takes the text colour: {bold_page}");
+    assert!(bold_glyphs.iter().filter(|g| g.contains(" m\n")).all(|g| g.contains("30 w 1 j\n") && g.ends_with("B\n")), "{bold_glyphs:?}");
+    assert_eq!(bold_cmap, cmap, "bold copies and searches the same");
+    let (italic_page, italic_glyphs, italic_cmap) = drawn(false, true);
+    assert!(italic_page.contains("1 0 0.21 1 "), "{italic_page}");
+    assert!(italic_glyphs.iter().filter(|g| g.contains(" m\n")).all(|g| g.ends_with("f\n")));
+    assert_eq!(italic_cmap, cmap);
+    // A bold glyph's box is the regular one grown by half the stroke on every side.
+    let d1 = |g: &String| -> Vec<f64> { g.lines().next().unwrap().split(' ').skip(2).take(4).map(|v| v.parse().unwrap()).collect() };
+    let (plain, heavy) = (glyphs.iter().find(|g| g.contains(" m\n")).unwrap(), bold_glyphs.iter().find(|g| g.contains(" m\n")).unwrap());
+    let (a, b) = (d1(plain), d1(heavy));
+    assert!(b[0] <= a[0] - 15.0 && b[1] <= a[1] - 15.0 && b[2] >= a[2] + 15.0 && b[3] >= a[3] + 15.0, "{a:?} → {b:?}");
+}
