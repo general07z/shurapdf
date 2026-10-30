@@ -14,6 +14,7 @@ This fork of PdfCraft targets an Arabic-first Acrobat Pro replacement. Upstream 
 - **Never commit fonts**, including Windows Arabic fonts (Simplified Arabic, Traditional Arabic, Sakkal Majalla). Use system fonts at runtime and craft-fonts at build time.
 - **No Adobe branding.** The UI follows Acrobat's layout, but never its icons, names or images.
 - Fork PRs target this fork's `main`. Upstream-worthy, general fixes go as a separate PR to `storytold/pdfcraft`.
+- **One fork workflow:** `.github/workflows/shura-windows.yml` builds, signs and releases the Council's Windows packages through `packaging/windows/package.ps1`. It is the single exception to upstream's "CI only through craft-common-actions" rule below; change it only in its own PR. Signing secrets and certificates follow `docs/code-signing.md`: never in the repository.
 
 ## After every item
 - Tick it in `docs/arabic-gaps.md` and update the matching `parity/acrobat-features.toml` entry, with honest notes.
