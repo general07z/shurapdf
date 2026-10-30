@@ -440,6 +440,18 @@ impl Lang {
     }
 }
 
+/// The `language` preference of a fresh install: the build's `PDFCRAFT_DEFAULT_LANGUAGE` (set at
+/// compile time, e.g. `ar` for an organisation whose users read Arabic whatever their Windows
+/// language is), else [`AUTO`]. Saved settings override it; an unknown code means [`AUTO`].
+pub fn default_pref() -> &'static str {
+    default_pref_from(option_env!("PDFCRAFT_DEFAULT_LANGUAGE"))
+}
+
+/// [`default_pref`] for a given build setting.
+pub(crate) fn default_pref_from(setting: Option<&str>) -> &'static str {
+    setting.map(str::trim).and_then(normalize_pref).unwrap_or(AUTO)
+}
+
 /// The canonical `language` preference for user input: [`AUTO`] or a registered code (any case).
 /// `None` for anything else, so callers can keep the current setting.
 pub fn normalize_pref(pref: &str) -> Option<&'static str> {

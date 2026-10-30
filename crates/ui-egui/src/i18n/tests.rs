@@ -1217,3 +1217,16 @@ fn date_languages_are_the_interface_languages() {
     let dates: Vec<(&str, &str)> = pdfcraft_engine::dates::DATE_LANGUAGES.iter().map(|l| (l.code, l.name)).collect();
     assert_eq!(dates, interface);
 }
+
+/// W8: a build can make another language the default for fresh installs
+/// (`PDFCRAFT_DEFAULT_LANGUAGE=ar`); unset, empty or unknown keeps Auto.
+#[test]
+fn a_build_can_default_to_arabic() {
+    assert_eq!(default_pref_from(Some("ar")), "ar");
+    assert_eq!(default_pref_from(Some(" AR ")), "ar");
+    assert_eq!(default_pref_from(Some("auto")), AUTO);
+    assert_eq!(default_pref_from(Some("")), AUTO);
+    assert_eq!(default_pref_from(Some("xx-unknown")), AUTO);
+    assert_eq!(default_pref_from(None), AUTO);
+    assert_eq!(Lang::from_pref(default_pref_from(Some("ar"))).code(), "ar");
+}

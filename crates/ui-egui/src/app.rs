@@ -67,7 +67,7 @@ impl PdfCraftApp {
             scroll_speed: scroll_speed::ScrollSpeed::default(),
             animation_effects: motion::AnimationEffects::default(),
             motion: motion::Motion::default(),
-            language: i18n::AUTO.to_string(),
+            language: i18n::default_pref().to_string(),
             ui_scale: None,
             system_text_scale: 1.0,
             ui_scale_applied: None,

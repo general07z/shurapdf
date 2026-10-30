@@ -26,7 +26,7 @@
 | Read, search and copy Arabic from existing PDFs | ✅ | `create.text-extraction` |
 | Arabic in Word → PDF | ✅ shaped RTL, tables, headers, Arabic-Indic digits, heading bookmarks (synthetic tests) | `create.from-office` |
 | **Typing** right-to-left inside the text box (caret moves RTL) | ❌ | `misc.rtl-ui` |
-| Bold/italic for added Arabic text | ❌ (regular only) | `edit.add-text` notes |
+| Bold/italic for added Arabic text | ✅ synthetic bold (fill + stroke) and italic (slant), as Word draws a one-weight face | `edit.add-text` |
 | **Edit existing** Arabic text in a PDF (retype a paragraph) | 🟡 partial | `edit.rtl-cjk-editing` |
 | Arabic caret and selection while editing | ❌ | `edit.rtl-cjk-editing` |
 | Arabic fallback font when the PDF's font lacks a letter | ❌ | `edit.rtl-cjk-editing` |
@@ -40,12 +40,12 @@
 - [ ] **W2** Test W1 on 10 real (non-confidential) Council documents: Arabic letters, tables, headers/footers, page numbers, Arabic-Indic digits, logos. Save **synthetic** copies as regression fixtures, never real documents. *Synthetic part done:* `rich_arabic_docx` (heading, mixed Arabic/Latin/digits, RTL table, header on two pages). **Needs the owner:** convert real documents with `pdfcraft-cli combine in.docx in.docx --out x.pdf` or the app and report what looks wrong.
 - [x] **W3** Combine accepts `.docx`: `SourceKind::Word` in `pdfcraft-create`, so Combine Files, Create multiple, Add folder, File ▸ Open and batch convert all take Word documents.
 - [x] **W4** Automation: `doc_create` `from: "word"` (with `password`), `doc_create_multiple` and batch `convert` take `.docx`; `pdfcraft-cli combine` takes `.docx`.
-- [ ] **W5** RTL typing in the Add Text box: the caret, Backspace/Delete, Home/End and arrow keys follow visual order (`misc.rtl-ui`). Start from WordCraft's RTL caret code (it already handles Arabic Backspace, #4757).
-- [ ] **W6** Edit existing Arabic paragraphs: shaping when retyping, plus a fallback to the craft-fonts Arabic face (`edit.rtl-cjk-editing`).
-- [ ] **W7** Bold Arabic in added text (synthetic bold like WordCraft's fill+stroke, or a bold Arabic face from craft-fonts).
-- [ ] **W8** Default the interface language to Arabic for Council builds, then do a full RTL UI review with screenshots (`pdfcraft-cli ui … screenshot`).
-- [ ] **W9** Arabic fonts the Council actually uses (Simplified Arabic, Traditional Arabic, Sakkal Majalla). These are Windows system fonts and **must not be committed**. Check that WordCraft picks them up from the system on Windows.
-- [ ] **W10** Windows installer + internal deployment (packaging/ has the recipes).
+- [ ] **W5** RTL typing in the Add Text box: the caret, Backspace/Delete, Home/End and arrow keys follow visual order (`misc.rtl-ui`). Start from WordCraft's RTL caret code (it already handles Arabic Backspace, #4757). *Assessed 2026-10-30:* a large change in `ui-egui` (the most contested crate upstream); also mirror the layout — the Arabic screenshot shows the All tools panel on the left and the menus starting at the left. Do it as its own series of PRs, checked with `cargo run -p pdfcraft-ui-egui --example shot -- out.png file.pdf --language ar` (needs a GPU or Mesa lavapipe).
+- [ ] **W6** Edit existing Arabic paragraphs: shaping when retyping, plus a fallback to the craft-fonts Arabic face (`edit.rtl-cjk-editing`). *Assessed:* large (the existing-text editor in `crates/edit`); after W5, which it shares the caret work with.
+- [x] **W7** Bold and italic Arabic (also Hebrew, Thai) in added text: synthetic bold (fill + stroke, 3% of the size) and italic (0.21 slant), as WordCraft and Word do. A real bold Arabic face (craft-fonts has Regular only) would look better still.
+- [x] **W8** Council builds default to Arabic: build with `PDFCRAFT_DEFAULT_LANGUAGE=ar` and a fresh install starts in Arabic whatever the Windows language (saved settings still win; Preferences ▸ Language can change it). RTL review done by screenshot: text and translation good, "Window" menu translated; the layout is not mirrored yet (moved to W5).
+- [ ] **W9** Arabic fonts the Council actually uses (Simplified Arabic, Traditional Arabic, Sakkal Majalla). These are Windows system fonts and **must not be committed**. *Code checked:* WordCraft reads `%WINDIR%\Fonts` and `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and matches a document's font by name, so these resolve on Council PCs. **Needs the owner:** on a Council PC, convert a .docx set in Simplified Arabic and run `pdffonts` (or File ▸ Properties ▸ Fonts) on the PDF: the font must say SimplifiedArabic, embedded.
+- [ ] **W10** Windows installer + internal deployment (packaging/ has the recipes). **Needs the owner:** enable GitHub Actions on general07z/shurapdf (Settings ▸ Actions ▸ General ▸ Allow all actions), then the release workflow can build the Windows installer; set `PDFCRAFT_DEFAULT_LANGUAGE=ar` in it for Council builds. Deployment (Intune/SCCM, code signing certificate) is an ICT decision.
 
 ## Definition of done for any item
 

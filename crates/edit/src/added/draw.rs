@@ -15,6 +15,15 @@ fn font_name(base: &str) -> String {
 /// per 240 distinct glyphs it needs.
 pub(super) const GLYPHS_PER_FONT: usize = 240;
 
+/// Synthetic bold for shaped scripts (whose faces have one weight): each glyph is filled and
+/// stroked with a line this wide, in glyph space (1000 units per em), as WordCraft and Word do
+/// (3% of the font size).
+pub(super) const SYNTHETIC_BOLD_STROKE: f64 = 30.0;
+
+/// Synthetic italic for shaped scripts: the text matrix leans glyphs right by this much per unit
+/// of height (WordCraft's and Word's slant, about 12°).
+pub(super) const SYNTHETIC_ITALIC_SKEW: f64 = 0.21;
+
 /// A line of a shaped-text item after layout: its text, whether its paragraph runs right to left,
 /// its pieces in drawing order and its width at the item's size.
 pub(super) type LaidLine = (String, bool, Vec<Piece>, f64);
@@ -74,7 +83,7 @@ pub(super) fn draw_laid_shaped(
     let mut taken_names: HashSet<Vec<u8>> = taken.iter().chain(fonts.iter()).map(|(name, _)| name.clone()).collect();
     let mut names = Vec::new();
     for chunk in keys.chunks(GLYPHS_PER_FONT) {
-        let font = type3_shaped(doc, chunk, &outlines);
+        let font = type3_shaped(doc, chunk, &outlines, t.bold);
         // A name no font on the page has, so items never replace each other's fonts (object
         // numbers alone don't do: a full save renumbers objects but keeps resource names).
         let mut name = format!("PCAr{}", font.num);
@@ -88,7 +97,14 @@ pub(super) fn draw_laid_shaped(
         names.push(name);
     }
     let [cr, cg, cb] = t.color.map(|v| v.clamp(0.0, 1.0));
-    out.extend(format!("BT {} {} {} rg\n", n(cr), n(cg), n(cb)).bytes());
+    out.extend(format!("BT {} {} {} rg", n(cr), n(cg), n(cb)).bytes());
+    if t.bold {
+        // Bold shaped glyphs are filled and stroked, and an uncoloured Type 3 glyph strokes with
+        // the current stroke colour: the text colour.
+        out.extend(format!(" {} {} {} RG", n(cr), n(cg), n(cb)).bytes());
+    }
+    out.push(b'\n');
+    let skew = if t.italic { SYNTHETIC_ITALIC_SKEW } else { 0.0 };
     if t.char_spacing != 0.0 {
         out.extend(format!("{} Tc\n", n(t.char_spacing)).bytes());
     }
@@ -129,7 +145,7 @@ pub(super) fn draw_laid_shaped(
                             out.extend(format!("/{name} {} Tf ", n(t.size)).bytes());
                             current = Some(name.as_str());
                         }
-                        out.extend(format!("1 0 0 1 {} {} Tm ", n(pen), n(y)).bytes());
+                        out.extend(format!("1 0 {} 1 {} {} Tm ", n(skew), n(pen), n(y)).bytes());
                         out.extend(literal(&[code]));
                         out.extend_from_slice(b" Tj\n");
                         pen += c.advance * t.size + t.char_spacing + if c.text == " " { tw } else { 0.0 };
@@ -152,7 +168,9 @@ fn cluster_key(c: &ShapedCluster) -> ClusterKey<'_> {
 }
 
 /// A Type 3 font with `clusters` as codes 1…, each drawn from its script face's glyph `outlines`.
-fn type3_shaped(doc: &mut Document, clusters: &[&ShapedCluster], outlines: &HashMap<(ShapedScript, u32), GlyphOutline>) -> ObjRef {
+fn type3_shaped(doc: &mut Document, clusters: &[&ShapedCluster], outlines: &HashMap<(ShapedScript, u32), GlyphOutline>, bold: bool) -> ObjRef {
+    // A bold glyph's stroke reaches half its width past the outline.
+    let grow = if bold { SYNTHETIC_BOLD_STROKE / 2.0 } else { 0.0 };
     let mut charprocs = Dict::new();
     let mut differences = vec![Object::Int(1)];
     let mut widths = Vec::with_capacity(clusters.len());
@@ -175,13 +193,18 @@ fn type3_shaped(doc: &mut Document, clusters: &[&ShapedCluster], outlines: &Hash
             }
         }
         // Rounded outwards so no ink is clipped.
-        let [x0, y0, x1, y1] =
-            ink.map_or([0.0; 4], |b| [(b[0] * 1000.0).floor(), (b[1] * 1000.0).floor(), (b[2] * 1000.0).ceil(), (b[3] * 1000.0).ceil()]);
+        let [x0, y0, x1, y1] = ink.map_or([0.0; 4], |b| {
+            [(b[0] * 1000.0 - grow).floor(), (b[1] * 1000.0 - grow).floor(), (b[2] * 1000.0 + grow).ceil(), (b[3] * 1000.0 + grow).ceil()]
+        });
         bbox = [bbox[0].min(x0), bbox[1].min(y0), bbox[2].max(x1), bbox[3].max(y1)];
         let mut proc = format!("{} 0 {} {} {} {} d1\n", n(c.advance * 1000.0), n(x0), n(y0), n(x1), n(y1)).into_bytes();
         if !paths.is_empty() {
+            if bold {
+                proc.extend(format!("{} w 1 j\n", n(SYNTHETIC_BOLD_STROKE)).bytes());
+            }
             proc.extend(paths);
-            proc.extend_from_slice(b"f\n");
+            // Fill and stroke for bold (B), with the nonzero rule like f.
+            proc.extend_from_slice(if bold { b"B\n" } else { b"f\n" });
         }
         let glyph = format!("g{code:02X}");
         charprocs.set(glyph.clone().into_bytes(), Object::Ref(doc.add(Object::Stream(Stream::flate(Dict::new(), &proc)))));

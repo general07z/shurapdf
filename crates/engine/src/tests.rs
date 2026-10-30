@@ -9158,3 +9158,45 @@ fn a_broken_word_file_is_refused_by_name() {
     assert!(matches!(&err, EditError::Source(m) if m.starts_with("broken.docx: could not read the Word file")), "{err:?}");
     assert!(s.as_pdf("broken.docx", &junk).is_err());
 }
+
+/// W7: bold added Arabic is visibly heavier and italic visibly leans, while every style still
+/// copies the same text.
+#[test]
+fn added_arabic_bold_and_italic_render_and_extract() {
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    // Dark pixels per row band: (upper half, lower half) leftmost dark x, and the total.
+    let render = |bold: bool, italic: bool| {
+        let (mut s, id) = session_with(1);
+        let text =
+            AddedText { rect: [10.0, 200.0, 190.0, 260.0], text: "مجلس الشورى".into(), size: 24.0, bold, italic, ..AddedText::default() };
+        s.apply(id, Edit::AddText { page: 0, text }).unwrap();
+        assert!(page_texts(&s, id)[0].contains("مجلس الشورى"), "{bold} {italic}");
+        let r = render_page(&s, id);
+        let dark: Vec<(u32, u32)> = (0..r.height)
+            .flat_map(|y| (0..r.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let p = stamp_pixel(&r, x, y);
+                p[3] > 0 && p[0] < 100
+            })
+            .collect();
+        dark
+    };
+    let regular = render(false, false);
+    let bold = render(true, false);
+    let italic = render(false, true);
+    assert!(!regular.is_empty());
+    assert!(bold.len() as f64 > regular.len() as f64 * 1.15, "bold ink {} vs regular {}", bold.len(), regular.len());
+    // Lean: in the italic rendering the ink's mean x moves right as it rises (y goes down).
+    let lean = |ink: &[(u32, u32)]| {
+        let mid = ink.iter().map(|p| p.1 as f64).sum::<f64>() / ink.len() as f64;
+        let mean = |upper: bool| {
+            let v: Vec<f64> = ink.iter().filter(|p| ((p.1 as f64) < mid) == upper).map(|p| p.0 as f64).collect();
+            v.iter().sum::<f64>() / v.len() as f64
+        };
+        mean(true) - mean(false)
+    };
+    assert!(lean(&italic) > lean(&regular) + 1.0, "italic {} vs regular {}", lean(&italic), lean(&regular));
+}
