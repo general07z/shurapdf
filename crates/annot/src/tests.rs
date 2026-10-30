@@ -1456,6 +1456,52 @@ fn comment_text_the_standard_fonts_cannot_draw_is_kept_and_marked() {
     assert_eq!(text(&list(&doc, 0)[t], b"Contents"), "签名");
 }
 
+/// Arabic Fill & Sign text and text boxes are shaped with the craft-fonts face and drawn as
+/// outlines, right to left and starting at the right edge, instead of `?`: the comment is not
+/// marked undrawn, each line carries its typed text as /ActualText (copy and search order), and
+/// Latin words and European digits stay Helvetica text. Without the face (a build without
+/// CRAFT_FONTS_DIR) it is drawn with `?` and marked, as before.
+#[test]
+fn arabic_comment_text_is_shaped_not_question_marks() {
+    let mut doc = fixture();
+    let mark = |doc: &Document, i: usize| pdfcraft_fonts::undrawn_mark(&list(doc, 0)[i]);
+    let typed = Shape::Typewriter { rect: [100.0, 700.0, 400.0, 716.0], font_size: 11.0 };
+    let f = add_annotation(
+        &mut doc,
+        &NewAnnotation {
+            page: 0, style: Style::default_for(&typed), shape: typed, contents: "مجلس الشورى 2026 Law".into(), author: "Ada".into()
+        },
+        &meta("x"),
+    )
+    .unwrap();
+    let mut boxed = new(0, Shape::TextBox { rect: [100.0, 500.0, 400.0, 600.0], font_size: 12.0 });
+    boxed.contents = "البند الأول\nالقرار ٣ (موافقة)".into();
+    let t = add_annotation(&mut doc, &boxed, &meta("t")).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(text(&list(&doc, 0)[f], b"Contents"), "مجلس الشورى 2026 Law", "stored as typed");
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping the shaped drawing checks: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        assert_eq!(mark(&doc, f), Some('م'));
+        return;
+    }
+    assert_eq!((mark(&doc, f), mark(&doc, t)), (None, None));
+    let hex = |s: &str| -> String { s.encode_utf16().map(|u| format!("{u:04X}")).collect() };
+    let sign = ap_content(&doc, &list(&doc, 0)[f]);
+    assert!(sign.contains(&format!("/ActualText <FEFF{}>", hex("مجلس الشورى 2026 Law"))), "{sign}");
+    assert!(sign.contains("(2026) Tj") && sign.contains("(Law) Tj"), "Latin pieces stay text: {sign}");
+    assert!(!sign.contains('?'), "nothing drawn as ?: {sign}");
+    assert!(sign.matches("f\n").count() >= 8, "the Arabic letters are filled outlines: {sign}");
+    assert!(sign.find("(Law) Tj").unwrap() < sign.find("(2026) Tj").unwrap(), "drawn right to left: {sign}");
+    let boxed = ap_content(&doc, &list(&doc, 0)[t]);
+    assert_eq!(boxed.matches("/ActualText").count(), 2, "one span per line: {boxed}");
+    assert!(boxed.contains(&hex("القرار ٣ (موافقة)")), "Arabic-Indic digit kept: {boxed}");
+    // Right-to-left text is added right aligned (/Q 2), so its first outline is right of centre.
+    assert_eq!(list(&doc, 0)[t].int(b"Q"), Some(2));
+    let first_move = boxed.lines().find(|l| l.ends_with(" m")).unwrap();
+    let x: f64 = first_move.split(' ').next().unwrap().parse().unwrap();
+    assert!(x > 250.0, "right aligned: {first_move}");
+}
+
 /// Content edits rebuild the display copy on every commit but leave annotations alone: the
 /// cached appearance is drawn once and reused after that, byte-identical.
 #[test]

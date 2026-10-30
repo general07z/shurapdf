@@ -778,7 +778,16 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
         Some((o, enc)) => (da.font.clone(), o, enc),
         None => ("Helv".to_string(), helvetica(), FontText::WinAnsi),
     };
-    let width_of = |text: &str, size: f64| enc.width(text, size);
+    // Arabic, Hebrew or Thai the font can't hold is shaped and drawn as outlines (pdfcraft_fonts::visual_line::Shaper),
+    // when this build has the faces; otherwise it is drawn as `?`, as before.
+    let shaper =
+        (matches!(f.kind, FieldKind::Text | FieldKind::Combo) && !f.is_comb() && !f.has(flags::PASSWORD) && enc.first_unencodable(&text).is_some())
+            .then(|| pdfcraft_fonts::visual_line::Shaper::for_text(&text))
+            .flatten();
+    let width_of = |text: &str, size: f64| match shaper {
+        Some(s) => s.width(text, size),
+        None => enc.width(text, size),
+    };
     let (mut c, bw) = frame(doc, &wd, width, height);
     let pad = 2.0 + bw;
     let inner_w = (width - 2.0 * pad).max(1.0);
@@ -786,9 +795,16 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
     let mut body: Vec<u8> = Vec::new();
     // The first character drawn that the font can't hold (drawn as `?`), for the caller to report.
     let mut unencodable: Option<char> = None;
-    let mut show = |body: &mut Vec<u8>, x: f64, y: f64, text: &str| {
+    let mut show = |body: &mut Vec<u8>, x: f64, y: f64, text: &str, size: f64| {
         // A line break in a single-line value is a space, as in viewers (multiline text is split).
         let text: String = text.chars().map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c }).collect();
+        if let Some(s) = shaper {
+            if unencodable.is_none() {
+                unencodable = s.first_unencodable(&text);
+            }
+            s.draw(body, &text, [x, y], size, &font_name, &da.color);
+            return;
+        }
         if unencodable.is_none() {
             unencodable = enc.first_unencodable(&text);
         }
@@ -821,7 +837,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                 if values.contains(export) {
                     c.push_str(&format!("0.6 0.75 0.86 rg\n{} {} {} {} re f\n", n(bw), n(y - line), n(width - 2.0 * bw), n(line)));
                 }
-                show(&mut body, pad, y - line + size * 0.25, display);
+                show(&mut body, pad, y - line + size * 0.25, display, size);
                 y -= line;
             }
         }
@@ -842,7 +858,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                     if y - 0.207 * size >= bw - 0.01 {
                         room += 1;
                     }
-                    show(&mut body, x_for(line, size), y, line);
+                    show(&mut body, x_for(line, size), y, line, size);
                     y -= size * 1.15;
                 }
                 if room < lines.len() {
@@ -872,14 +888,14 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
                     c.push_str(&comb_dividers(doc, &wd, width, height, cells));
                     for (i, ch) in text.chars().take(cells).enumerate() {
                         let s = ch.to_string();
-                        show(&mut body, cell * i as f64 + (cell - width_of(&s, size)) / 2.0, y, &s);
+                        show(&mut body, cell * i as f64 + (cell - width_of(&s, size)) / 2.0, y, &s, size);
                     }
                 } else {
                     let tw = width_of(&text.replace(['\n', '\r'], " "), size);
                     if overflow.is_none() && tw > inner_w + 0.01 {
                         overflow = Some(Overflow::Wide { width: tw, room: inner_w, size });
                     }
-                    show(&mut body, x_for(&text, size), y, &text);
+                    show(&mut body, x_for(&text, size), y, &text, size);
                 }
             }
         }

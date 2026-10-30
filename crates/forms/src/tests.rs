@@ -5356,3 +5356,37 @@ endstream".into(),
         assert!(f.value.iter().all(String::is_empty), "{kind:?}: reset leaves it off, not the parent's Yes: {:?}", f.value);
     }
 }
+
+/// Arabic typed into a field whose font is Helvetica is shaped with the craft-fonts face and drawn
+/// as outlines, in right-to-left order, instead of `?`: no field is reported undrawn, each line
+/// carries its typed text as /ActualText, and Latin words and European digits stay Helvetica text.
+/// Without the face (a build without CRAFT_FONTS_DIR) the field is drawn and reported as before.
+#[test]
+fn arabic_field_values_are_shaped_not_question_marks() {
+    let mut doc = fixture();
+    set_value(&mut doc, "name", &FieldValue::Text("مجلس الشورى 2026 Law".into())).unwrap();
+    set_value(&mut doc, "notes", &FieldValue::Text("البند الأول\nالقرار ٣ موافقة".into())).unwrap();
+    let doc = reopen(&doc);
+    let all = fields(&doc);
+    assert_eq!(field(&all, "name").value, ["مجلس الشورى 2026 Law"], "the value is stored as typed");
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping the shaped drawing checks: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        assert!(undrawn_fields(&doc).iter().any(|(name, _)| name == "name"));
+        return;
+    }
+    assert!(undrawn_fields(&doc).is_empty(), "{:?}", undrawn_fields(&doc));
+    let hex = |s: &str| -> String { s.encode_utf16().map(|u| format!("{u:04X}")).collect() };
+    let name = ap(&doc, &field(&all, "name").widgets[0]);
+    assert!(name.contains(&format!("/ActualText <FEFF{}>", hex("مجلس الشورى 2026 Law"))), "{name}");
+    assert!(name.contains("(2026) Tj") && name.contains("(Law) Tj"), "Latin pieces stay text: {name}");
+    assert!(!name.contains('?'), "nothing drawn as ?: {name}");
+    assert!(name.matches("f\n").count() >= 8, "the Arabic letters are filled outlines: {name}");
+    // Right to left: "Law" (the paragraph's end) is drawn left of 2026, and the Arabic right of both.
+    let law = name.find("(Law) Tj").unwrap();
+    let year = name.find("(2026) Tj").unwrap();
+    assert!(law < year, "drawing order left to right: Law, 2026, Arabic: {name}");
+    let notes = ap(&doc, &field(&all, "notes").widgets[0]);
+    assert_eq!(notes.matches("/ActualText").count(), 2, "one span per line: {notes}");
+    assert!(notes.contains(&hex("القرار ٣ موافقة")), "Arabic-Indic digit kept: {notes}");
+    assert!(notes.contains("/Tx BMC") && notes.trim_end().ends_with("EMC"), "{notes}");
+}

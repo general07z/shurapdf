@@ -11,7 +11,8 @@
 //! Helvetica's proportions by character class (no font program or metrics file is bundled).
 
 use pdfcraft_cos::{Dict, Object, PdfString, Stream};
-use pdfcraft_fonts::{first_undrawable, literal, win_ansi};
+use pdfcraft_fonts::visual_line::{Shaper, first_undrawable_shaped};
+use pdfcraft_fonts::{first_undrawable, literal, win_ansi, wrap_with};
 pub use pdfcraft_fonts::{helvetica_width as text_width, wrap};
 
 use crate::{NOTE_SIZE, Rgb, n};
@@ -313,7 +314,8 @@ fn text_turn(d: &Dict) -> i64 {
 pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
     let text = |key: &[u8]| d.get(key).and_then(Object::as_string).map(PdfString::to_text);
     let (what, text) = match d.name(b"Subtype")? {
-        b"FreeText" => ("the comment's text", text(b"Contents")?),
+        // Arabic, Hebrew and Thai are shaped (`Shaper`); only what that leaves is undrawable.
+        b"FreeText" => return text(b"Contents").and_then(|t| first_undrawable_shaped(&t)).map(|c| ("the comment's text", c)),
         b"Line" if !d.contains(b"PCMeasureValue") => ("the line's caption", line_caption(d)?),
         b"Line" | b"PolyLine" | b"Polygon" => ("the measurement label", text(b"PCMeasureValue")?),
         b"Stamp" if matches!(d.get(b"PCStamp"), Some(Object::Bool(true))) => ("the stamp's \"By\" line", text(b"PCByLine")?),
@@ -975,19 +977,30 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     ));
     let mut out = c.into_bytes();
     let mut y = rect[3] - pad - size * 0.9;
-    for line in wrap(&text, size, width) {
+    // Arabic, Hebrew or Thai is shaped and drawn as outlines when this build has the faces (`Shaper`).
+    let shaper = first_undrawable(&text).and(Shaper::for_text(&text));
+    let color = rg(text_color);
+    let lines = match shaper {
+        Some(s) => wrap_with(&text, size, width, |t, size| s.width(t, size)),
+        None => wrap(&text, size, width),
+    };
+    for line in lines {
         if y < rect[1] - size {
             break;
         }
-        let lw = text_width(&line, size);
+        let lw = shaper.map_or_else(|| text_width(&line, size), |s| s.width(&line, size));
         let x = match q {
             1 => rect[0] + pad + (width - lw) / 2.0,
             2 => rect[2] - pad - lw,
             _ => rect[0] + pad,
         };
-        out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
-        out.extend(literal(&win_ansi(&line)));
-        out.extend_from_slice(b" Tj\n");
+        if let Some(s) = shaper {
+            s.draw(&mut out, &line, [x, y], size, "Helv", color.trim_end());
+        } else {
+            out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
+            out.extend(literal(&win_ansi(&line)));
+            out.extend_from_slice(b" Tj\n");
+        }
         y -= size * 1.2;
     }
     out.extend_from_slice(b"ET\n");
