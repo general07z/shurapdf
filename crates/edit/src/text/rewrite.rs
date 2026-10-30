@@ -755,6 +755,9 @@ pub(crate) fn rewrite_block_from(
     let first = members.first().copied().ok_or_else(|| EditError::Invalid("the paragraph has no source runs".into()))?;
     members.iter().try_for_each(|line| line.ensure_editable())?;
     let p = page_dict(doc, page)?;
+    if let Some(shaped) = ShapedRewrite::wanted(&b, first, members.len() == 1, p.crop(doc), text, style)? {
+        return shaped.apply(doc, page, &members, &dropped);
+    }
     let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut fonts_res = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
     let dispatch = choose_rewrite_path(doc, &fonts_res, &b, &members, first, text, style)?;
@@ -893,6 +896,141 @@ pub(crate) fn rewrite_block_from(
         }
     })?;
     Ok(LineEdit { substituted: font.substituted })
+}
+
+/// A paragraph rewritten with Arabic in it. A font can't show Arabic one character at a time:
+/// each letter takes the form its neighbours ask for, and a page's font (often a subset) maps
+/// several forms to one letter. So the paragraph's drawing is removed and its new text is drawn
+/// as added text in the same box, size, colour and weight: shaped with the craft-fonts Arabic
+/// face, right to left, each line with `/ActualText` in typing order. It stays editable as added
+/// text. Turned and invisible (OCR) paragraphs, and per-range styles, keep the ordinary path.
+struct ShapedRewrite {
+    text: crate::added::AddedText,
+    /// The paragraph's box in user space, moved and resized as asked.
+    rect: [f64; 4],
+}
+
+impl ShapedRewrite {
+    /// `Some` when the paragraph is to be drawn this way; an error for a size, move or width
+    /// that isn't a number, as on the ordinary path.
+    fn wanted(
+        b: &TextBlock,
+        first: &TextLine,
+        single_line: bool,
+        crop: [f64; 4],
+        text: Option<&str>,
+        style: &BlockStyle,
+    ) -> Result<Option<Self>, EditError> {
+        let new = paragraph_text(text.unwrap_or(&b.text));
+        if !new.chars().any(pdfcraft_fonts::visual_line::is_arabic)
+            || pdfcraft_fonts::document_arabic_font().is_none()
+            || b.rotation.abs() > 0.01
+            || b.invisible
+            || !style.ranges.is_empty()
+            || style.resource.is_some()
+        {
+            return Ok(None);
+        }
+        let (_, ParaStyle { size, k, .. }) = paragraph_style(&first.origin, style)?;
+        let [dx, dy] = style.offset.unwrap_or([0.0, 0.0]);
+        let points = size * k;
+        if ![points, dx, dy].iter().all(|v| v.is_finite()) || points <= 0.0 {
+            return Err(EditError::Invalid("the paragraph can't be moved that far".into()));
+        }
+        let rtl = pdfcraft_fonts::visual_line::paragraph_rtl(&new);
+        // As on the ordinary path: a paragraph keeps its width, and a single line grows towards
+        // the page's margin (to the left when right to left, keeping its right edge).
+        let anchored_right = rtl && single_line && style.width.is_none();
+        let geometry = ParaGeometry { rect: b.rect, frame: b.rect, crop, upright: true, k, size, dx, single_line, anchored_right, centred: false };
+        let width = geometry.width(style.width)?;
+        let (family, bold, italic) = style.family.unwrap_or((source_family(&b.base_font), b.bold, b.italic));
+        let align = style.align.unwrap_or(if rtl { crate::added::Align::Right } else { crate::added::Align::Left });
+        let rect = if anchored_right {
+            [b.rect[2] + dx - width, b.rect[1] + dy, b.rect[2] + dx, b.rect[3] + dy]
+        } else {
+            [b.rect[0] + dx, b.rect[1] + dy, b.rect[0] + dx + width, b.rect[3] + dy]
+        };
+        let text = crate::added::AddedText {
+            rect,
+            text: new,
+            family,
+            bold: style.bold.unwrap_or(bold),
+            italic,
+            size: points.clamp(1.0, 1000.0),
+            color: style.color.unwrap_or(b.color),
+            align,
+            char_spacing: 0.0,
+        };
+        // Every line must shape before anything changes: a refusal leaves the page as it was.
+        Ok(text.text.split('\n').all(|line| pdfcraft_fonts::visual_line::visual_pieces(line, rtl).is_ok()).then_some(Self { text, rect }))
+    }
+
+    fn apply(
+        mut self,
+        doc: &mut Document,
+        page: usize,
+        members: &[&TextLine],
+        dropped: &std::collections::HashSet<usize>,
+    ) -> Result<LineEdit, EditError> {
+        let p = page_dict(doc, page)?;
+        // The box in display space, where added text lives (the page may be turned or cropped).
+        self.text.rect = to_display(p.view_matrix(doc), self.rect)?;
+        let streams = content_streams(doc, &p.dict)?;
+        // A paragraph drawn by an added text item is that item retyped: it is updated, rather than
+        // emptied and drawn again beside it. Part of an item (one of its paragraphs) is left to
+        // the added-text editor, which keeps the rest.
+        let stream_of = |line: &TextLine| match streams.get(line.stream) {
+            Some((Object::Ref(r), _)) => Some(*r),
+            _ => None,
+        };
+        let items: Vec<crate::added::Added> = crate::added::list_added(doc).into_iter().filter(|a| a.page == page).collect();
+        let owner = members.iter().find_map(|line| items.iter().position(|item| stream_of(line) == Some(item.obj)));
+        if let Some(index) = owner {
+            let whole = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+            let all_in_it = members.iter().all(|line| items.get(index).is_some_and(|item| stream_of(line) == Some(item.obj)));
+            let same_text = items.get(index).is_some_and(|item| match &item.content {
+                crate::added::Content::Text(t) => whole(&t.text) == whole(&members.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ")),
+                _ => false,
+            });
+            if !(all_in_it && same_text) {
+                return Err(EditError::Invalid("this text is part of a text box added in PdfCraft: edit the text box instead".into()));
+            }
+            crate::added::update_content(doc, page, index, &crate::added::Content::Text(self.text))?;
+            return Ok(LineEdit { substituted: Some("Noto Sans Arabic".into()) });
+        }
+        let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
+        let ops = pieces.parse().ops;
+        let new_data = splice(&pieces, &ops, |i| (Vec::new(), !dropped.contains(&i)));
+        let contents = rewritten_contents(doc, &streams, new_data);
+        let before = p.dict.get(b"Contents").cloned();
+        doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
+        if let Err(e) = crate::added::add_content(doc, page, &crate::added::Content::Text(self.text)) {
+            // Put the paragraph back rather than lose it.
+            doc.update_dict(p.obj, |d| match before {
+                Some(c) => d.set(b"Contents".to_vec(), c),
+                None => {
+                    d.remove(b"Contents");
+                }
+            })?;
+            return Err(e);
+        }
+        Ok(LineEdit { substituted: Some("Noto Sans Arabic".into()) })
+    }
+}
+
+/// `rect` (user space) in the display space of a page whose display-to-user matrix is `view`.
+fn to_display(view: [f64; 6], rect: [f64; 4]) -> Result<[f64; 4], EditError> {
+    let [a, b, c, d, e, f] = view;
+    let det = a * d - b * c;
+    if !det.is_finite() || det.abs() < 1e-12 {
+        return Err(EditError::Invalid("the page's display matrix can't be inverted".into()));
+    }
+    let point = |x: f64, y: f64| ((d * (x - e) - c * (y - f)) / det, (a * (y - f) - b * (x - e)) / det);
+    let corners = [point(rect[0], rect[1]), point(rect[2], rect[3]), point(rect[0], rect[3]), point(rect[2], rect[1])];
+    let (xs, ys): (Vec<f64>, Vec<f64>) = corners.into_iter().unzip();
+    let min = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    Ok([min(&xs), min(&ys), max(&xs), max(&ys)])
 }
 
 /// The cover (when [`BlockStyle::cover`] asks for one) and visible rendering that start a
