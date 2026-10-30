@@ -90,8 +90,10 @@ impl PdfCraftApp {
     /// something Create understands (the caller then tries to open it as a PDF).
     pub(crate) fn open_converted(&mut self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
         use pdfcraft_engine::SourceKind;
-        if !matches!(pdfcraft_engine::source_kind(name, bytes), Some(SourceKind::Image | SourceKind::Text | SourceKind::Word)) {
-            return None;
+        match pdfcraft_engine::source_kind(name, bytes) {
+            Some(SourceKind::Word) => return Some(self.open_word(name, None, Arc::new(bytes.to_vec()), None, true)),
+            Some(SourceKind::Image | SourceKind::Text) => {}
+            _ => return None,
         }
         let created = self.session.convert_to_pdf(name, &Arc::new(bytes.to_vec())).map(|(_, pdf)| pdf);
         Some(self.open_created_bytes(&format!("{}.pdf", stem(name)), created.map_err(|e| e.to_string())))
@@ -179,7 +181,7 @@ impl PdfCraftApp {
     pub(crate) fn create_from_word_dialog(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dialog = rfd::AsyncFileDialog::new().add_filter(tl!("Word documents"), &["docx"]).set_title(tl!("Choose a Word document"));
+            let dialog = rfd::AsyncFileDialog::new().add_filter(tl!("Word documents"), &["docx", "doc"]).set_title(tl!("Choose a Word document"));
             self.ask(crate::pickers::Ask::Files(dialog), None, |app, files| {
                 let Some(f) = files.into_iter().next() else { return };
                 match std::fs::read(&f) {
@@ -195,11 +197,51 @@ impl PdfCraftApp {
         self.notify_tr("On the web, open or drop a Word document to convert it");
     }
 
-    /// One new document from a Word file (tests and automation call this directly).
+    /// One new document from a Word file (tests and automation call this directly). A protected
+    /// one raises the password prompt, as an encrypted PDF does.
     pub fn create_from_word(&mut self, name: &str, bytes: &[u8]) {
-        let created = self.session.create_from_word(bytes, None).map_err(|e| e.to_string());
-        if let Err(e) = self.open_created_bytes(&format!("{}.pdf", stem(name)), created) {
+        if let Err(e) = self.open_word(name, None, Arc::new(bytes.to_vec()), None, true) {
             self.notify_fmt("Couldn't create a PDF: {e}", &[("e", &e.to_string())]);
+        }
+    }
+
+    /// Convert a Word file (`.docx`, `.doc`) with `password` and open the PDF as a new tab. A
+    /// missing or wrong password raises the password prompt, whose answer comes back here through
+    /// `try_open`.
+    pub(crate) fn open_word(
+        &mut self,
+        name: &str,
+        path: Option<String>,
+        bytes: Arc<Vec<u8>>,
+        password: Option<&str>,
+        activate: bool,
+    ) -> Result<(), String> {
+        use pdfcraft_engine::EditError;
+        match self.session.create_from_word(&bytes, password) {
+            Ok(pdf) => {
+                self.password_prompt = None;
+                self.open_created_bytes(&format!("{}.pdf", stem(name)), Ok(pdf))
+            }
+            Err(e @ (EditError::PasswordRequired | EditError::WrongPassword)) => {
+                let error = matches!(e, EditError::WrongPassword).then(|| "Incorrect password. Try again.".to_string());
+                #[cfg(not(target_arch = "wasm32"))]
+                let stamp = path.as_deref().and_then(crate::file_watch::Stamp::at);
+                self.password_prompt = Some(crate::PasswordPrompt {
+                    name: name.to_string(),
+                    path,
+                    bytes,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    stamp,
+                    input: String::new(),
+                    error,
+                    activate,
+                    recovered: None,
+                    then: None,
+                    after_open: None,
+                });
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
         }
     }
 

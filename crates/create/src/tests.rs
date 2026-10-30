@@ -1350,4 +1350,8 @@ fn source_kind_finds_word_documents() {
     assert_eq!(source_kind("fake.docx", b"just text"), None);
     assert_eq!(source_kind("letter.docx", b""), None);
     assert!(CONVERTIBLE.contains(&"docx"));
+    // Word 97-2003: a compound file named .doc; a zip named .doc is not one.
+    assert_eq!(source_kind("old.DOC", &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0]), Some(SourceKind::Word));
+    assert_eq!(source_kind("old.doc", b"PK\x03\x04"), None);
+    assert!(CONVERTIBLE.contains(&"doc"));
 }

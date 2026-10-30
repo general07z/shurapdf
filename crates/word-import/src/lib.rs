@@ -1,6 +1,7 @@
 //! pdfcraft-word-import — Create PDF from a Word document.
 //!
-//! WordCraft reads the `.docx` (`wordcraft-docx`), lays it out (`wordcraft-layout`, called
+//! WordCraft reads the `.docx` (`wordcraft-docx`) or Word 97-2003 `.doc` (`wordcraft-docbin`),
+//! decrypting a password-protected one with the password given, lays it out (`wordcraft-layout`, called
 //! inside `wordcraft_pdf::export`) and writes PDF bytes with embedded, subsetted fonts, so text
 //! stays selectable and searchable — including shaped Arabic in bidirectional order. The bytes
 //! are an ordinary PDF: the engine opens them like any other file.
@@ -15,12 +16,36 @@ pub const MAX_WORD_FILE: usize = 512 * 1024 * 1024;
 pub enum WordImportError {
     #[error("the Word file is larger than {} MiB", MAX_WORD_FILE / (1024 * 1024))]
     TooLarge,
+    /// The file is password-protected and no password was given.
     #[error("the Word file is password protected")]
     Encrypted,
+    /// The password given does not open the file.
+    #[error("the password is incorrect")]
+    WrongPassword,
     #[error("could not read the Word file: {0}")]
-    Read(#[from] wordcraft_docx::DocxError),
+    Read(String),
     #[error("could not write the PDF: {0}")]
     Write(#[from] wordcraft_pdf::PdfError),
+}
+
+impl From<wordcraft_docx::DocxError> for WordImportError {
+    fn from(e: wordcraft_docx::DocxError) -> Self {
+        match e {
+            wordcraft_docx::DocxError::PasswordRequired => Self::Encrypted,
+            wordcraft_docx::DocxError::WrongPassword => Self::WrongPassword,
+            e => Self::Read(e.to_string()),
+        }
+    }
+}
+
+impl From<wordcraft_docbin::DocbinError> for WordImportError {
+    fn from(e: wordcraft_docbin::DocbinError) -> Self {
+        match e {
+            wordcraft_docbin::DocbinError::PasswordRequired => Self::Encrypted,
+            wordcraft_docbin::DocbinError::WrongPassword => Self::WrongPassword,
+            e => Self::Read(e.to_string()),
+        }
+    }
 }
 
 /// Options for the conversion (Acrobat's Create PDF ▸ Word settings, minimal set).
@@ -28,7 +53,7 @@ pub enum WordImportError {
 pub struct WordImportOptions {
     /// Write a structure tree (tagged PDF) for accessibility.
     pub tagged: bool,
-    /// Password for an encrypted `.docx`.
+    /// Password for a protected `.docx` or `.doc`.
     pub password: Option<String>,
 }
 
@@ -38,16 +63,21 @@ impl Default for WordImportOptions {
     }
 }
 
-/// Convert `.docx` bytes to PDF bytes.
-pub fn docx_to_pdf(bytes: &[u8], opts: &WordImportOptions) -> Result<Vec<u8>, WordImportError> {
+/// The signature of an OLE compound file: a Word 97-2003 `.doc`, or a password-protected `.docx`.
+const COMPOUND_FILE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+/// Convert Word bytes to PDF bytes: a `.docx` (zip package), a password-protected `.docx`
+/// (compound file holding an encrypted package) or a Word 97-2003 `.doc` (compound file with a
+/// WordDocument stream), told apart by their bytes, never by a name.
+pub fn word_to_pdf(bytes: &[u8], opts: &WordImportOptions) -> Result<Vec<u8>, WordImportError> {
     if bytes.len() > MAX_WORD_FILE {
         return Err(WordImportError::TooLarge);
     }
+    let password = opts.password.as_deref().filter(|p| !p.is_empty());
     let doc = if wordcraft_docx::is_encrypted(bytes) {
-        match opts.password.as_deref() {
-            Some(pw) => wordcraft_docx::read_with_password(bytes, Some(pw))?,
-            None => return Err(WordImportError::Encrypted),
-        }
+        wordcraft_docx::read_with_password(bytes, password)?
+    } else if bytes.starts_with(&COMPOUND_FILE) {
+        wordcraft_docbin::read_with_password(bytes, password)?
     } else {
         wordcraft_docx::read(bytes)?
     };

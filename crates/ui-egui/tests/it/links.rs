@@ -63,7 +63,10 @@ fn about_dialog_shows_the_brand_and_links() {
         app.open_bytes("one.pdf", None, pdf.to_vec()).unwrap();
         app.dialog = Some(Dialog::About);
     });
-    assert!(h.query_all_by_label("ArtCraft").count() >= 2, "the mark and the wordmark (alt text)");
+    // The app's own icon (alt text) and name; ArtCraft credited by name only, since its logos are
+    // trademarks a fork may not show.
+    assert!(h.query_all_by_label(pdfcraft_ui_egui::PRODUCT_NAME).count() >= 2, "the icon and the name");
+    assert!(h.query_by_label("Part of ArtCraft").is_some(), "the credit");
     h.get_by_label("Join our Discord").click();
     h.run_steps(2);
     assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));

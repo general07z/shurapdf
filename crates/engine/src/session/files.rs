@@ -25,12 +25,14 @@ impl Session {
         self.write_new(&pdfcraft_create::from_images_with_resolution(images, resolution)?)
     }
 
-    /// A new document from a Word file (Create ▸ PDF from Word). WordCraft lays the document out
+    /// A new document from a Word file, `.docx` or Word 97-2003 `.doc` (Create ▸ PDF from Word),
+    /// opened with `password` when it is protected: without one that error is
+    /// [`EditError::PasswordRequired`], with a wrong one [`EditError::WrongPassword`]. WordCraft lays the document out
     /// and writes it; the bytes are checked like any created file before the caller opens them
     /// with [`Self::open_new`].
     pub fn create_from_word(&self, bytes: &[u8], password: Option<&str>) -> Result<Arc<Vec<u8>>, EditError> {
         let opts = pdfcraft_word_import::WordImportOptions { password: password.map(str::to_owned), ..Default::default() };
-        let pdf = Arc::new(pdfcraft_word_import::docx_to_pdf(bytes, &opts)?);
+        let pdf = Arc::new(pdfcraft_word_import::word_to_pdf(bytes, &opts)?);
         let doc = pdfcraft_cos::Document::open(pdf.clone()).map_err(|e| EditError::Reopen(e.to_string()))?;
         let expected = pdfcraft_organize::page_count(&doc)?;
         pdfcraft_render::check_pages(pdf.clone(), None, expected).map_err(|e| EditError::Reopen(e.to_string()))?;
@@ -65,7 +67,11 @@ impl Session {
             SourceKind::Pdf => open_source(name, bytes).map(|_| bytes.clone()),
             SourceKind::Image => self.create_from_images(&[(name.to_string(), bytes.to_vec())]),
             SourceKind::Text => self.create_from_text(title, &decode_text(bytes)),
-            SourceKind::Word => self.create_from_word(bytes, None).map_err(|e| EditError::Source(format!("{name}: {e}"))),
+            // A missing or wrong password stays itself, so the app can ask for one.
+            SourceKind::Word => self.create_from_word(bytes, None).map_err(|e| match e {
+                EditError::PasswordRequired | EditError::WrongPassword => e,
+                e => EditError::Source(format!("{name}: {e}")),
+            }),
         })
         .map_err(|_| EditError::Source(format!("{name}: the file could not be read")))?;
         Ok((kind, created?))

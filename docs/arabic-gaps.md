@@ -12,8 +12,8 @@
 | 3 | **Compress PDF** | ✅ shipped / 🟡 advanced | `optimize.reduce-file-size` ✅, `optimize.optimizer` 🟡 | presets, batch optimize, JBIG2 |
 | 4 | **Bookmarks** | ✅ shipped | `organize.bookmark-*`, `organize.bookmarks-from-structure` | bookmark actions |
 | 5 | **Signature** | ✅ shipped | `form.fill-sign-signature` (drawn/typed/image), `sign.pkcs12`, `sign.windows-cert-store`, `sign.visible-signature`, `sign.validate-all` | direct PKCS#11 (smart cards and tokens already sign through the Windows store when their driver registers a CNG key storage provider, with the card's own PIN dialog; **needs the owner:** insert the Council or eKey card, then Sign ▸ Use a certificate: if the card's certificate is listed, it works; if not, its middleware is CryptoAPI-only or PKCS#11-only and direct PKCS#11 is needed), timestamp server config, LTV is partial |
-| 6 | **Word → PDF** | ✅ app, tools, CLI (synthetic tests) | `create.from-office` | `.doc`/`.rtf`, password prompt in the UI, testing on real documents (W2) |
-| 7 | **Combine PDF + Word** | ✅ Combine Files, Create multiple, add folder, `pdfcraft-cli combine` | `organize.combine-files` | nothing for `.docx`; `.doc` is not supported |
+| 6 | **Word → PDF** | ✅ `.docx` and `.doc`, password-protected ones too; app, tools, CLI (synthetic tests) | `create.from-office` | `.rtf`/`.odt`, testing on real documents (W2) |
+| 7 | **Combine PDF + Word** | ✅ Combine Files, Create multiple, add folder, `pdfcraft-cli combine` | `organize.combine-files` | a protected Word file in Combine is listed as unreadable (convert it first) |
 | 8 | **Arabic writing and editing** | 🟡 **main gap** | see below | see below |
 | 9 | **Edit PDF** | 🟡 mostly shipped | `edit.text-edit` 🟡, `edit.add-text` ✅, `edit.image-*` ✅ | lists, find/replace in edit mode, vector editing |
 

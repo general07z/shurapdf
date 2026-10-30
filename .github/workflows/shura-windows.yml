@@ -27,6 +27,11 @@ jobs:
       contents: write
     env:
       PDFCRAFT_DEFAULT_LANGUAGE: ar
+      # The Council build's name and installer identity (packaging/windows/pdfcraft.wxs). Keep the
+      # upgrade code for good: every later ShuraPDF MSI upgrades the installed one through it.
+      PDFCRAFT_PRODUCT_NAME: ShuraPDF
+      PDFCRAFT_MANUFACTURER: Shura Council, Kingdom of Bahrain
+      PDFCRAFT_UPGRADE_CODE: 9358461B-B30C-449A-8DC0-4DE798492EAA
       CRAFT_FONTS_DIR: ${{ github.workspace }}\craft-fonts
       DIST: ${{ github.workspace }}\dist
       SIGN_DESCRIPTION: ShuraPDF

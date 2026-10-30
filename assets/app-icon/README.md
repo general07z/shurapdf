@@ -1,35 +1,40 @@
-# PdfCraft app icon
+# ShuraPDF app icon
 
-<img src="pdfcraft-small.svg" alt="PdfCraft app icon: an engraved lion's head on red" width="128">
+<img src="pdfcraft-small.svg" alt="ShuraPDF app icon: a PDF page carrying a domed council chamber, on red" width="128">
 
-**Creature:** a lion, in a frontal head-and-shoulders portrait, mane running off the bottom of the tile.
+**Motif:** a white PDF page (folded top-right corner) carrying a council chamber, a gold dome with a
+spire over a red drum, four columns and two steps, with a dark red "PDF" label across the foot of the page.
 
-**Style:** an engraving (woodcut-weight line work) portrait in the Crafting Apps "owl template" framing:
-a full-bleed colour field, no frame or roundel, the animal looking at the viewer and filling the tile.
+**Style:** flat geometric shapes only: no fonts (the "PDF" letters are stroked paths), no traced or
+third-party images, so it renders the same everywhere.
 
-**Palette:** exactly three colours.
+**Palette:**
 
 | Colour | Hex | Used for |
 |---|---|---|
-| Ink | `#0b0b0c` | line work and the figure's contour |
-| Paper | `#efe9dc` | the figure (the lion's silhouette) |
-| PdfCraft red (app colour) | `#b70228` | the full-bleed field |
+| Red field | `#d3172e` → `#8e0a1c` (top to bottom) | the full-bleed tile, close to the red of Bahrain's flag |
+| Paper | `#ffffff`, fold `#e7d6d8` | the page |
+| Gold | `#c9a227` | dome and spire |
+| Deep red | `#9e0b1f`, label `#5e0612` | chamber and label |
 
-**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112` that clips everything. Windows and Linux
-icons use the full-bleed tile. macOS icons put it on Apple's grid (an 824 px body centred on a transparent
-1024 px canvas).
+**Tile:** `viewBox="0 0 512 512"`, a rounded square with `rx=112` that clips everything, as upstream's.
 
-**Provenance:** the project owner's original drawing, made in ArtCraft (2880 px, keyed to the palette), then
-vectorised with craftrules `assets/logo-options/_tools/vectorize_tile.py` (potrace; no filtering or
-warping). The source drawing is kept in craftrules at `assets/app-icons/pdfcraft/source.png`, not here.
-Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`, like the repo).
+**Provenance:** drawn by hand in SVG for this fork (general07z/shurapdf, 2026-10-30); it replaces
+upstream's lion. It is not the Shura Council's emblem: an official emblem is a government mark, so it
+stays out of this public repository. Licence: [LICENSE.txt](LICENSE.txt) (`MIT OR Apache-2.0`).
+
+**The official emblem in a private build:** ICT can keep a private copy of the repository, replace
+`pdfcraft.svg` with artwork that uses the emblem (with the Council's permission), regenerate the files
+below and build there. Never commit the emblem here.
+
+The file names keep "pdfcraft" so that the build, the installer and the Linux desktop entry need no change.
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `pdfcraft.svg` | the master vector (traced at 2048 px); every PNG, `.ico` and `.icns` is rendered from it |
-| `pdfcraft-small.svg` | a lighter vector (traced at 1024 px) for places where size matters, such as this README |
+| `pdfcraft.svg` | the master vector; every PNG, `.ico` and `.icns` is rendered from it |
+| `pdfcraft-small.svg` | the same vector (upstream keeps a lighter trace here), for this README |
 | `pdfcraft-1024.png` | 1024 px on Apple's grid; also the runtime Dock icon on macOS |
 | `pdfcraft.icns` | macOS icon (16–1024 px) |
 | `pdfcraft.ico` | Windows icon (16–256 px), embedded in `pdfcraft.exe` by `apps/pdfcraft/build.rs` |
