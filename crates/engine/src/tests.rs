@@ -9090,3 +9090,16 @@ fn need_appearances_buttons_are_displayed_from_their_captions() {
         assert!(ink(&shown, inside(x, 100)) > 700, "the file's square at {x}");
     }
 }
+
+/// Create ▸ PDF from Word: a .docx with Arabic and English opens as a native document whose
+/// text extracts in reading order.
+#[test]
+fn a_word_file_opens_as_a_native_pdf_with_its_arabic_text() {
+    let mut session = Session::new().with_clock(|| 1_700_000_000);
+    let pdf = session.create_from_word(&pdfcraft_word_import::testkit::synthetic_docx(), None).unwrap();
+    let id = session.open_new("letter.pdf", pdf).unwrap();
+    let texts = page_texts(&session, id);
+    assert_eq!(texts.len(), 1);
+    assert!(texts[0].contains("Hello PDF"), "{texts:?}");
+    assert!(texts[0].contains("مجلس الشورى"), "{texts:?}");
+}

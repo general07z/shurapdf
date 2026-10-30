@@ -58,7 +58,12 @@ pdfcraft-render = { path = "crates/render", version = "0.15.0" }
 pdfcraft-engine = { path = "crates/engine", version = "0.15.0" }
 pdfcraft-platform = { path = "crates/platform", version = "0.15.0" }
 pdfcraft-ui-egui = { path = "crates/ui-egui", version = "0.15.0" }
+pdfcraft-word-import = { path = "crates/word-import", version = "0.15.0" }
 pdfcraft-automation = { path = "crates/automation", version = "0.15.0", default-features = false }
+
+# WordCraft (sibling checkout, ../shuraword): Word reading, layout and PDF writing
+wordcraft-docx = { path = "../shuraword/crates/docx" }
+wordcraft-pdf = { path = "../shuraword/crates/pdf" }
 
 # pdf
 hayro = "0.7.1"
@@ -121,6 +126,8 @@ codegen-units = 1
 
 # Vendored, patched third-party crates (see vendor/README.md). Each patch is meant to go upstream.
 [patch.crates-io]
+# WordCraft's PDF writer (craft-pdf) needs the craft-libs krilla fork; mirror WordCraft's own patch.
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 hayro-interpret = { path = "vendor/hayro-interpret" }
 hayro = { path = "vendor/hayro" }
 hayro-syntax = { path = "vendor/hayro-syntax" }

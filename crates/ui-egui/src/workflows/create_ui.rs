@@ -174,6 +174,35 @@ impl PdfCraftApp {
         self.notify_tr("On the web, open or drop an image to convert it");
     }
 
+    /// Create ▸ PDF from Word: convert a .docx through WordCraft and open the result as a new,
+    /// unsaved document.
+    pub(crate) fn create_from_word_dialog(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dialog = rfd::AsyncFileDialog::new().add_filter(tl!("Word documents"), &["docx"]).set_title(tl!("Choose a Word document"));
+            self.ask(crate::pickers::Ask::Files(dialog), None, |app, files| {
+                let Some(f) = files.into_iter().next() else { return };
+                match std::fs::read(&f) {
+                    Ok(bytes) => {
+                        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        app.create_from_word(&name, &bytes);
+                    }
+                    Err(e) => app.notify_fmt("Couldn't read {name}: {e}", &[("name", &f.display().to_string()), ("e", &e.to_string())]),
+                }
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.notify_tr("On the web, open or drop a Word document to convert it");
+    }
+
+    /// One new document from a Word file (tests and automation call this directly).
+    pub fn create_from_word(&mut self, name: &str, bytes: &[u8]) {
+        let created = self.session.create_from_word(bytes, None).map_err(|e| e.to_string());
+        if let Err(e) = self.open_created_bytes(&format!("{}.pdf", stem(name)), created) {
+            self.notify_fmt("Couldn't create a PDF: {e}", &[("e", &e.to_string())]);
+        }
+    }
+
     /// One new document from images (tests and automation call this directly).
     pub fn create_from_images(&mut self, images: Vec<(String, Vec<u8>)>) {
         self.create_from_images_with_resolution(images, pdfcraft_engine::ImageResolution::Embedded);

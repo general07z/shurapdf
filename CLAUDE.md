@@ -1,3 +1,24 @@
+
+# Fork goals: Arabic-first PDF workbench
+
+This fork of PdfCraft targets an Arabic-first Acrobat Pro replacement. Upstream rules below still apply in full. Where they conflict, this section wins only on **priorities**, never on safety (never-panic, clean-room, assets, layering).
+
+## Start every session here (in addition to upstream's list)
+1. Read `docs/arabic-gaps.md` and take the **first unchecked item in the work queue**. Do not pick upstream P2/P3 features unless that item needs them.
+2. Before starting, check whether upstream already fixed it: `git fetch upstream && git log upstream/main --oneline -i --grep "<terms>"`. If upstream fixed it, merge upstream instead of re-implementing.
+
+## Fork-specific rules
+- **Arabic is the primary test language.** Every text feature you touch gets an Arabic test: shaped joining forms, mixed Arabic + Latin + digits in one line, Arabic-Indic digits (٠١٢٣), and copy/search order after save and reopen.
+- **WordCraft is a sibling checkout** at `../shuraword`, used only through `crates/word-import` (`wordcraft-docx` + `wordcraft-pdf`). Never depend on `wordcraft-engine` or `wordcraft-ui-egui`. Keep the `krilla` `[patch.crates-io]` rev equal to `../shuraword/Cargo.toml`.
+- **No real Council documents in the repository**, in fixtures or in screenshots. Build synthetic fixtures in code (see `crates/word-import/src/testkit.rs`).
+- **Never commit fonts**, including Windows Arabic fonts (Simplified Arabic, Traditional Arabic, Sakkal Majalla). Use system fonts at runtime and craft-fonts at build time.
+- **No Adobe branding.** The UI follows Acrobat's layout, but never its icons, names or images.
+- Fork PRs target this fork's `main`. Upstream-worthy, general fixes go as a separate PR to `storytold/pdfcraft`.
+
+## After every item
+- Tick it in `docs/arabic-gaps.md` and update the matching `parity/acrobat-features.toml` entry, with honest notes.
+- Run `cargo xtask parity --partial` and paste the changed lines in the PR description.
+
 # PdfCraft — instructions for agents
 
 PdfCraft is a clean-room, open-source, Rust-native PDF application targeting Adobe Acrobat Pro parity. It runs natively on macOS, Windows, Linux and FreeBSD, and on the web via WASM. It is the sibling of `../photocraft` (a Photoshop-class editor) and follows the same conventions.

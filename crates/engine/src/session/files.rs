@@ -25,6 +25,18 @@ impl Session {
         self.write_new(&pdfcraft_create::from_images_with_resolution(images, resolution)?)
     }
 
+    /// A new document from a Word file (Create ▸ PDF from Word). WordCraft lays the document out
+    /// and writes it; the bytes are checked like any created file before the caller opens them
+    /// with [`Self::open_new`].
+    pub fn create_from_word(&self, bytes: &[u8], password: Option<&str>) -> Result<Arc<Vec<u8>>, EditError> {
+        let opts = pdfcraft_word_import::WordImportOptions { password: password.map(str::to_owned), ..Default::default() };
+        let pdf = Arc::new(pdfcraft_word_import::docx_to_pdf(bytes, &opts)?);
+        let doc = pdfcraft_cos::Document::open(pdf.clone()).map_err(|e| EditError::Reopen(e.to_string()))?;
+        let expected = pdfcraft_organize::page_count(&doc)?;
+        pdfcraft_render::check_pages(pdf.clone(), None, expected).map_err(|e| EditError::Reopen(e.to_string()))?;
+        Ok(pdf)
+    }
+
     /// A new document from plain text (US Letter, 11 pt Helvetica). Text Helvetica can't draw is
     /// refused, naming the line and the character (never set as `?`).
     pub fn create_from_text(&self, title: &str, text: &str) -> Result<Arc<Vec<u8>>, EditError> {
