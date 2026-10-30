@@ -40,6 +40,8 @@ allow-git = [
     # The reviewed egui 0.37 and winit 0.30.13 fork revisions (immutable pins in Cargo.toml).
     "https://github.com/storytold/egui",
     "https://github.com/storytold/winit",
+    # Create PDF from Word (crates/word-import): the Word reader and PDF writer, pinned in Cargo.toml.
+    "https://github.com/storytold/wordcraft",
 ]
 
 [advisories]
@@ -50,6 +52,14 @@ ignore = [
     # private-key operations use aws-lc-rs on native targets and are refused in the browser
     # (ADR-0009). Revisit when a fixed `rsa` ships.
     { id = "RUSTSEC-2023-0071", reason = "rsa is used for verification only (ADR-0009)" },
+    # zip 3.0 (through wordcraft-docx, Create PDF from Word): SUID/SGID bits, symlink targets and
+    # path handling when *extracting an archive to disk*. wordcraft-docx only reads parts into
+    # memory (ZipArchive::by_name/read); it never calls extract or the stream extraction API, and
+    # nothing in PdfCraft writes a .docx's entries to the file system. Revisit when WordCraft
+    # moves to zip >= 9.
+    { id = "RUSTSEC-2026-0367", reason = "zip extraction to disk only; wordcraft-docx reads parts in memory" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extraction to disk only; wordcraft-docx reads parts in memory" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extraction to disk only; wordcraft-docx reads parts in memory" },
     # proc-macro-error is unmaintained (no vulnerability). It reaches the tree as a proc macro of
     # winprint's fmt-derive (craft-print's Windows spooler), so it runs at compile time on Windows
     # and is not in the binary.

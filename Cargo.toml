@@ -61,9 +61,12 @@ pdfcraft-ui-egui = { path = "crates/ui-egui", version = "0.15.0" }
 pdfcraft-word-import = { path = "crates/word-import", version = "0.15.0" }
 pdfcraft-automation = { path = "crates/automation", version = "0.15.0", default-features = false }
 
-# WordCraft (sibling checkout, ../shuraword): Word reading, layout and PDF writing
-wordcraft-docx = { path = "../shuraword/crates/docx" }
-wordcraft-pdf = { path = "../shuraword/crates/pdf" }
+# WordCraft: Word reading, layout and PDF writing. Pinned to the commit general07z/shuraword is on
+# (taken from public storytold/wordcraft so CI and fresh clones build; shuraword is private). To
+# build against a local ../shuraword checkout instead, see docs/shura-setup.md ("Local shuraword").
+# Keep the krilla [patch.crates-io] rev below equal to the one in that commit's Cargo.toml.
+wordcraft-docx = { version = "0.12.0", git = "https://github.com/storytold/wordcraft", rev = "5d063c5bc266dc0111b65c9f18c05db92675ce63" }
+wordcraft-pdf = { version = "0.12.0", git = "https://github.com/storytold/wordcraft", rev = "5d063c5bc266dc0111b65c9f18c05db92675ce63" }
 
 # pdf
 hayro = "0.7.1"

@@ -9,7 +9,7 @@ This fork of PdfCraft targets an Arabic-first Acrobat Pro replacement. Upstream 
 
 ## Fork-specific rules
 - **Arabic is the primary test language.** Every text feature you touch gets an Arabic test: shaped joining forms, mixed Arabic + Latin + digits in one line, Arabic-Indic digits (٠١٢٣), and copy/search order after save and reopen.
-- **WordCraft is a sibling checkout** at `../shuraword`, used only through `crates/word-import` (`wordcraft-docx` + `wordcraft-pdf`). Never depend on `wordcraft-engine` or `wordcraft-ui-egui`. Keep the `krilla` `[patch.crates-io]` rev equal to `../shuraword/Cargo.toml`.
+- **WordCraft** (pinned Git dependency on `storytold/wordcraft`, same commit as `general07z/shuraword`; local `../shuraword` only through an uncommitted `[patch]`, see `docs/shura-setup.md`) is used only through `crates/word-import` (`wordcraft-docx` + `wordcraft-pdf`). Never depend on `wordcraft-engine` or `wordcraft-ui-egui`. Keep the `krilla` `[patch.crates-io]` rev equal to WordCraft's at that commit.
 - **No real Council documents in the repository**, in fixtures or in screenshots. Build synthetic fixtures in code (see `crates/word-import/src/testkit.rs`).
 - **Never commit fonts**, including Windows Arabic fonts (Simplified Arabic, Traditional Arabic, Sakkal Majalla). Use system fonts at runtime and craft-fonts at build time.
 - **No Adobe branding.** The UI follows Acrobat's layout, but never its icons, names or images.

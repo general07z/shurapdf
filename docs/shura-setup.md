@@ -1,30 +1,21 @@
-# ShuraPDF: starter kit
+# ShuraPDF: setup
+
+> **Status:** live · **Last updated:** 2026-10-30 · **Change:** the Word engine is now fetched from GitHub; `shuraword` is optional
 
 Your projects on GitHub:
 
-| Repository | Based on | Role |
-|---|---|---|
-| [general07z/shurapdf](https://github.com/general07z/shurapdf) | `storytold/pdfcraft` | **The app you run**: PDF reader and editor (Acrobat Pro-like) |
-| [general07z/shuraword](https://github.com/general07z/shuraword) | `storytold/wordcraft` | Provides the Word reader, layout and PDF writer that `shurapdf` uses |
+| Repository | Based on | Visibility | Role |
+|---|---|---|---|
+| [general07z/shurapdf](https://github.com/general07z/shurapdf) | `storytold/pdfcraft` | public | **The app you run**: PDF reader and editor (Acrobat Pro-like) |
+| [general07z/shuraword](https://github.com/general07z/shuraword) | `storytold/wordcraft` | private | Your copy of the Word engine, needed only when you change the Word engine itself |
 
-What this folder contains:
+Related documents: `docs/arabic-gaps.md` (Arabic goals and work queue) and `CLAUDE.md` (rules for Claude Code).
 
-| File | What it is |
-|---|---|
-| `0001-create-pdf-from-word.patch` | A working, tested patch for `shurapdf` that adds **Create ▸ PDF from Word…** using `shuraword` |
-| `ARABIC_GAP_TRACKER.md` | Your 8 goals mapped to the app's real feature status, plus the work queue in order |
-| `CLAUDE.fork.md` | A section to paste at the top of `shurapdf/CLAUDE.md` so Claude Code works on *your* goals |
-| `sample.pdf`, `sample-render.png` | Output of the patch: a synthetic Arabic and English `.docx` converted to PDF |
-
-Tested on 2026-10-30 against the current `general07z/shurapdf` and `general07z/shuraword`, cloned side by side, with Rust 1.97.
-
-> **Names:** only the **repository and folder names** changed. The Rust crates inside keep their original names (`pdfcraft-engine`, `wordcraft-docx`, …), so every `cargo -p` command below still uses `pdfcraft-…`. Don't rename the crates: that would break pulling updates from upstream.
+> **Names:** only the **repository** names changed. The Rust crates inside keep their original names (`pdfcraft-engine`, `wordcraft-docx`, …), so every `cargo -p` command uses `pdfcraft-…`. Don't rename the crates: that would break pulling updates from upstream.
 
 ---
 
-## 1. Get the projects on your machine (one time)
-
-Clone both repositories **next to each other** in one folder. The patch looks for the Word engine at the relative path `../shuraword`:
+## 1. Get the project on your machine (one time)
 
 ```bash
 mkdir ~/shura && cd ~/shura
@@ -35,55 +26,40 @@ git clone https://github.com/general07z/shurapdf
 ```
 
 ```bash
-git clone https://github.com/general07z/shuraword
-```
-
-```bash
 git clone https://github.com/storytold/craft-fonts
 ```
 
-Result:
+You do **not** need `shuraword` to build. Cargo downloads the Word engine itself (`storytold/wordcraft`, pinned in `Cargo.toml` to the same commit `shuraword` is on). This is because `shuraword` is private: GitHub's automated checks for the public `shurapdf` cannot read it, and the CI only accepts Git dependencies from `github.com/storytold`.
 
-```
-~/shura/
-├── shurapdf/     ← your app (the one you run)
-├── shuraword/    ← provides the Word reader + layout + PDF writer
-└── craft-fonts/  ← optional: Arabic/Hebrew/Japanese faces for editing existing PDFs
-```
-
-The folder names must be exactly `shurapdf` and `shuraword`. If you rename `shuraword`, update the two `path = "../shuraword/…"` lines in `shurapdf/Cargo.toml`.
-
-Add the original projects as `upstream` so you can pull their fixes later:
+Add the original project as `upstream` so you can pull its fixes later (do this often; upstream moves fast):
 
 ```bash
 cd ~/shura/shurapdf && git remote add upstream https://github.com/storytold/pdfcraft
 ```
 
 ```bash
-cd ~/shura/shuraword && git remote add upstream https://github.com/storytold/wordcraft
+git fetch upstream && git merge upstream/main
 ```
 
-To pull updates later (do this often; upstream moves fast):
+### Local shuraword (only when you change the Word engine)
+
+Clone it next to `shurapdf`:
 
 ```bash
-cd ~/shura/shurapdf && git fetch upstream && git merge upstream/main
+cd ~/shura && git clone https://github.com/general07z/shuraword
 ```
 
-## 2. Apply the patch
+Then add these lines to the end of `shurapdf/Cargo.toml` **on your machine only**. Don't commit them: CI rejects path overrides.
 
-Then commit and push it to your GitHub repository:
-
-```bash
-cd ~/shura/shurapdf && git checkout -b feat/create-from-word && git apply ~/path/to/0001-create-pdf-from-word.patch
+```toml
+[patch."https://github.com/storytold/wordcraft"]
+wordcraft-docx = { path = "../shuraword/crates/docx" }
+wordcraft-pdf = { path = "../shuraword/crates/pdf" }
 ```
 
-```bash
-git add -A && git commit -m "Create PDF from Word (via shuraword)" && git push -u origin feat/create-from-word
-```
+When a change in `shuraword` should reach everyone, send it upstream to `storytold/wordcraft`, or make `shuraword` public and point the two `git =` lines in `Cargo.toml` at it (and allow it in `deny.toml` and the CI source check).
 
-Then open a pull request on GitHub from `feat/create-from-word` into `main` of `general07z/shurapdf`.
-
-## 3. Build, test and run
+## 2. Build, test and run
 
 Windows needs the MSVC build tools and `rustup`. The minimum is Rust 1.95.
 
@@ -105,7 +81,7 @@ cargo run -p pdfcraft-word-import --features test-support --example docx2pdf -- 
 
 ---
 
-## 4. What the patch does (architecture)
+## 3. How Word import works (architecture)
 
 ```
  .docx bytes
@@ -129,24 +105,24 @@ cargo run -p pdfcraft-word-import --features test-support --example docx2pdf -- 
 
 - **`wordcraft-doc` + `wordcraft-layout` are not enough.** Layout makes positioned pages, not PDF bytes. You need `wordcraft-docx` (reader) and `wordcraft-pdf` (writer). `wordcraft-pdf` calls `wordcraft-layout` internally, and the other two crates come in automatically.
 - **Do not depend on `wordcraft-engine`.** It pulls in WordCraft's whole session, proofing and UI. The two crates above are the narrow, stable API.
-- **Workspace inheritance works across the two repositories.** The WordCraft crates use `version.workspace = true`. Because they are path dependencies, Cargo resolves that against **WordCraft's** root `Cargo.toml`, so nothing in WordCraft needs to change.
+- **Workspace inheritance works across the two repositories.** The WordCraft crates use `version.workspace = true`. Cargo resolves that against **WordCraft's** own root `Cargo.toml` (for a Git or a path dependency alike), so nothing in WordCraft needs to change.
 - **The one hidden trap, which the build caught:** WordCraft's `craft-pdf` needs a **patched `krilla`** that WordCraft installs through its own `[patch.crates-io]`. Patches never carry over to another workspace, so PdfCraft had to copy it. Without the patch the build fails with `SerializeSettings has no field group_color_space`. With it, PdfCraft's 383 engine tests still pass.
 - **Where to put the trigger:** inject it at the **engine façade**, `Session::create_from_word` in `crates/engine/src/session/files.rs`, next to `create_from_images` and `create_from_text`. The UI only calls it. The reason is that PdfCraft's layering rule says frontends never touch parsing or writing crates. It also means the CLI, MCP and automation can reuse the same function later.
 
-### Code (key parts; the full code is in the patch)
+### Code (key parts)
 
 **Root `Cargo.toml`:**
 ```toml
 [workspace.dependencies]
 pdfcraft-word-import = { path = "crates/word-import", version = "0.15.0" }
-wordcraft-docx = { path = "../shuraword/crates/docx" }
-wordcraft-pdf  = { path = "../shuraword/crates/pdf" }
+wordcraft-docx = { git = "https://github.com/storytold/wordcraft", rev = "5d063c5bc266dc0111b65c9f18c05db92675ce63" }
+wordcraft-pdf  = { git = "https://github.com/storytold/wordcraft", rev = "5d063c5bc266dc0111b65c9f18c05db92675ce63" }
 
 [patch.crates-io]
 # WordCraft's PDF writer (craft-pdf) needs the craft-libs krilla fork; mirror WordCraft's own patch.
 krilla = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 ```
-Keep that `rev` equal to the one in `shuraword/Cargo.toml`. If you update `shuraword`, update it too.
+Keep the `krilla` `rev` equal to the one in WordCraft's `Cargo.toml` at the pinned commit. When you move the WordCraft pin, check it again.
 
 **Bridge (`crates/word-import/src/lib.rs`):**
 ```rust
@@ -200,7 +176,7 @@ Not yet verified: real Council documents (tables, headers and footers, Arabic fo
 
 ---
 
-## 5. The method (rules + checklist + oracle)
+## 4. The method (rules + checklist + oracle)
 
 PdfCraft's real method does not use files named "GAP_TRACKER.md" or "qpdf only". It has four parts, and **your fork inherits all of them**:
 
@@ -211,13 +187,13 @@ PdfCraft's real method does not use files named "GAP_TRACKER.md" or "qpdf only".
 
 Plus mechanical guards: `cargo xtask layers` (architecture) and `cargo xtask assets` (licensing).
 
-**What you add for your goals:** paste `CLAUDE.fork.md` at the top of your fork's `CLAUDE.md` and commit `ARABIC_GAP_TRACKER.md` as `docs/arabic-gaps.md`. Then each Claude Code session starts with:
+**What this fork adds for your goals:** the "Fork goals" section at the top of `CLAUDE.md` and the work queue in `docs/arabic-gaps.md`. Each Claude Code session starts with:
 
 > Read CLAUDE.md and docs/arabic-gaps.md. Take the first unchecked item in the work queue. Follow the protocol, prove the test fails before the fix, update the parity entry and the tracker, and open a PR.
 
 ---
 
-## 6. Important cautions
+## 5. Important cautions
 
 - **Licence:** both projects are MIT OR Apache-2.0, so forking, modifying and internal use are allowed. Keep `LICENSE-*`, `NOTICE` and `ATTRIBUTION.*`.
 - **"Looks like Acrobat Pro":** PdfCraft already copies Acrobat's *layout* (Home, All tools, right-hand panels). Never add Adobe icons, logos or names. That is a legal risk, and `cargo xtask assets` will fail.

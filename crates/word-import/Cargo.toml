@@ -13,15 +13,15 @@ workspace = true
 test-support = ["dep:zip"]
 
 [dependencies]
-zip = { version = "3", default-features = false, features = ["deflate"], optional = true }
-# WordCraft crates from the sibling checkout (../shuraword). They inherit their own
-# workspace's settings, so they build exactly as they do in WordCraft.
+zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
+# WordCraft crates (pinned in the root Cargo.toml). They inherit their own workspace's
+# settings, so they build exactly as they do in WordCraft.
 wordcraft-docx = { workspace = true }
 wordcraft-pdf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-zip = { version = "3", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [[example]]
 name = "docx2pdf"
