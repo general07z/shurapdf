@@ -12,7 +12,8 @@
   still produce installers.
 
   This is the one place to adapt when the signing setup changes (an HSM/cloud key, a different
-  timestamp server, ...). Optional overrides: WINDOWS_TIMESTAMP_URL, SIGNTOOL (path to signtool.exe).
+  timestamp server, ...). Optional overrides: WINDOWS_TIMESTAMP_URL, SIGNTOOL (path to signtool.exe),
+  SIGN_DESCRIPTION and SIGN_URL (the name and link Windows shows; default PdfCraft and its repository).
 
 .EXAMPLE
   pwsh packaging/windows/sign.ps1 dist/pdfcraft.exe dist/Pdfcraft.msi
@@ -55,7 +56,10 @@ if (-not $haveCert -and -not $haveAzure) {
 }
 
 $script:SignTool = Find-SignTool
-$common = @('sign', '/v', '/fd', 'SHA256', '/td', 'SHA256', '/d', 'PdfCraft', '/du', 'https://github.com/storytold/pdfcraft')
+# The name and link Windows shows for the signed file (SIGN_DESCRIPTION, SIGN_URL for a fork).
+$description = if ($env:SIGN_DESCRIPTION) { $env:SIGN_DESCRIPTION } else { 'PdfCraft' }
+$moreInfo = if ($env:SIGN_URL) { $env:SIGN_URL } else { 'https://github.com/storytold/pdfcraft' }
+$common = @('sign', '/v', '/fd', 'SHA256', '/td', 'SHA256', '/d', $description, '/du', $moreInfo)
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "pdfcraft-sign-$([IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $tmp | Out-Null
 

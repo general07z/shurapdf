@@ -59,7 +59,11 @@ wordcraft-pdf = { path = "../shuraword/crates/pdf" }
 
 When a change in `shuraword` should reach everyone, send it upstream to `storytold/wordcraft`, or make `shuraword` public and point the two `git =` lines in `Cargo.toml` at it (and allow it in `deny.toml` and the CI source check).
 
-## 2. Build, test and run
+## 2. Download a ready build (no tools needed)
+
+GitHub builds Windows packages on every push to `main` (`.github/workflows/shura-windows.yml`): **Actions ▸ ShuraPDF Windows build ▸ the latest run ▸ Artifacts ▸ ShuraPDF-windows-x64** (a zip holding the `.msi` installer and the portable `.zip`; kept 30 days). A tag such as `v0.15.0-shura.1` also makes a **Release** with the same files. Signing: `docs/code-signing.md`.
+
+## 2b. Build, test and run yourself
 
 Windows needs the MSVC build tools and `rustup`. The minimum is Rust 1.95.
 

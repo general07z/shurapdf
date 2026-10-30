@@ -1,0 +1,109 @@
+name: ShuraPDF Windows build
+
+# Fork workflow (general07z/shurapdf; see the fork rules in CLAUDE.md). Builds the Council build
+# for Windows x64 with the repository's own packaging/windows/package.ps1: a portable zip and an
+# MSI, Arabic by default (PDFCRAFT_DEFAULT_LANGUAGE), with the craft-fonts faces (Arabic text added
+# to PDFs) and their OFL notices. Signed when the WINDOWS_CERTIFICATE secrets exist
+# (docs/code-signing.md), unsigned with a warning otherwise. Every run keeps the packages as an
+# artifact; a v* tag also publishes them, with the public signing certificate, as a release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# A newer push to main cancels the older build; tags always finish.
+concurrency:
+  group: shura-windows-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  windows:
+    name: Windows x64 (Arabic)
+    runs-on: windows-latest
+    timeout-minutes: 300
+    permissions:
+      # Only for `gh release create` on a tag; the checkout keeps no credentials.
+      contents: write
+    env:
+      PDFCRAFT_DEFAULT_LANGUAGE: ar
+      CRAFT_FONTS_DIR: ${{ github.workspace }}\craft-fonts
+      DIST: ${{ github.workspace }}\dist
+      SIGN_DESCRIPTION: ShuraPDF
+      SIGN_URL: https://github.com/${{ github.repository }}
+      # Whether the signing secrets exist (a step's `if` can read job env, not secrets).
+      HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Same craft-fonts commit as upstream's CI and release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
+          persist-credentials: false
+      - name: Rust (stable, at least the workspace's rust-version)
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: shura-windows-x64
+      - name: WiX 5.0.2 and its extensions
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'wix'
+          dotnet tool install --tool-path $tools wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed.' }
+          $tools >> $env:GITHUB_PATH
+          $policy = Get-Content -Raw -LiteralPath packaging/windows/install-policy.json | ConvertFrom-Json
+          foreach ($extension in @($policy.extensions)) {
+            & (Join-Path $tools 'wix.exe') extension add -g "WixToolset.$extension.wixext/5.0.2"
+            if ($LASTEXITCODE -ne 0) { throw "WiX extension $extension installation failed." }
+          }
+      - name: Version
+        shell: pwsh
+        run: |
+          # A tag v1.2.3 (or v1.2.3-shura.1) names the packages; otherwise Cargo.toml's version.
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { "PDFCRAFT_VERSION=$($env:GITHUB_REF_NAME.Substring(1))" >> $env:GITHUB_ENV }
+      - name: Build, sign and package
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Public signing certificate
+        if: env.HAS_CERT == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          # Only the public part, for PCs and Group Policy to trust (docs/code-signing.md).
+          $pfx = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:WINDOWS_CERTIFICATE_PASSWORD)
+          [IO.File]::WriteAllBytes((Join-Path $env:DIST 'shurapdf-signing.cer'), $cert.Export('Cert'))
+          Get-AuthenticodeSignature (Get-ChildItem $env:DIST -Filter *.msi).FullName | Format-List Status, StatusMessage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ShuraPDF-windows-x64
+          path: |
+            dist/*.msi
+            dist/*.zip
+            dist/*.cer
+          if-no-files-found: error
+          retention-days: 30
+      - name: Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem dist -Include *.msi, *.zip, *.cer -Recurse | ForEach-Object FullName)
+          gh release create $env:GITHUB_REF_NAME @files --repo $env:GITHUB_REPOSITORY --title "ShuraPDF $env:GITHUB_REF_NAME" --notes "Windows x64 build, Arabic interface by default. Install the .msi, or unzip the portable .zip and run pdfcraft.exe. If signed with the pilot certificate, trust shurapdf-signing.cer first (docs/code-signing.md)."
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
