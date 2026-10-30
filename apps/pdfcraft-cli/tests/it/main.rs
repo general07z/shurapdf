@@ -21,4 +21,5 @@ mod stdout;
 mod text;
 mod ui_control;
 mod version_resource;
+mod word;
 mod xfa;

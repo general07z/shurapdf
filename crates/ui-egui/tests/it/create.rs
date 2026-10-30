@@ -258,7 +258,7 @@ fn mixed_files(app: &PdfCraftApp) -> Vec<(String, Vec<u8>)> {
     let pdf = app.session.create_from_text("a", "from a pdf").unwrap();
     vec![
         ("notes.txt".into(), b"from text".to_vec()),
-        ("report.docx".into(), b"PK\x03\x04".to_vec()),
+        ("report.xlsx".into(), b"PK\x03\x04".to_vec()),
         ("a.pdf".into(), pdf.to_vec()),
         ("photo.png".into(), png()),
     ]
@@ -333,7 +333,7 @@ fn multiple_files_open_as_one_document_in_the_page_grid() {
         assert_eq!(doc.info.pages.len(), 3, "the Word file can't be converted and is left out");
         assert_eq!(doc.info.outline.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["notes", "a", "photo"]);
     }
-    h.get_by_label_contains("left out: report.docx");
+    h.get_by_label_contains("left out: report.xlsx");
     h.get_by_label("Insert a file before page 2");
     if let Ok(path) = std::env::var("PDFCRAFT_CREATE_MULTIPLE_SHOT") {
         let _gpu = crate::gpu();
@@ -358,7 +358,7 @@ fn multiple_files_open_as_one_document_in_the_page_grid() {
 fn multiple_files_that_cannot_be_converted_open_nothing() {
     let mut app = PdfCraftApp::new();
     app.set_option("language", "en").unwrap();
-    app.use_files(pdfcraft_ui_egui::FilePurpose::CreateMultiple, vec![("report.docx".into(), b"PK\x03\x04".to_vec())]);
+    app.use_files(pdfcraft_ui_egui::FilePurpose::CreateMultiple, vec![("report.xlsx".into(), b"PK\x03\x04".to_vec())]);
     assert!(app.views.is_empty());
     assert!(app.toast.is_some());
 }

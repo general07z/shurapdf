@@ -1178,7 +1178,7 @@ fn combine_takes_images_and_text_files() {
     std::fs::write(dir.join("scan.png"), png).unwrap();
     std::fs::write(dir.join("notes.txt"), "Some notes").unwrap();
     std::fs::write(dir.join("broken.png"), b"\x89PNG\r\n\x1a\nbroken").unwrap();
-    std::fs::write(dir.join("report.docx"), b"PK\x03\x04").unwrap();
+    std::fs::write(dir.join("report.xlsx"), b"PK\x03\x04").unwrap();
     let mut a = auto(&dir);
     let combined = ok(&mut a, "doc_combine", json!({ "paths": ["a.pdf", "scan.png", "notes.txt"], "pages": [null, null, "1"], "open": true }));
     let doc = combined["document"]["doc"].as_u64().unwrap();
@@ -1188,7 +1188,7 @@ fn combine_takes_images_and_text_files() {
     let titles: Vec<&str> = marks.as_array().unwrap().iter().map(|b| b["title"].as_str().unwrap()).collect();
     assert_eq!(titles, ["a", "scan", "notes"]);
     // A file that can't be made into a PDF stops the combine, and says which.
-    for bad in ["broken.png", "report.docx"] {
+    for bad in ["broken.png", "report.xlsx"] {
         let refused = a.call("doc_combine", &json!({ "paths": ["a.pdf", bad] }));
         assert!(matches!(&refused, Err(ToolError::Failed(e)) if e.contains(bad)), "{bad}: {refused:?}");
     }
@@ -3909,7 +3909,7 @@ fn creating_from_multiple_files_through_tools() {
     }
     std::fs::write(dir.join("scan.png"), png).unwrap();
     std::fs::write(dir.join("notes.txt"), "hello").unwrap();
-    std::fs::write(dir.join("report.docx"), b"PK\x03\x04").unwrap();
+    std::fs::write(dir.join("report.xlsx"), b"PK\x03\x04").unwrap();
     let mut a = auto(&dir);
 
     // Combine: every file converted, in the order given, with a bookmark per file.
@@ -3929,8 +3929,8 @@ fn creating_from_multiple_files_through_tools() {
     assert_eq!(titles, ["notes", "a", "scan"]);
     assert!(dir.join("all.pdf").is_file());
     // A file that can't be converted fails the whole combine, naming it.
-    let err = a.call("doc_create_multiple", &json!({ "paths": ["a.pdf", "report.docx"] })).unwrap_err();
-    assert!(matches!(&err, ToolError::Failed(m) if m.contains("report.docx") && m.contains("can't be converted")), "{err}");
+    let err = a.call("doc_create_multiple", &json!({ "paths": ["a.pdf", "report.xlsx"] })).unwrap_err();
+    assert!(matches!(&err, ToolError::Failed(m) if m.contains("report.xlsx") && m.contains("can't be converted")), "{err}");
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": [] })), Err(ToolError::InvalidArgs(_))));
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": ["a.pdf"], "mode": "zip" })), Err(ToolError::InvalidArgs(_))));
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": ["a.pdf"], "mode": "separate" })), Err(ToolError::InvalidArgs(_))));
@@ -3939,7 +3939,7 @@ fn creating_from_multiple_files_through_tools() {
     // existing file is never overwritten.
     std::fs::create_dir_all(dir.join("out")).unwrap();
     std::fs::write(dir.join("out/notes.pdf"), b"mine").unwrap();
-    let args = json!({ "paths": ["notes.txt", "report.docx", "a.pdf", "scan.png", "missing.txt"], "mode": "separate", "out_dir": "out" });
+    let args = json!({ "paths": ["notes.txt", "report.xlsx", "a.pdf", "scan.png", "missing.txt"], "mode": "separate", "out_dir": "out" });
     let made = ok(&mut a, "doc_create_multiple", args);
     let files = made["files"].as_array().unwrap();
     assert!(files[0]["output"].as_str().unwrap().ends_with("notes (2).pdf"), "{files:?}");
@@ -9456,4 +9456,37 @@ fn clearing_a_kids_default_through_tools_does_not_bring_back_its_parents() {
     let fields = ok(&mut a, "form_fields", json!({ "doc": doc }));
     let city = fields["fields"].as_array().unwrap().iter().find(|f| f["name"] == "address.city").unwrap().clone();
     assert!(city["value"].is_null() || city["value"] == "", "reset clears it rather than restoring the parent's Main St: {}", city["value"]);
+}
+
+/// W4: Create PDF from Word headlessly. `doc_create` from a .docx inside the root opens an
+/// unsaved document whose Arabic copies in typing order through save and reopen; a .docx outside
+/// the root is refused like any other path, and `doc_create_multiple` takes Word files too.
+#[test]
+fn word_files_create_and_combine_through_tools_and_stay_in_the_root() {
+    let (base, root) = sandbox("word-create");
+    std::fs::write(root.join("letter.docx"), pdfcraft_word_import::testkit::synthetic_docx()).unwrap();
+    std::fs::write(base.join("outside/secret.docx"), pdfcraft_word_import::testkit::synthetic_docx()).unwrap();
+    let mut a = auto(&root);
+    let r = ok(&mut a, "doc_create", json!({ "from": "word", "path": "letter.docx" }));
+    assert_eq!(r["name"], "letter.pdf", "{r}");
+    let doc = r["doc"].as_u64().unwrap();
+    let text = page_text(&mut a, doc);
+    assert!(text[0].contains("مجلس الشورى") && text[0].contains("Hello PDF"), "{text:?}");
+    ok(&mut a, "doc_save", json!({ "doc": doc, "path": "letter.pdf" }));
+    let re = ok(&mut a, "doc_open", json!({ "path": "letter.pdf" }))["doc"].as_u64().unwrap();
+    assert!(page_text(&mut a, re)[0].contains("مجلس الشورى"));
+
+    let outside = "../outside/secret.docx";
+    let refused = ToolError::Failed(format!("{outside} is outside the allowed directory {}", root.display()));
+    assert_eq!(a.call("doc_create", &json!({ "from": "word", "path": outside })).unwrap_err(), refused);
+    let e = a.call("doc_create", &json!({ "from": "word" })).unwrap_err();
+    assert!(matches!(e, ToolError::InvalidArgs(ref m) if m.contains("path")), "{e:?}");
+
+    let r = ok(&mut a, "doc_create_multiple", json!({ "paths": ["inside.pdf", "letter.docx"], "out": "both.pdf" }));
+    assert!(root.join("both.pdf").is_file(), "{r}");
+    let both = ok(&mut a, "doc_open", json!({ "path": "both.pdf" }))["doc"].as_u64().unwrap();
+    let text = page_text(&mut a, both);
+    assert_eq!(text.len(), 2, "{text:?}");
+    assert!(text[1].contains("مجلس الشورى"), "{text:?}");
+    let _ = std::fs::remove_dir_all(&base);
 }

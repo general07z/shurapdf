@@ -1355,8 +1355,11 @@ fn a_page_with_a_form_field_shown_twice_keeps_one_field() {
 #[test]
 fn files_that_cannot_be_converted_are_refused_clearly() {
     let s = Session::new();
-    let err = s.convert_to_pdf("report.docx", &Arc::new(b"PK\x03\x04".to_vec())).unwrap_err();
-    assert_eq!(err, EditError::Source("report.docx: this file type can't be converted; use a PDF, an image or a .txt file".into()));
+    let err = s.convert_to_pdf("report.xlsx", &Arc::new(b"PK\x03\x04".to_vec())).unwrap_err();
+    assert_eq!(
+        err,
+        EditError::Source("report.xlsx: this file type can't be converted; use a PDF, an image, a .txt file or a Word document (.docx)".into())
+    );
     assert!(matches!(s.convert_to_pdf("empty", &Arc::new(Vec::new())), Err(EditError::Source(_))));
     // Damaged inputs of a known type fail with an error, not a panic.
     assert!(s.convert_to_pdf("bad.png", &Arc::new(b"\x89PNG\r\n\x1a\nnope".to_vec())).is_err());
@@ -1377,8 +1380,8 @@ fn files_for_combine_are_made_into_pdfs_and_pdfs_pass_through() {
     assert!(Arc::ptr_eq(&s.as_pdf("old.PDF", &headless).unwrap(), &headless));
     assert!(s.as_pdf("scan.jpg", &Arc::new(jpeg_bytes())).unwrap().starts_with(b"%PDF-"));
     assert!(s.as_pdf("notes.txt", &Arc::new(b"hello".to_vec())).unwrap().starts_with(b"%PDF-"));
-    let err = s.as_pdf("report.docx", &Arc::new(b"PK\x03\x04".to_vec())).unwrap_err();
-    assert!(matches!(err, EditError::Source(m) if m.starts_with("report.docx: this file type can't be converted")));
+    let err = s.as_pdf("report.xlsx", &Arc::new(b"PK\x03\x04".to_vec())).unwrap_err();
+    assert!(matches!(err, EditError::Source(m) if m.starts_with("report.xlsx: this file type can't be converted")));
 }
 
 fn protected(user: &str, owner: &str, permissions: i32) -> Arc<Vec<u8>> {
@@ -9102,4 +9105,56 @@ fn a_word_file_opens_as_a_native_pdf_with_its_arabic_text() {
     assert_eq!(texts.len(), 1);
     assert!(texts[0].contains("Hello PDF"), "{texts:?}");
     assert!(texts[0].contains("مجلس الشورى"), "{texts:?}");
+}
+
+/// W2: a two-page Arabic letter with a heading, a mixed Arabic/Latin/digits line, a table and a
+/// header converts with every piece where Word puts it: the header on both pages, the table's
+/// cells, Arabic-Indic and European digits as typed, and the heading as a bookmark.
+#[test]
+fn a_rich_arabic_word_file_keeps_header_table_digits_and_heading() {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let pdf = s.create_from_word(&pdfcraft_word_import::testkit::rich_arabic_docx(), None).unwrap();
+    let id = s.open_new("agenda.pdf", pdf).unwrap();
+    let texts = page_texts(&s, id);
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    for (i, page) in texts.iter().enumerate() {
+        assert!(page.contains("الأمانة العامة"), "header on page {}: {page}", i + 1);
+    }
+    for want in ["جدول الأعمال", "المادة ٣", "12", "2026", "Law 12", "البند", "القرار", "الميزانية", "موافقة"]
+    {
+        assert!(texts[0].contains(want), "{want:?} missing: {}", texts[0]);
+    }
+    assert!(texts[1].contains("الصفحة الثانية"), "{}", texts[1]);
+    assert_eq!(outline_titles(&s.get(id).unwrap().info.outline), ["جدول الأعمال→1"]);
+}
+
+/// W3: a Word document is a source like an image or text file: Create converts it, Combine
+/// takes it (as_pdf) and puts its pages in order with a bookmark per file.
+#[test]
+fn word_files_convert_and_combine_with_pdfs() {
+    let mut s = Session::new();
+    let docx = Arc::new(pdfcraft_word_import::testkit::synthetic_docx());
+    let (kind, word) = s.convert_to_pdf("letter.docx", &docx).unwrap();
+    assert_eq!(kind, SourceKind::Word);
+    assert!(word.starts_with(b"%PDF-"));
+    let staged = s.as_pdf("letter.docx", &docx).unwrap();
+    assert!(staged.starts_with(b"%PDF-"), "Combine stages a Word file as PDF");
+    let pdf = Arc::new(fixture(2));
+    let combined = s.combine_ranges(&[("a".into(), pdf, Some("2".into())), ("letter".into(), staged, None)]).unwrap();
+    let id = s.open_new("Combined.pdf", combined).unwrap();
+    let texts = page_texts(&s, id);
+    assert_eq!(texts.len(), 2);
+    assert_eq!(texts[0], "Page 2");
+    assert!(texts[1].contains("مجلس الشورى") && texts[1].contains("Hello PDF"), "{texts:?}");
+    assert_eq!(outline_titles(&s.get(id).unwrap().info.outline), ["a→1", "letter→2"]);
+}
+
+/// A broken Word file is refused with the file named, not a panic, wherever it enters.
+#[test]
+fn a_broken_word_file_is_refused_by_name() {
+    let s = Session::new();
+    let junk = Arc::new(b"PK\x03\x04 not really a zip".to_vec());
+    let err = s.convert_to_pdf("broken.docx", &junk).unwrap_err();
+    assert!(matches!(&err, EditError::Source(m) if m.starts_with("broken.docx: could not read the Word file")), "{err:?}");
+    assert!(s.as_pdf("broken.docx", &junk).is_err());
 }
