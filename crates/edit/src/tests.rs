@@ -4730,6 +4730,61 @@ fn replacing_word_with_actual_text_ligature_removes_all_its_source_operators() {
     assert!(!content.contains("ActualText") && !content.contains("(X)") && !content.contains("(B)") && !content.contains("(A)"), "{content}");
 }
 
+/// W6: retyping an existing Arabic paragraph. Its font (here a synthetic subset with one glyph
+/// per letter, as Word's subsets map several forms to one letter) can't join the new letters, so
+/// the paragraph is drawn again as added text in the same place: shaped with the craft-fonts
+/// face, right-aligned at the paragraph's right edge, at its size, with /ActualText in typing
+/// order (copy and search) through save and reopen, and the old drawing gone. A size-only change
+/// takes the same path. Without the face the old refusal stands.
+#[test]
+fn retyped_arabic_paragraphs_are_shaped_in_place() {
+    let original = "BT /F1 12 Tf 300 700 Td (BA) Tj ET BT /F1 12 Tf 72 600 Td (A) Tj ET";
+    let mut doc = arabic_ligature_page(original, false);
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    let typed = "مجلس الشورى ٣ Law 2026";
+    let result = text::rewrite_block(&mut doc, 0, 0, Some(typed), &text::BlockStyle::default());
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping: built without a craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        assert!(result.is_err(), "the old refusal stands without the face");
+        return;
+    }
+    assert_eq!(result.unwrap().substituted.as_deref(), Some("Noto Sans Arabic"));
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(texts.contains(&typed), "copy and search read the paragraph as typed: {texts:?}");
+    assert!(texts.contains(&"س"), "the other paragraph is untouched: {texts:?}");
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(!content.contains("(BA)"), "the old drawing is gone: {content}");
+    let added = list_added(&doc);
+    let [item] = added.as_slice() else { panic!("one added item: {added:?}") };
+    let Content::Text(t) = &item.content else { panic!("added text: {:?}", item.content) };
+    assert_eq!((t.text.as_str(), t.align, t.size), (typed, Align::Right, 12.0));
+    assert!((t.rect[2] - block.rect[2]).abs() < 0.01, "keeps the paragraph's right edge: {:?} vs {:?}", t.rect, block.rect);
+    let new = lines.iter().find(|l| l.text == typed).unwrap();
+    assert!((new.rect[2] - block.rect[2]).abs() < 1.0, "drawn up to the right edge: {:?} vs {:?}", new.rect, block.rect);
+
+    // Edited again as a paragraph, it is replaced, not stacked: still one added item.
+    let mut doc = doc;
+    let again = text::text_blocks(&doc, 0).unwrap().iter().position(|b| b.editor_text == typed).unwrap();
+    text::rewrite_block(&mut doc, 0, again, Some("نص جديد"), &text::BlockStyle::default()).unwrap();
+    let added: Vec<String> = list_added(&doc)
+        .into_iter()
+        .map(|a| match a.content {
+            Content::Text(t) => t.text,
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(added, ["نص جديد"]);
+
+    // A size change alone redraws it too, at the new size.
+    let mut doc = arabic_ligature_page(original, false);
+    let style = text::BlockStyle { size: Some(16.0), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, None, &style).unwrap();
+    let Content::Text(t) = &list_added(&doc)[0].content else { panic!("added text") };
+    assert_eq!((t.text.as_str(), t.size), (block.text.as_str(), 16.0));
+}
+
 #[test]
 fn replacing_arabic_actual_text_removes_the_whole_original_drawing() {
     let logical = "مرحبا بالعالم";
