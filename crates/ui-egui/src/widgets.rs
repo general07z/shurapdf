@@ -585,23 +585,17 @@ pub fn progress_notice(app: &PdfCraftApp, ctx: &egui::Context) -> bool {
     cancel
 }
 
-/// The ArtCraft wordmark (Storyteller's brand, docs/brand/; not open source), sized to `height`.
-pub fn artcraft_logo(ui: &mut egui::Ui, height: f32) -> Response {
-    let dark = ui.visuals().dark_mode;
-    let (uri, bytes): (&str, &'static [u8]) = if dark {
-        ("bytes://artcraft-logo-white.svg", include_bytes!("../../../docs/brand/artcraft-logo-white.svg"))
-    } else {
-        ("bytes://artcraft-logo.svg", include_bytes!("../../../docs/brand/artcraft-logo.svg"))
-    };
-    ui.add(egui::Image::from_bytes(uri, bytes).max_height(height).alt_text("ArtCraft"))
-}
-
-/// The ArtCraft mark (brand blue, works on light and dark), `size` points square.
-pub fn artcraft_mark(ui: &mut egui::Ui, size: f32) -> Response {
+/// The app's own icon (assets/app-icon), `size` points square. It stands where upstream shows
+/// the ArtCraft mark: that trademark may not appear in a fork (docs/brand terms), so this fork
+/// carries none of it.
+pub fn app_icon(ui: &mut egui::Ui, size: f32) -> Response {
     ui.add(
-        egui::Image::from_bytes("bytes://artcraft-mark.svg", include_bytes!("../../../docs/brand/artcraft-mark.svg"))
-            .fit_to_exact_size(vec2(size, size))
-            .alt_text("ArtCraft"),
+        egui::Image::from_bytes(
+            "bytes://app-icon-256.png",
+            include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"),
+        )
+        .fit_to_exact_size(vec2(size, size))
+        .alt_text(crate::PRODUCT_NAME),
     )
 }
 
@@ -967,6 +961,28 @@ mod tests {
         assert_eq!(fit_line(long, 0.0, width), "");
         assert_eq!(fit_line("ééé", 2.0, width), "é\u{2026}");
     }
+}
+
+/// Shows `add` lined up at the reading edge: as laid out, or at the right edge in a right-to-left
+/// interface. For headings and paragraphs; framed cards keep the column's own layout.
+pub(crate) fn at_reading_edge<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if crate::i18n::current().rtl() { ui.with_layout(egui::Layout::top_down(egui::Align::Max), add).inner } else { add(ui) }
+}
+
+/// A row (as `ui.horizontal`) that starts at the reading edge; its controls at the far end go in
+/// [`trailing_layout`].
+pub(crate) fn reading_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if !crate::i18n::current().rtl() {
+        return ui.horizontal(add).inner;
+    }
+    // One row high, as `ui.horizontal` is (a bare layout would take all the height left).
+    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), add).inner
+}
+
+/// The layout for the controls at the far end of a [`reading_row`].
+pub(crate) fn trailing_layout() -> egui::Layout {
+    if crate::i18n::current().rtl() { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) }
 }
 
 /// Places the parts of a hand-painted row (an icon, a label, a chip) from its start edge: the

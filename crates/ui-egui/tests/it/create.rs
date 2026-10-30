@@ -374,3 +374,32 @@ fn multiple_files_past_a_thousand_are_all_used() {
     let doc = app.session.get(app.views[0].id).unwrap();
     assert_eq!(doc.info.pages.len(), 1001, "every picked file is used, in order");
 }
+
+/// A protected Word file asks for its password with the same prompt as an encrypted PDF: a
+/// wrong password asks again, the right one opens the converted PDF as a new unsaved tab. The
+/// app runs as on the desktop (a context, background opening), where the prompt's answer used
+/// to go to the PDF opener, which hands a Word file back without its password.
+#[test]
+fn a_protected_word_file_asks_for_its_password_then_opens() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app
+    });
+    h.run_steps(3);
+    h.state_mut().create_from_word("locked.docx", &pdfcraft_word_import::testkit::encrypted_docx("سر-2026"));
+    h.run_steps(2);
+    assert!(h.state().password_prompt.is_some(), "asks for the password");
+    assert!(h.state().views.is_empty(), "nothing opened yet");
+    h.state_mut().submit_password(Some("wrong".into()));
+    h.run_steps(2);
+    let prompt = h.state().password_prompt.as_ref().expect("asks again");
+    assert!(prompt.error.is_some(), "says the password was wrong");
+    h.state_mut().submit_password(Some("سر-2026".into()));
+    for _ in 0..20 {
+        h.run_steps(1);
+    }
+    assert!(h.state().password_prompt.is_none());
+    assert_eq!(h.state().views.len(), 1, "the converted PDF is open");
+    assert_eq!(h.state().session.docs()[0].name, "locked.pdf");
+}

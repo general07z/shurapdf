@@ -35,6 +35,9 @@ pub enum EditError {
     Protection(String),
     #[error("the password is incorrect")]
     WrongPassword,
+    /// A password-protected file (a Word document) was given no password.
+    #[error("this document is protected with a password")]
+    PasswordRequired,
     #[error("{0}")]
     Form(#[from] pdfcraft_forms::FormError),
     #[error(transparent)]
@@ -77,7 +80,11 @@ pub enum EditError {
 
 impl From<pdfcraft_word_import::WordImportError> for EditError {
     fn from(e: pdfcraft_word_import::WordImportError) -> Self {
-        EditError::WordImport(e.to_string())
+        match e {
+            pdfcraft_word_import::WordImportError::Encrypted => EditError::PasswordRequired,
+            pdfcraft_word_import::WordImportError::WrongPassword => EditError::WrongPassword,
+            e => EditError::WordImport(e.to_string()),
+        }
     }
 }
 

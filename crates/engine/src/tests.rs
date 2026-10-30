@@ -9200,3 +9200,26 @@ fn added_arabic_bold_and_italic_render_and_extract() {
     };
     assert!(lean(&italic) > lean(&regular) + 1.0, "italic {} vs regular {}", lean(&italic), lean(&regular));
 }
+
+/// A Word 97-2003 `.doc` is a Word source too, and its Arabic text extracts in typing order.
+#[test]
+fn a_doc_file_converts_with_its_arabic_text() {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let doc = Arc::new(pdfcraft_word_import::testkit::synthetic_doc(&["مجلس الشورى", "Hello DOC"]));
+    let (kind, pdf) = s.convert_to_pdf("minutes.doc", &doc).unwrap();
+    assert_eq!(kind, SourceKind::Word);
+    let id = s.open_new("minutes.pdf", pdf).unwrap();
+    let texts = page_texts(&s, id);
+    assert!(texts[0].contains("مجلس الشورى") && texts[0].contains("Hello DOC"), "{texts:?}");
+}
+
+/// A protected Word file says it needs a password (not a generic read error), so the app can
+/// ask; a wrong password is refused as such, and the right one converts it.
+#[test]
+fn a_protected_word_file_asks_for_its_password() {
+    let s = Session::new();
+    let locked = Arc::new(pdfcraft_word_import::testkit::encrypted_docx("سر-2026"));
+    assert_eq!(s.convert_to_pdf("locked.docx", &locked).unwrap_err(), EditError::PasswordRequired);
+    assert_eq!(s.create_from_word(&locked, Some("wrong")).unwrap_err(), EditError::WrongPassword);
+    assert!(s.create_from_word(&locked, Some("سر-2026")).unwrap().starts_with(b"%PDF-"));
+}

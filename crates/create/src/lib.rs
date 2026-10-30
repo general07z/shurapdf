@@ -515,13 +515,15 @@ pub enum SourceKind {
 }
 
 /// File extensions Create converts to PDF (images, plain text and Word documents).
-pub const CONVERTIBLE: [&str; 13] = ["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx", "txt", "text", "docx"];
+pub const CONVERTIBLE: [&str; 14] = ["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx", "txt", "text", "docx", "doc"];
 
-/// A `.docx` by its name and its bytes: a zip package, or a compound file (a password-protected
-/// Word document, which the engine asks a password for). A zip named otherwise is not taken.
+/// A Word document by its name and its bytes: a `.docx` that is a zip package or a compound file
+/// (password-protected), or a `.doc` (Word 97-2003) compound file. A zip or compound file named
+/// otherwise is not taken.
 fn is_word(name: &str, bytes: &[u8]) -> bool {
-    name.to_ascii_lowercase().ends_with(".docx")
-        && (bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]))
+    let name = name.to_ascii_lowercase();
+    let compound = bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+    (name.ends_with(".docx") && (bytes.starts_with(b"PK\x03\x04") || compound)) || (name.ends_with(".doc") && compound)
 }
 
 /// A classic TIFF or a BigTIFF (version 43), in either byte order.

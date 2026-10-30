@@ -1,16 +1,12 @@
 <p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/artcraft-logo-white.svg">
-      <img alt="ArtCraft" src="docs/brand/artcraft-logo.svg" width="200">
-    </picture>
-  </a>
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png" width="128" height="128" alt="ShuraPDF icon: a PDF page carrying a domed council chamber, on red">
 </p>
 
-
-<p align="center">
-  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png" width="128" height="128" alt="PdfCraft icon: an engraved lion on a red tile">
-</p>
+> **ShuraPDF** is an Arabic-first fork of PdfCraft for the Shura Council, Kingdom of Bahrain:
+> Word to PDF, a mirrored Arabic interface and an Arabic-default Windows build. Setup:
+> [`docs/shura-setup.md`](docs/shura-setup.md) · Arabic work queue: [`docs/arabic-gaps.md`](docs/arabic-gaps.md) ·
+> Signing: [`docs/code-signing.md`](docs/code-signing.md). The rest of this README is upstream PdfCraft's.
+> As the ArtCraft brand terms require of forks, its logos are removed here; the names are kept only to credit the origin.
 
 <h1 align="center">PdfCraft</h1>
 
@@ -591,8 +587,7 @@ part of this repository and PdfCraft, under [`docs/brand/LICENSE-brand.txt`](doc
 Forks and modified versions must remove them.
 
 <p align="center">
-  <a href="https://getartcraft.com/"><img alt="ArtCraft" src="docs/brand/artcraft-mark.svg" width="28"></a><br>
-  <sub>Made by the <a href="https://getartcraft.com/">ArtCraft</a> team and community.</sub>
+  <sub>PdfCraft is made by the <a href="https://getartcraft.com/">ArtCraft</a> team and community.</sub>
 </p>
 
 The Tools panel sits on the left, or on the right with Preferences ▸ Tools panel side. The rail stays at the right edge and opens one side panel beside it. Drag a panel's inner edge to resize it; widths are remembered. F4 shows or hides the side panel and Shift+F4 the Tools panel (also in the View menu); View ▸ Reset side panels restores the default arrangement.

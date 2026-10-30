@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         [o] => (pdfcraft_word_import::testkit::synthetic_docx(), o.clone()),
         _ => return Err("usage: docx2pdf [in.docx] out.pdf".into()),
     };
-    let pdf = pdfcraft_word_import::docx_to_pdf(&input, &Default::default())?;
+    let pdf = pdfcraft_word_import::word_to_pdf(&input, &Default::default())?;
     std::fs::write(&output, pdf)?;
     Ok(())
 }
