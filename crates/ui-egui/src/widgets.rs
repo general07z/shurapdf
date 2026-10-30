@@ -963,6 +963,28 @@ mod tests {
     }
 }
 
+/// Shows `add` lined up at the reading edge: as laid out, or at the right edge in a right-to-left
+/// interface. For headings and paragraphs; framed cards keep the column's own layout.
+pub(crate) fn at_reading_edge<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if crate::i18n::current().rtl() { ui.with_layout(egui::Layout::top_down(egui::Align::Max), add).inner } else { add(ui) }
+}
+
+/// A row (as `ui.horizontal`) that starts at the reading edge; its controls at the far end go in
+/// [`trailing_layout`].
+pub(crate) fn reading_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if !crate::i18n::current().rtl() {
+        return ui.horizontal(add).inner;
+    }
+    // One row high, as `ui.horizontal` is (a bare layout would take all the height left).
+    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), add).inner
+}
+
+/// The layout for the controls at the far end of a [`reading_row`].
+pub(crate) fn trailing_layout() -> egui::Layout {
+    if crate::i18n::current().rtl() { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) }
+}
+
 /// Places the parts of a hand-painted row (an icon, a label, a chip) from its start edge: the
 /// left one, or the right one in a right-to-left interface, so the row mirrors as a whole.
 /// Geometry is written as for a left-to-right row and [`RowSide::rect`] and [`RowSide::pos`]
