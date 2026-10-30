@@ -33,6 +33,7 @@ pdfcraft-preflight = { workspace = true }
 pdfcraft-export = { workspace = true }
 pdfcraft-fonts = { workspace = true }
 pdfcraft-create = { workspace = true }
+pdfcraft-word-import = { workspace = true }
 pdfcraft-model = { workspace = true }
 pdfcraft-geom = { workspace = true }
 thiserror = { workspace = true }
@@ -53,4 +54,5 @@ unicode-segmentation = "1.13"
 chrono = { workspace = true, features = ["clock"] }
 
 [dev-dependencies]
+pdfcraft-word-import = { workspace = true, features = ["test-support"] }
 pdfcraft-testkit = { workspace = true }

@@ -6989,11 +6989,11 @@ title = "Create PDF from Office documents (LibreOffice sidecar)"
 area = "J"
 tier = "P2"
 milestone = "M10"
-status = "planned"
-commands = []
+status = "partial"
+commands = ["create.word"]
 tools = []
-evidence = []
-notes = ""
+evidence = ["crates/word-import/src/tests.rs::a_docx_becomes_a_pdf", "crates/word-import/src/tests.rs::garbage_is_an_error_not_a_panic", "crates/engine/src/tests.rs::a_word_file_opens_as_a_native_pdf_with_its_arabic_text"]
+notes = "Word (.docx) only, in-process through WordCraft (wordcraft-docx reads, wordcraft-layout lays out, wordcraft-pdf writes) instead of a LibreOffice sidecar. Embedded subset fonts with ToUnicode, tagged, outline from headings; Arabic right-to-left paragraphs shaped and extract in typing order (synthetic fixture; checked with pdffonts/pdftotext by hand). Missing: .doc/.rtf/.odt/.xlsx/.pptx, password prompt in the UI, an automation tool, Combine accepting .docx directly, comparison against Word's own PDF output."
 
 [[feature]]
 id = "create.create-multiple"

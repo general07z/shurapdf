@@ -1,0 +1,28 @@
+[package]
+name = "pdfcraft-word-import"
+description = "Convert Word (.docx) documents to PDF bytes through WordCraft's layout engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# A synthetic .docx for other crates' tests.
+test-support = ["dep:zip"]
+
+[dependencies]
+zip = { version = "3", default-features = false, features = ["deflate"], optional = true }
+# WordCraft crates from the sibling checkout (../shuraword). They inherit their own
+# workspace's settings, so they build exactly as they do in WordCraft.
+wordcraft-docx = { workspace = true }
+wordcraft-pdf = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+zip = { version = "3", default-features = false, features = ["deflate"] }
+
+[[example]]
+name = "docx2pdf"
+required-features = ["test-support"]

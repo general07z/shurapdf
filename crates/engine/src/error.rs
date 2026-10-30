@@ -49,6 +49,8 @@ pub enum EditError {
     Edit(#[from] pdfcraft_edit::EditError),
     #[error("{0}")]
     Create(#[from] pdfcraft_create::CreateError),
+    #[error("{0}")]
+    WordImport(String),
     #[error("the edited document could not be written: {0}")]
     Write(String),
     #[error("the edited document could not be reopened: {0}")]
@@ -71,6 +73,12 @@ pub enum EditError {
     Signed,
     #[error("{0}")]
     Invalid(String),
+}
+
+impl From<pdfcraft_word_import::WordImportError> for EditError {
+    fn from(e: pdfcraft_word_import::WordImportError) -> Self {
+        EditError::WordImport(e.to_string())
+    }
 }
 
 impl From<pdfcraft_sign::SignError> for EditError {

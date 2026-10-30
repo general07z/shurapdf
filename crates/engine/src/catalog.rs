@@ -166,6 +166,7 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
                 item("Multiple files", "files", "create.multiple", Ready),
                 item("Separate PDFs", "files", "create.multiple_separate", Ready),
                 item("Images", "image", "create.images", Ready),
+                item("Word document", "file-text", "create.word", Ready),
                 item("Clipboard", "copy-plus", "create.clipboard", Ready),
                 item("Blank page", "file-plus-2", "create.blank", Ready),
             ],
