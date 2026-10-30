@@ -228,15 +228,18 @@ fn row(ui: &mut egui::Ui, t: &Tokens, icon: &str, label: &str, availability: Ava
     }
     let body = rect.translate(press.offset());
     let fg = if ready { t.text } else { t.text_faint };
-    let icon_rect = Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0));
+    let side = widgets::RowSide::new(body);
+    let icon_rect = side.rect(Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0)));
     icons::paint(ui, icon_rect, icon, 17.0, fg);
     let font = theme::regular(13.5);
     let width = crate::widgets::text_width(ui, label, &font);
-    ui.painter().text(body.left_center() + vec2(34.0, 0.0), Align2::LEFT_CENTER, label, font, fg);
+    ui.painter().text(side.pos(body.left_center() + vec2(34.0, 0.0)), side.align(Align2::LEFT_CENTER), label, font, fg);
     if menu {
-        // The small corner triangle Acrobat puts after a label that opens a menu.
-        let tip = body.left_center() + vec2(34.0 + width + 6.0, 6.0);
-        let tri = vec![tip, tip + vec2(-5.0, 0.0), tip + vec2(0.0, -5.0)];
+        // The small corner triangle Acrobat puts after a label that opens a menu (mirrored, so
+        // still pointing into the row's end corner, in a right-to-left interface).
+        let tip = side.pos(body.left_center() + vec2(34.0 + width + 6.0, 6.0));
+        let back = if side.rtl { 5.0 } else { -5.0 };
+        let tri = vec![tip, tip + vec2(back, 0.0), tip + vec2(0.0, -5.0)];
         ui.painter().add(egui::Shape::convex_polygon(tri, fg, Stroke::NONE));
     }
     match availability {

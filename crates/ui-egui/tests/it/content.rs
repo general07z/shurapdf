@@ -946,3 +946,77 @@ fn a_resized_added_picture_shows_only_at_its_new_size() {
     let pixels = h.render().unwrap();
     assert!(red(&pixels, kept) > 100 && red(&pixels, gone) == 0, "the page raster has the picture at its new size");
 }
+
+/// W5: in the Arabic interface a new text box starts right-aligned (the start edge of a
+/// right-to-left interface), and typing Arabic in it behaves as in a word processor: the arrow
+/// keys move the caret on screen (Right goes back one letter in Arabic), Backspace removes one
+/// letter, and a Latin letter typed there lands at the caret, all kept in typing order.
+#[test]
+fn arabic_typing_in_a_new_text_box_follows_the_right_to_left_caret() {
+    let mut h = harness();
+    h.state_mut().set_option("language", "ar").unwrap();
+    h.run_steps(2);
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(2);
+    let p = at(&h, 40.0, 100.0);
+    click(&mut h, p);
+    h.event(egui::Event::Text("مرحبا".into()));
+    h.run_steps(2);
+    let draft = || h.state().views[0].content.draft.clone().expect("a text box is open");
+    assert_eq!(draft().style.align, pdfcraft_engine::TextAlign::Right, "starts at the right edge");
+    assert_eq!(draft().text, "مرحبا");
+    // The caret is after the last letter, at the left end of the word. Right moves it one letter
+    // back on screen, which in Arabic is one letter back in typing order.
+    h.key_press(egui::Key::ArrowRight);
+    h.run_steps(1);
+    h.event(egui::Event::Text("X".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].content.draft.as_ref().unwrap().text, "مرحبXا");
+    h.key_press(egui::Key::Backspace);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].content.draft.as_ref().unwrap().text, "مرحبا");
+    // Left moves the caret the other way: back to the end, where typing continues the word.
+    h.key_press(egui::Key::ArrowLeft);
+    h.run_steps(1);
+    h.event(egui::Event::Text(" ١٢".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].content.draft.as_ref().unwrap().text, "مرحبا ١٢");
+}
+
+/// W5: switching the interface to a right-to-left language moves the new-text alignment from
+/// the left edge to the right one and back; an alignment the user chose (centred) stays.
+#[test]
+fn new_text_alignment_follows_the_interface_direction_until_chosen() {
+    let mut h = harness();
+    assert_eq!(h.state().text_style.align, pdfcraft_engine::TextAlign::Left);
+    h.state_mut().set_option("language", "ar").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().text_style.align, pdfcraft_engine::TextAlign::Right);
+    h.state_mut().set_option("language", "en").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().text_style.align, pdfcraft_engine::TextAlign::Left);
+    h.state_mut().text_style.align = pdfcraft_engine::TextAlign::Center;
+    h.state_mut().set_option("language", "ar").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().text_style.align, pdfcraft_engine::TextAlign::Center);
+}
+
+/// W5: the Arabic interface is mirrored: the menus start at the right (File right of Help), the
+/// Tools pane is right of the page and the side panel rail left of it, and in the Tools pane a
+/// tool's icon is right of its label. English keeps the left-to-right layout.
+#[test]
+fn the_arabic_interface_is_mirrored() {
+    let mut h = harness();
+    let x = |h: &Harness<'static, PdfCraftApp>, label: &str| h.get_by_label(label).rect().center().x;
+    let page_x = |h: &Harness<'static, PdfCraftApp>| h.state().views[0].page_screen_rect(0).expect("on screen").center().x;
+    assert!(x(&h, "File") < x(&h, "Help"), "English: File first, at the left");
+    assert!(x(&h, "Combine files") < page_x(&h), "English: Tools pane left of the page");
+    assert!(x(&h, "Bookmarks") > page_x(&h), "English: rail right of the page");
+    h.state_mut().set_option("language", "ar").unwrap();
+    h.run_steps(4);
+    // Arabic titles carry their access key, as "ملف(F)".
+    let title_x = |h: &Harness<'static, PdfCraftApp>, label: &str| h.get_by_label_contains(label).rect().center().x;
+    assert!(title_x(&h, "ملف(") > title_x(&h, "مساعدة("), "Arabic: File (ملف) first, at the right");
+    assert!(x(&h, "دمج الملفات") > page_x(&h), "Arabic: Tools pane right of the page");
+    assert!(x(&h, "الإشارات المرجعية") < page_x(&h), "Arabic: rail left of the page");
+}

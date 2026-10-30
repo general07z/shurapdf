@@ -569,7 +569,13 @@ impl PdfCraftApp {
     /// couldn't be installed), where the top bar starts. Runs the commands chosen.
     pub(crate) fn menu_bar_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let bar = craft_menu::layout(&self.menu_bar(&ctx), Target::current(), &layout_options()).bar;
+        let mut bar = craft_menu::layout(&self.menu_bar(&ctx), Target::current(), &layout_options()).bar;
+        // The bar lays its titles out left to right whatever the direction: in a right-to-left
+        // interface the first menu (File) belongs at the right end, so the order is reversed.
+        // (In a row too short for every title, the leftmost ones then go into "⋯" first.)
+        if crate::i18n::current().rtl() {
+            bar.menus.reverse();
+        }
         let gate = self.menu_gate(&ctx);
         // The mode tabs, search and buttons follow the bar in the same row: it takes its titles'
         // width, less when the row is short, where the menus that don't fit move into its "⋯".

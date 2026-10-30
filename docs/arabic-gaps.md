@@ -1,6 +1,6 @@
 # Arabic PDF tool: gap tracker
 
-> **Status:** live · **Last updated:** 2026-10-30 (W3, W4 done; W2 synthetic part) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
+> **Status:** live · **Last updated:** 2026-10-30 (W3–W5, W7, W8 done; W2 synthetic part) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
 > Commit this file as `docs/arabic-gaps.md` in your fork. Update a row whenever its parity entry changes.
 
 ## Goals vs. what PdfCraft already has
@@ -25,12 +25,12 @@
 | Add **new** Arabic text (shaped, bidi, searchable, copy-paste in correct order) | ✅ | `edit.add-text` |
 | Read, search and copy Arabic from existing PDFs | ✅ | `create.text-extraction` |
 | Arabic in Word → PDF | ✅ shaped RTL, tables, headers, Arabic-Indic digits, heading bookmarks (synthetic tests) | `create.from-office` |
-| **Typing** right-to-left inside the text box (caret moves RTL) | ❌ | `misc.rtl-ui` |
+| **Typing** right-to-left inside the text box (caret moves RTL) | ✅ right-aligned box in the Arabic interface, caret moves on screen, Backspace one letter (kittest) | `misc.rtl-ui` |
 | Bold/italic for added Arabic text | ✅ synthetic bold (fill + stroke) and italic (slant), as Word draws a one-weight face | `edit.add-text` |
 | **Edit existing** Arabic text in a PDF (retype a paragraph) | 🟡 partial | `edit.rtl-cjk-editing` |
 | Arabic caret and selection while editing | ❌ | `edit.rtl-cjk-editing` |
 | Arabic fallback font when the PDF's font lacks a letter | ❌ | `edit.rtl-cjk-editing` |
-| Fully mirrored RTL interface, qualified with real IME input | 🟡 | `misc.rtl-ui` |
+| Fully mirrored RTL interface, qualified with real IME input | 🟡 menus, panes, rail, tool strip and tool rows mirrored; tab strip, some dialogs and real IME not yet | `misc.rtl-ui` |
 | Arabic in form fields / Fill & Sign text | ❓ verify | `form.fill-sign-text` |
 | Arabic OCR for scanned documents | ❓ verify (language selection is partial) | `ocr.ocr-languages` |
 
@@ -40,7 +40,7 @@
 - [ ] **W2** Test W1 on 10 real (non-confidential) Council documents: Arabic letters, tables, headers/footers, page numbers, Arabic-Indic digits, logos. Save **synthetic** copies as regression fixtures, never real documents. *Synthetic part done:* `rich_arabic_docx` (heading, mixed Arabic/Latin/digits, RTL table, header on two pages). **Needs the owner:** convert real documents with `pdfcraft-cli combine in.docx in.docx --out x.pdf` or the app and report what looks wrong.
 - [x] **W3** Combine accepts `.docx`: `SourceKind::Word` in `pdfcraft-create`, so Combine Files, Create multiple, Add folder, File ▸ Open and batch convert all take Word documents.
 - [x] **W4** Automation: `doc_create` `from: "word"` (with `password`), `doc_create_multiple` and batch `convert` take `.docx`; `pdfcraft-cli combine` takes `.docx`.
-- [ ] **W5** RTL typing in the Add Text box: the caret, Backspace/Delete, Home/End and arrow keys follow visual order (`misc.rtl-ui`). Start from WordCraft's RTL caret code (it already handles Arabic Backspace, #4757). *Assessed 2026-10-30:* a large change in `ui-egui` (the most contested crate upstream); also mirror the layout — the Arabic screenshot shows the All tools panel on the left and the menus starting at the left. Do it as its own series of PRs, checked with `cargo run -p pdfcraft-ui-egui --example shot -- out.png file.pdf --language ar` (needs a GPU or Mesa lavapipe).
+- [x] **W5** Right-to-left interface and typing (`misc.rtl-ui`, partial): menus from the right, Tools pane right, rail and side panel left, Select/Hand bar right, tool rows icon-right; a new text box starts right-aligned and the caret moves on screen in Arabic. **Follow-ups:** mirror the tab strip, check dialogs one by one with `--example shot -- --language ar`, and try real Windows Arabic keyboard input (IME) on a Council PC.
 - [ ] **W6** Edit existing Arabic paragraphs: shaping when retyping, plus a fallback to the craft-fonts Arabic face (`edit.rtl-cjk-editing`). *Assessed:* large (the existing-text editor in `crates/edit`); after W5, which it shares the caret work with.
 - [x] **W7** Bold and italic Arabic (also Hebrew, Thai) in added text: synthetic bold (fill + stroke, 3% of the size) and italic (0.21 slant), as WordCraft and Word do. A real bold Arabic face (craft-fonts has Regular only) would look better still.
 - [x] **W8** Council builds default to Arabic: build with `PDFCRAFT_DEFAULT_LANGUAGE=ar` and a fresh install starts in Arabic whatever the Windows language (saved settings still win; Preferences ▸ Language can change it). RTL review done by screenshot: text and translation good, "Window" menu translated; the layout is not mirrored yet (moved to W5).

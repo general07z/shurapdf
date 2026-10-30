@@ -169,8 +169,15 @@ fn edit_row(ui: &mut egui::Ui, t: &Tokens, icon: &str, label: &str, availability
     let body = rect.translate(press.offset());
     let ready = availability == Availability::Ready;
     let fg = if ready { t.text } else { t.text_muted };
-    icons::paint(ui, Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0)), icon, 17.0, if ready { t.text } else { t.text_faint });
-    row_label(ui, label, theme::regular(13.5), fg, body.left_center() + vec2(34.0, 0.0), rect.width() - 42.0);
+    let side = crate::widgets::RowSide::new(body);
+    icons::paint(
+        ui,
+        side.rect(Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0))),
+        icon,
+        17.0,
+        if ready { t.text } else { t.text_faint },
+    );
+    row_label(ui, label, theme::regular(13.5), fg, side, 34.0, rect.width() - 42.0);
     let resp = theme::hand(resp);
     match availability {
         Availability::Ready => resp,
