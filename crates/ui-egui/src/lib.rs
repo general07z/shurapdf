@@ -626,6 +626,8 @@ pub struct PdfCraftApp {
     pub link_draft: Option<LinkDraft>,
     /// The style new text gets (Edit a PDF ▸ Format text).
     pub text_style: pdfcraft_engine::AddedText,
+    /// The interface direction `text_style`'s alignment last followed (right to left: `true`).
+    pub(crate) text_style_rtl: bool,
     /// The Replace Pages dialog's state.
     pub replace_draft: Option<files::ReplaceDraft>,
     /// The last web link the app asked the system to open (tests and automation).

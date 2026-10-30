@@ -483,13 +483,22 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         .exact_size(48.0)
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.divider)))
         .show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
+            // Menus and mode tabs start at the reading edge: the right one in a right-to-left
+            // interface, where the buttons and search move to the left end.
+            let rtl = crate::i18n::current().rtl();
+            let (lead, trail) = if rtl {
+                (Layout::right_to_left(Align::Center), Layout::left_to_right(Align::Center))
+            } else {
+                (Layout::left_to_right(Align::Center), Layout::right_to_left(Align::Center))
+            };
+            ui.with_layout(lead, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 // The menus, unless the native macOS menu bar has them.
                 if app.native_menu.is_none() {
                     app.menu_bar_ui(ui);
                     ui.add_space(6.0);
-                    ui.painter().vline(ui.cursor().left(), ui.max_rect().y_range().shrink(12.0), Stroke::new(1.0, t.divider));
+                    let x = if rtl { ui.cursor().right() } else { ui.cursor().left() };
+                    ui.painter().vline(x, ui.max_rect().y_range().shrink(12.0), Stroke::new(1.0, t.divider));
                     ui.add_space(10.0);
                 }
                 // Acrobat's mode bar has no Read tab: reading is what the viewer does with no tool
@@ -499,7 +508,7 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         app.switch_mode(mode, true);
                     }
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.with_layout(trail, |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let has_doc = app.active.is_some();
                     ui.add_enabled_ui(has_doc, |ui| {
@@ -573,6 +582,8 @@ pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut page_display = None;
     let rail = Rail::new(egui::Id::unique("rail"))
         .edge(Edge::End)
+        // In a right-to-left interface the end edge is the left one.
+        .rtl(crate::i18n::current().rtl())
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)))
         .show(ui, &items, app.right.as_ref(), |ui| {
             // Page navigation cluster at the bottom, a panel of its own so that in a short

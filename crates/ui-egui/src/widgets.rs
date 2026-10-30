@@ -968,3 +968,50 @@ mod tests {
         assert_eq!(fit_line("ééé", 2.0, width), "é\u{2026}");
     }
 }
+
+/// Places the parts of a hand-painted row (an icon, a label, a chip) from its start edge: the
+/// left one, or the right one in a right-to-left interface, so the row mirrors as a whole.
+/// Geometry is written as for a left-to-right row and [`RowSide::rect`] and [`RowSide::pos`]
+/// move it to the mirrored spot.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RowSide {
+    pub body: egui::Rect,
+    pub rtl: bool,
+}
+
+impl RowSide {
+    /// `body`'s side for the current interface direction.
+    pub fn new(body: egui::Rect) -> Self {
+        Self { body, rtl: crate::i18n::current().rtl() }
+    }
+
+    fn x(self, x: f32) -> f32 {
+        if self.rtl { self.body.left() + self.body.right() - x } else { x }
+    }
+
+    /// `r`, laid out for a left-to-right row, where it belongs in this one.
+    pub fn rect(self, r: egui::Rect) -> egui::Rect {
+        if !self.rtl {
+            return r;
+        }
+        egui::Rect::from_x_y_ranges(self.x(r.right())..=self.x(r.left()), r.y_range())
+    }
+
+    /// `p`, laid out for a left-to-right row, where it belongs in this one.
+    pub fn pos(self, p: egui::Pos2) -> egui::Pos2 {
+        egui::pos2(self.x(p.x), p.y)
+    }
+
+    /// Text anchored with `a` in a left-to-right row, anchored the mirrored way.
+    pub fn align(self, a: egui::Align2) -> egui::Align2 {
+        if !self.rtl {
+            return a;
+        }
+        let x = match a.x() {
+            egui::Align::Min => egui::Align::Max,
+            egui::Align::Max => egui::Align::Min,
+            c => c,
+        };
+        egui::Align2([x, a.y()])
+    }
+}

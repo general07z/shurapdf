@@ -276,11 +276,16 @@ fn notice_bar(ui: &mut egui::Ui, t: &Tokens, icon: &str, icon_color: Color32, te
     });
 }
 
-/// The floating quick-action bar at the left edge of the document area.
+/// The floating quick-action bar at the start edge of the document area (the right one in a
+/// right-to-left interface, beside the Tools pane there).
 pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let pos = area.left_top() + vec2(14.0, 14.0);
-    egui::Area::new(egui::Id::unique("quick-bar")).order(egui::Order::Middle).fixed_pos(pos).show(ui.ctx(), |ui| {
+    let (pos, pivot) = if crate::i18n::current().rtl() {
+        (area.right_top() + vec2(-14.0, 14.0), egui::Align2::RIGHT_TOP)
+    } else {
+        (area.left_top() + vec2(14.0, 14.0), egui::Align2::LEFT_TOP)
+    };
+    egui::Area::new(egui::Id::unique("quick-bar")).order(egui::Order::Middle).pivot(pivot).fixed_pos(pos).show(ui.ctx(), |ui| {
         egui::Frame::NONE
             .fill(t.card)
             .stroke(Stroke::new(1.0, t.border))

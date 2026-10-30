@@ -10165,11 +10165,11 @@ title = "Right-to-left user interface"
 area = "N"
 tier = "P2"
 milestone = "M14"
-status = "planned"
+status = "partial"
 commands = []
 tools = []
-evidence = []
-notes = "Implemented and unit-tested: Arabic and Hebrew file names and paths in the tab strip, the recent-files list and Properties have glyphs (a craft-fonts Arab face, or an installed font on desktop), keep logical text and are laid out left to right so the extension stays at the visual end; Arabic and Kurdish interface labels use an explicit right-to-left paragraph direction and stock chrome mirrors through Style::right_to_left (crates/ui-egui/src/bidi.rs, theme.rs); catalogs are never preordered. Still not qualified: native and browser end-to-end RTL input, IME composition, clipboard/selection and complex multi-line RTL workflows. Status stays planned until those workflows are accepted."
+evidence = ["crates/ui-egui/tests/it/content.rs::the_arabic_interface_is_mirrored", "crates/ui-egui/tests/it/content.rs::arabic_typing_in_a_new_text_box_follows_the_right_to_left_caret", "crates/ui-egui/tests/it/content.rs::new_text_alignment_follows_the_interface_direction_until_chosen"]
+notes = "Mirrored in a right-to-left interface (Arabic, Hebrew, Kurdish…; W5 in docs/arabic-gaps.md): the menus start at the right (the menu list is reversed, since the shared bar lays titles out left to right; in a row too short for all titles the leftmost go into ⋯ first), the mode tabs follow them, search and the Print/Save/Properties buttons move to the left end; the Tools pane (Start) docks right and the side panel and rail (End) left, through craft-ui PaneHost/Rail rtl; the floating Select/Hand bar sits at the right edge of the page area; Tools pane, tool detail, Edit and Organize rows put the icon right of a right-aligned label, chips and hints at the left. Typing in an Add Text box: the box starts right-aligned in a right-to-left interface (new-text alignment follows the start edge when the direction changes, unless another alignment was chosen), egui lays out the paragraph by its first strong letter and moves the caret on screen (Right goes back one letter in Arabic), Backspace removes one letter (kittest). Arabic and Hebrew file names in tabs, recent files and Properties keep logical text and glyphs (crates/ui-egui/src/bidi.rs). Not yet: the tab strip and window title bar are not mirrored; dialogs laid out with ui.horizontal and other hand-placed widgets are not all checked; native and browser IME composition, clipboard and multi-line selection in right-to-left text are not qualified on real systems."
 
 [[feature]]
 id = "misc.installers"

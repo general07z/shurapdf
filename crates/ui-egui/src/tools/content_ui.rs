@@ -279,6 +279,24 @@ pub fn default_style() -> AddedText {
     AddedText { size: 12.0, ..AddedText::default() }
 }
 
+/// New text starts at the interface's start edge, as in Word: when the direction changes
+/// (`rtl`, against `followed`, the direction last followed), alignment at the old start edge
+/// moves to the new one. Centred, justified and an alignment chosen at the other edge stay.
+pub(crate) fn follow_direction(style: &mut AddedText, followed: &mut bool, rtl: bool) {
+    if *followed == rtl {
+        return;
+    }
+    let (old_start, new_start) = if rtl {
+        (pdfcraft_engine::TextAlign::Left, pdfcraft_engine::TextAlign::Right)
+    } else {
+        (pdfcraft_engine::TextAlign::Right, pdfcraft_engine::TextAlign::Left)
+    };
+    if style.align == old_start {
+        style.align = new_start;
+    }
+    *followed = rtl;
+}
+
 /// Display-space rect → screen.
 fn screen_rect(xf: &PageXform, info: &DocInfo, page: usize, r: [f64; 4]) -> Rect {
     let ph = info.pages[page].height as f64;

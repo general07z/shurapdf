@@ -391,6 +391,9 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     // Columns: both panes may share the right edge, Tools outermost, as `open` lists them.
     let output = PaneHost::new(egui::Id::unique("pdfcraft-side-panels"))
         .policy(SidePolicy::Columns)
+        // Start and End follow the interface direction: in Arabic the Tools pane (Start by
+        // default) is on the right and the side panel with the rail on the left.
+        .rtl(crate::i18n::current().rtl())
         .f6(false)
         .labels(labels)
         .frame(egui::Frame::NONE.fill(t.panel))
