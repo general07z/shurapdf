@@ -44,6 +44,13 @@ impl Automation {
                 })?;
                 (format!("{title}.pdf"), bytes)
             }
+            "word" => {
+                let p = a.opt_str("path")?.ok_or_else(|| ToolError::InvalidArgs("word needs `path` (a .docx file)".into()))?;
+                let path = self.resolve(p, false)?;
+                let bytes = read_input(&path)?;
+                let title = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Document".into());
+                (format!("{title}.pdf"), self.session.create_from_word(&bytes, a.opt_str("password")?).map_err(failed)?)
+            }
             other => return Err(ToolError::InvalidArgs(format!("unknown source {other:?}"))),
         };
         let name = a.opt_str("name")?.map(str::to_owned).unwrap_or(name);

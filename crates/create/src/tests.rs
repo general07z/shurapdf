@@ -438,7 +438,7 @@ fn source_kind_tells_pdfs_images_and_text_apart() {
     // Text that merely starts like a BMP stays text; a truncated BMP header is not an image.
     assert_eq!(source_kind("b.txt", b"BMW drivers"), Some(SourceKind::Text));
     assert_eq!(source_kind("b.bmp", b"BM"), None);
-    assert_eq!(source_kind("a.docx", b"PK\x03\x04"), None);
+    assert_eq!(source_kind("a.docx", b"PK\x03\x04"), Some(SourceKind::Word));
     assert_eq!(source_kind("", b""), None);
     // Only the GIF versions Create decodes count as images, so detection never promises a
     // conversion that then fails.
@@ -1337,4 +1337,17 @@ fn a_tiny_gif_on_a_huge_screen_is_refused() {
     assert!(matches!(from_images(&[("big.gif".into(), gif_on_screen(4200, 4100))]), Err(CreateError::Image(..))));
     let doc = reopen(&from_images(&[("small.gif".into(), gif_on_screen(40, 30))]).unwrap());
     assert_eq!(media(&pages(&doc)[0]), [0.0, 0.0, 40.0, 30.0]);
+}
+
+/// Create PDF from Word: a .docx is a Word source by its name and a zip or compound-file
+/// (password-protected) header; a zip under another name, or text named .docx, is not.
+#[test]
+fn source_kind_finds_word_documents() {
+    assert_eq!(source_kind("letter.docx", b"PK\x03\x04rest"), Some(SourceKind::Word));
+    assert_eq!(source_kind("LETTER.DOCX", b"PK\x03\x04"), Some(SourceKind::Word));
+    assert_eq!(source_kind("locked.docx", &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0]), Some(SourceKind::Word));
+    assert_eq!(source_kind("archive.zip", b"PK\x03\x04"), None);
+    assert_eq!(source_kind("fake.docx", b"just text"), None);
+    assert_eq!(source_kind("letter.docx", b""), None);
+    assert!(CONVERTIBLE.contains(&"docx"));
 }

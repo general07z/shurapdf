@@ -510,10 +510,19 @@ pub enum SourceKind {
     Pdf,
     Image,
     Text,
+    /// A Word document (`.docx`), converted by the engine through WordCraft.
+    Word,
 }
 
-/// File extensions Create converts to PDF (images and plain text).
-pub const CONVERTIBLE: [&str; 12] = ["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx", "txt", "text"];
+/// File extensions Create converts to PDF (images, plain text and Word documents).
+pub const CONVERTIBLE: [&str; 13] = ["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx", "txt", "text", "docx"];
+
+/// A `.docx` by its name and its bytes: a zip package, or a compound file (a password-protected
+/// Word document, which the engine asks a password for). A zip named otherwise is not taken.
+fn is_word(name: &str, bytes: &[u8]) -> bool {
+    name.to_ascii_lowercase().ends_with(".docx")
+        && (bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]))
+}
 
 /// A classic TIFF or a BigTIFF (version 43), in either byte order.
 fn is_tiff(bytes: &[u8]) -> bool {
@@ -547,6 +556,9 @@ pub fn source_kind(name: &str, bytes: &[u8]) -> Option<SourceKind> {
     }
     if is_image(bytes) {
         return Some(SourceKind::Image);
+    }
+    if is_word(name, bytes) {
+        return Some(SourceKind::Word);
     }
     let lower = name.to_ascii_lowercase();
     (lower.ends_with(".txt") || lower.ends_with(".text")).then_some(SourceKind::Text)

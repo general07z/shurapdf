@@ -288,8 +288,11 @@ pub(crate) fn combine(args: &[String]) -> Result<(), CliError> {
     if inputs.len() < 2 {
         return Err("combine: give at least two input files".into());
     }
-    let sources = inputs.iter().map(|p| Ok((file_stem(p), read(p)?))).collect::<Result<Vec<_>, String>>()?;
-    let bytes = pdfcraft_engine::Session::new().combine(&sources).map_err(|e| e.to_string())?;
+    let session = pdfcraft_engine::Session::new();
+    // Images, text files and Word documents become PDFs first, as in the app's Combine Files.
+    let sources =
+        inputs.iter().map(|p| Ok((file_stem(p), session.as_pdf(p, &read(p)?).map_err(|e| e.to_string())?))).collect::<Result<Vec<_>, String>>()?;
+    let bytes = session.combine(&sources).map_err(|e| e.to_string())?;
     write_pdf(Path::new(out), &bytes)
 }
 

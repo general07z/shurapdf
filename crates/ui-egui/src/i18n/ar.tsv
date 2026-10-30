@@ -59,6 +59,11 @@
 	New blank PDF	ملف PDF فارغ جديد
 	Create PDF from file…	إنشاء PDF من ملف…
 	Create PDF from images…	إنشاء PDF من صور…
+	Create PDF from Word…	إنشاء PDF من Word…
+	Word document	مستند Word
+	Word documents	مستندات Word
+	Choose a Word document	اختر مستند Word
+	On the web, open or drop a Word document to convert it	على الويب، افتح مستند Word أو أفلته لتحويله
 	Create PDF from clipboard	إنشاء PDF من الحافظة
 	Combine files…	دمج الملفات…
 	Save	حفظ
@@ -2135,6 +2140,7 @@
 	Cancelling…	جارٍ الإلغاء…
 	Created a PDF from {n} files	أُنشئ ملف PDF من {n} ملفات
 	PDF, images and text	PDF وصور ونص
+	PDF, images, text and Word	PDF وصور ونص وWord
 	Insert a file before page {label}	إدراج ملف قبل الصفحة {label}
 	Insert a file at the end	إدراج ملف في النهاية
 	Save pages	حفظ الصفحات

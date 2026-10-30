@@ -1,6 +1,6 @@
 # Arabic PDF tool: gap tracker
 
-> **Status:** live · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
+> **Status:** live · **Last updated:** 2026-10-30 (W3, W4 done; W2 synthetic part) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
 > Commit this file as `docs/arabic-gaps.md` in your fork. Update a row whenever its parity entry changes.
 
 ## Goals vs. what PdfCraft already has
@@ -12,8 +12,8 @@
 | 3 | **Compress PDF** | ✅ shipped / 🟡 advanced | `optimize.reduce-file-size` ✅, `optimize.optimizer` 🟡 | presets, batch optimize, JBIG2 |
 | 4 | **Bookmarks** | ✅ shipped | `organize.bookmark-*`, `organize.bookmarks-from-structure` | bookmark actions |
 | 5 | **Signature** | ✅ shipped | `form.fill-sign-signature` (drawn/typed/image), `sign.pkcs12`, `sign.windows-cert-store`, `sign.visible-signature`, `sign.validate-all` | PKCS#11 smart cards/tokens, timestamp server config, LTV is partial |
-| 6 | **Word → PDF** | 🟡 **this patch** | `create.from-office` | `.doc`/`.rtf`, password prompt, automation tool, testing on real documents |
-| 7 | **Combine PDF + Word** | 🟡 PDFs ✅, Word ❌ | `organize.combine-files` | Combine dialog must accept `.docx` (convert first) |
+| 6 | **Word → PDF** | ✅ app, tools, CLI (synthetic tests) | `create.from-office` | `.doc`/`.rtf`, password prompt in the UI, testing on real documents (W2) |
+| 7 | **Combine PDF + Word** | ✅ Combine Files, Create multiple, add folder, `pdfcraft-cli combine` | `organize.combine-files` | nothing for `.docx`; `.doc` is not supported |
 | 8 | **Arabic writing and editing** | 🟡 **main gap** | see below | see below |
 | 9 | **Edit PDF** | 🟡 mostly shipped | `edit.text-edit` 🟡, `edit.add-text` ✅, `edit.image-*` ✅ | lists, find/replace in edit mode, vector editing |
 
@@ -24,7 +24,7 @@
 | Arabic interface translation (menus, dialogs, 6 plural forms) | 🟡 partial | `misc.localization` |
 | Add **new** Arabic text (shaped, bidi, searchable, copy-paste in correct order) | ✅ | `edit.add-text` |
 | Read, search and copy Arabic from existing PDFs | ✅ | `create.text-extraction` |
-| Arabic in Word → PDF | ✅ (this patch, synthetic test) | `create.from-office` |
+| Arabic in Word → PDF | ✅ shaped RTL, tables, headers, Arabic-Indic digits, heading bookmarks (synthetic tests) | `create.from-office` |
 | **Typing** right-to-left inside the text box (caret moves RTL) | ❌ | `misc.rtl-ui` |
 | Bold/italic for added Arabic text | ❌ (regular only) | `edit.add-text` notes |
 | **Edit existing** Arabic text in a PDF (retype a paragraph) | 🟡 partial | `edit.rtl-cjk-editing` |
@@ -36,10 +36,10 @@
 
 ## Work queue (do in order, one PR each)
 
-- [x] **W1** Create ▸ PDF from Word (`0001-create-pdf-from-word.patch`)
-- [ ] **W2** Test W1 on 10 real (non-confidential) Council documents: Arabic letters, tables, headers/footers, page numbers, Arabic-Indic digits, logos. Save **synthetic** copies as regression fixtures, never real documents.
-- [ ] **W3** Combine dialog accepts `.docx`: in `Session::combine*`, convert any source whose bytes are a ZIP with `word/document.xml` through `create_from_word` before `open_source`.
-- [ ] **W4** Automation tool `create_from_word` (AGENTS.md §3 requires a headless tool per feature) + CLI `pdfcraft-cli create-word in.docx out.pdf`.
+- [x] **W1** Create ▸ PDF from Word (#1, #2)
+- [ ] **W2** Test W1 on 10 real (non-confidential) Council documents: Arabic letters, tables, headers/footers, page numbers, Arabic-Indic digits, logos. Save **synthetic** copies as regression fixtures, never real documents. *Synthetic part done:* `rich_arabic_docx` (heading, mixed Arabic/Latin/digits, RTL table, header on two pages). **Needs the owner:** convert real documents with `pdfcraft-cli combine in.docx in.docx --out x.pdf` or the app and report what looks wrong.
+- [x] **W3** Combine accepts `.docx`: `SourceKind::Word` in `pdfcraft-create`, so Combine Files, Create multiple, Add folder, File ▸ Open and batch convert all take Word documents.
+- [x] **W4** Automation: `doc_create` `from: "word"` (with `password`), `doc_create_multiple` and batch `convert` take `.docx`; `pdfcraft-cli combine` takes `.docx`.
 - [ ] **W5** RTL typing in the Add Text box: the caret, Backspace/Delete, Home/End and arrow keys follow visual order (`misc.rtl-ui`). Start from WordCraft's RTL caret code (it already handles Arabic Backspace, #4757).
 - [ ] **W6** Edit existing Arabic paragraphs: shaping when retyping, plus a fallback to the craft-fonts Arabic face (`edit.rtl-cjk-editing`).
 - [ ] **W7** Bold Arabic in added text (synthetic bold like WordCraft's fill+stroke, or a bold Arabic face from craft-fonts).
