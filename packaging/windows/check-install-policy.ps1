@@ -288,8 +288,9 @@ try {
     throw 'HKCR keys must be relative to Classes.'
   }
   foreach ($entry in $policy.registry) {
-    # Display names (a value that is the product's name) follow the brand.
-    $value = if ($entry[3] -eq $policy.name) { $brand } else { $entry[3] }
+    # Display names and labels ("Edit with <product>") follow the brand; the name inside a key, path
+    # or ProgID (Software\PdfCraft\..., PdfCraft.Document) does not.
+    $value = $entry[3] -creplace ('(?<![\\.\w])' + [regex]::Escape($policy.name) + '(?![\\.\w])'), $brand.Replace('$', '$$')
     $found = @($registry | Where-Object { $_[0] -eq $entry[0] -and $_[1] -eq $entry[1] -and $_[2] -eq $entry[2] -and $_[3] -eq $value })
     if ($found.Count -ne 1) { throw "Lost or changed registration: $($entry[1]) / $($entry[2])" }
   }
