@@ -9,6 +9,11 @@ param([Parameter(Mandatory = $true)] [string] $MsiPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $policy = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'install-policy.json') | ConvertFrom-Json
+# A branded build (package.ps1 passes PDFCRAFT_PRODUCT_NAME and PDFCRAFT_UPGRADE_CODE to WiX) installs
+# under its own name and upgrade identity: the install folder and display names follow the brand, while
+# registry keys and ProgIDs keep the policy's names.
+$brand = if ($env:PDFCRAFT_PRODUCT_NAME) { $env:PDFCRAFT_PRODUCT_NAME } else { $policy.name }
+$upgradeCode = if ($env:PDFCRAFT_UPGRADE_CODE) { $env:PDFCRAFT_UPGRADE_CODE.Trim('{}') } else { $policy.upgradeCode }
 function Read-Rows($Database, [string] $Sql, [int] $Columns) {
   $view = $Database.OpenView($Sql)
   try {
@@ -82,7 +87,7 @@ try {
   if ($properties['ALLUSERS'] -ne '2' -or $properties['MSIINSTALLPERUSER'] -ne '1') {
     throw 'Policy regression: new packages must default to the per-user dual-scope context.'
   }
-  if ($properties['UpgradeCode'].Trim('{}') -ne $policy.upgradeCode) { throw 'The existing upgrade identity must not change.' }
+  if ($properties['UpgradeCode'].Trim('{}') -ne $upgradeCode) { throw 'The existing upgrade identity must not change.' }
   $directories = @{}
   foreach ($row in (Read-Rows $database 'SELECT `Directory`, `Directory_Parent`, `DefaultDir` FROM `Directory`' 3)) {
     $directories[$row[0]] = @($row[1], $row[2])
@@ -161,7 +166,7 @@ try {
   $machineRoot = if ((Get-PackageTemplate $database) -match '^Intel') {
     if (Get-SessionProperty $session 'VersionNT64') { ${env:ProgramFiles(x86)} } else { $env:ProgramFiles }
   } elseif ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
-  $machineFolder = (Join-Path $machineRoot "ArtCraft\$($policy.name)") + '\'
+  $machineFolder = (Join-Path $machineRoot "ArtCraft\$brand") + '\'
   foreach ($scope in @('1', '')) {
     Set-SessionProperty $session 'ALLUSERS' $scope
     Set-SessionProperty $session 'INSTALLFOLDER' ''
@@ -171,7 +176,7 @@ try {
       if ($session.EvaluateCondition($row[2]) -eq 1 -and $session.DoAction($row[0]) -ne 1) { throw "$($row[0]) failed." }
     }
     $folder = Get-SessionProperty $session 'INSTALLFOLDER'
-    $wanted = if ($scope -eq '1') { $machineFolder } else { (Join-Path $env:LOCALAPPDATA "Programs\ArtCraft\$($policy.name)") + '\' }
+    $wanted = if ($scope -eq '1') { $machineFolder } else { (Join-Path $env:LOCALAPPDATA "Programs\ArtCraft\$brand") + '\' }
     if ($folder -ine $wanted) { throw "Wizard default folder for ALLUSERS='$scope' is '$folder', expected '$wanted'." }
   }
   $execute = @{}
@@ -283,7 +288,9 @@ try {
     throw 'HKCR keys must be relative to Classes.'
   }
   foreach ($entry in $policy.registry) {
-    $found = @($registry | Where-Object { $_[0] -eq $entry[0] -and $_[1] -eq $entry[1] -and $_[2] -eq $entry[2] -and $_[3] -eq $entry[3] })
+    # Display names (a value that is the product's name) follow the brand.
+    $value = if ($entry[3] -eq $policy.name) { $brand } else { $entry[3] }
+    $found = @($registry | Where-Object { $_[0] -eq $entry[0] -and $_[1] -eq $entry[1] -and $_[2] -eq $entry[2] -and $_[3] -eq $value })
     if ($found.Count -ne 1) { throw "Lost or changed registration: $($entry[1]) / $($entry[2])" }
   }
   $installDir = @($registry | Where-Object { $_[0] -eq '-1' -and $_[1] -eq "Software\$($policy.name)" -and $_[2] -eq 'InstallDir' -and $_[3] -eq '[INSTALLFOLDER]' })
