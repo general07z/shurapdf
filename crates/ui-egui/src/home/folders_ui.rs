@@ -292,18 +292,20 @@ pub(crate) fn section(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     app.refresh_pinned(ui.input(|i| i.time));
     let mut pin = false;
-    ui.horizontal(|ui| {
+    widgets::reading_row(ui, |ui| {
         ui.label(egui::RichText::new(tl!("Folders")).font(theme::semibold(17.0)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.with_layout(widgets::trailing_layout(), |ui| {
             pin = widgets::ghost_button(ui, "folder-plus", tl!("Pin a folder…")).clicked();
         });
     });
     ui.add_space(4.0);
     if app.pinned.folders.is_empty() {
-        ui.label(
-            egui::RichText::new(tl!("Pin a folder to list its newest PDFs here, such as where your scanner or a synced cloud drive saves them."))
-                .color(t.text_muted),
-        );
+        widgets::at_reading_edge(ui, |ui| {
+            ui.label(
+                egui::RichText::new(tl!("Pin a folder to list its newest PDFs here, such as where your scanner or a synced cloud drive saves them."))
+                    .color(t.text_muted),
+            )
+        });
     }
     let mut open = None;
     let mut unpin = None;

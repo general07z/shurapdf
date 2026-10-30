@@ -25,12 +25,14 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
-            ui.label(egui::RichText::new(tl!("Welcome to PdfCraft")).font(theme::semibold(24.0)));
-            ui.label(
-                egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
-                    .color(t.text_muted)
-                    .font(theme::regular(14.0)),
-            );
+            widgets::at_reading_edge(ui, |ui| {
+                ui.label(egui::RichText::new(tl!("Welcome to PdfCraft")).font(theme::semibold(24.0)));
+                ui.label(
+                    egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
+                        .color(t.text_muted)
+                        .font(theme::regular(14.0)),
+                );
+            });
             ui.add_space(14.0);
             if !app.community_card_closed {
                 egui::Frame::NONE
@@ -68,9 +70,15 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 .inner_margin(egui::Margin::same(18))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(egui::RichText::new(tl!("Recommended tools")).font(theme::semibold(15.0)));
+                    widgets::at_reading_edge(ui, |ui| ui.label(egui::RichText::new(tl!("Recommended tools")).font(theme::semibold(15.0))));
                     ui.add_space(10.0);
-                    ui.horizontal_wrapped(|ui| {
+                    // The cards start at the reading edge: the right one in a right-to-left interface.
+                    let row = if crate::i18n::current().rtl() {
+                        egui::Layout::right_to_left(egui::Align::Min).with_main_wrap(true)
+                    } else {
+                        egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true)
+                    };
+                    ui.with_layout(row, |ui| {
                         ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
                         for id in RECOMMENDED {
                             let Some(g) = catalog::group(id) else { continue };
@@ -82,31 +90,50 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             ui.painter().rect(rect, CornerRadius::same(10), fill, Stroke::new(1.0, t.divider), egui::StrokeKind::Inside);
                             let body = rect.translate(press.offset());
                             let color = egui::Color32::from_rgb(g.hue[0], g.hue[1], g.hue[2]);
-                            icons::paint(ui, Rect::from_min_size(body.min + vec2(14.0, 14.0), vec2(22.0, 22.0)), g.icon, 21.0, color);
+                            // A right-to-left interface mirrors the card: icon, title, blurb and action
+                            // start at its right edge.
+                            let rtl = crate::i18n::current().rtl();
+                            let at = |inset: f32, width: f32, y: f32| {
+                                let x = if rtl { body.right() - inset - width } else { body.left() + inset };
+                                egui::pos2(x, body.top() + y)
+                            };
+                            icons::paint(ui, Rect::from_min_size(at(14.0, 22.0, 14.0), vec2(22.0, 22.0)), g.icon, 21.0, color);
                             let mut title_job = egui::text::LayoutJob::simple_singleline(tl!(g.label).to_owned(), theme::semibold(13.5), t.text);
                             title_job.wrap =
                                 egui::text::TextWrapping { max_width: body.width() - 58.0, max_rows: 1, break_anywhere: true, ..Default::default() };
                             let title = ui.fonts_mut(|f| f.layout_job(title_job));
                             let title_elided = title.elided;
-                            ui.painter().galley(body.min + vec2(44.0, 25.0 - title.size().y * 0.5), title, t.text);
+                            ui.painter().galley(at(44.0, title.size().x, 25.0 - title.size().y * 0.5), title, t.text);
                             let blurb = g
                                 .sections
                                 .first()
                                 .map(|s| s.items.iter().take(3).map(|i| tl!(i.label)).collect::<Vec<_>>().join(" · "))
                                 .unwrap_or_default();
-                            // Fixed-height cards must leave room for their action in every language.
-                            let mut job = egui::text::LayoutJob::simple(blurb.clone(), theme::regular(11.5), t.text_muted, body.width() - 28.0);
-                            job.wrap.max_rows = 2;
-                            let galley = ui.fonts_mut(|f| f.layout_job(job));
+                            // Fixed-height cards must leave room for their action in every language:
+                            // the blurb takes the rows that fit above it (scripts with tall lines, such
+                            // as Arabic, get one row where Latin gets two).
+                            let action = ui.fonts_mut(|f| f.layout_no_wrap(tl!("Use now").to_owned(), theme::medium(12.0), t.accent_text));
+                            let action_top = body.height() - 14.0 - action.size().y;
+                            let blurb_layout = |rows: usize| {
+                                let mut job = egui::text::LayoutJob::simple(blurb.clone(), theme::regular(11.5), t.text_muted, body.width() - 28.0);
+                                job.wrap.max_rows = rows;
+                                if rtl {
+                                    job.halign = egui::Align::RIGHT;
+                                }
+                                ui.fonts_mut(|f| f.layout_job(job))
+                            };
+                            const GAP: f32 = 4.0;
+                            let mut galley = blurb_layout(2);
+                            if 46.0 + galley.size().y + GAP > action_top {
+                                galley = blurb_layout(1);
+                            }
+                            // A tall single row moves up into the space under the title (not into it).
+                            let blurb_top = (action_top - GAP - galley.size().y).clamp(36.0, 46.0);
                             let blurb_elided = galley.elided;
-                            ui.painter().galley(body.min + vec2(14.0, 46.0), galley, t.text_muted);
-                            ui.painter().text(
-                                body.left_bottom() + vec2(14.0, -14.0),
-                                Align2::LEFT_CENTER,
-                                tl!("Use now"),
-                                theme::medium(12.0),
-                                t.accent_text,
-                            );
+                            // A right-aligned job lays out around x = 0, so its anchor is its right end.
+                            let blurb_pos = if rtl { egui::pos2(body.right() - 14.0, body.top() + blurb_top) } else { at(14.0, 0.0, blurb_top) };
+                            ui.painter().galley(blurb_pos, galley, t.text_muted);
+                            ui.painter().galley(at(14.0, action.size().x, action_top), action, t.accent_text);
                             let resp = if title_elided || blurb_elided { resp.on_hover_text(format!("{}\n{blurb}", tl!(g.label))) } else { resp };
                             if theme::hand(resp).clicked() {
                                 app.select_tool(g.id);
@@ -140,10 +167,10 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
 
             ui.add_space(26.0);
             let mut clear = false;
-            ui.horizontal(|ui| {
+            widgets::reading_row(ui, |ui| {
                 ui.label(egui::RichText::new(tl!("Recent")).font(theme::semibold(17.0)));
                 if !app.recent.is_empty() {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(widgets::trailing_layout(), |ui| {
                         let resp = widgets::ghost_button(ui, "trash-2", tl!("Clear"));
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Clear Recent Files")));
                         clear = resp.on_hover_text(tl!("Clear Recent Files")).clicked();
@@ -152,7 +179,9 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             });
             ui.add_space(8.0);
             if app.recent.is_empty() {
-                ui.label(egui::RichText::new(tl!("Files you open in PdfCraft appear here. Drop a PDF anywhere to open it.")).color(t.text_muted));
+                widgets::at_reading_edge(ui, |ui| {
+                    ui.label(egui::RichText::new(tl!("Files you open in PdfCraft appear here. Drop a PDF anywhere to open it.")).color(t.text_muted))
+                });
             }
             let mut open = None;
             let mut remove = None;
@@ -216,11 +245,13 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 app.execute("file.clear_recent");
             }
             ui.add_space(20.0);
-            widgets::section_title(ui, tl!("Privacy"));
-            ui.label(
-                egui::RichText::new(tl!("PdfCraft works offline. No telemetry, no account, and no cloud processing unless you add a provider."))
-                    .color(t.text_muted),
-            );
+            widgets::at_reading_edge(ui, |ui| {
+                widgets::section_title(ui, tl!("Privacy"));
+                ui.label(
+                    egui::RichText::new(tl!("PdfCraft works offline. No telemetry, no account, and no cloud processing unless you add a provider."))
+                        .color(t.text_muted),
+                );
+            });
         });
     });
 }
@@ -229,41 +260,51 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
 mod tests {
     use super::*;
 
+    /// Fixed-height tool cards leave room for "Use now" in long translations (German) and in
+    /// scripts with tall lines (Arabic, #home-cards), and a right-to-left interface lines the
+    /// description and the action up at the card's right edge.
     #[test]
     fn translated_card_description_leaves_room_for_the_action() {
-        let de = crate::i18n::Lang::from_code("de").unwrap();
-        crate::i18n::set_current(de);
-        let ctx = egui::Context::default();
-        ctx.set_fonts(theme::font_definitions());
-        let mut app = PdfCraftApp::new();
-        let blurb = catalog::group("form")
-            .unwrap()
-            .sections
-            .first()
-            .unwrap()
-            .items
-            .iter()
-            .take(3)
-            .map(|item| crate::i18n::tr(de, item.label))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        let output = ctx
-            .run_ui(egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 900.0))), ..Default::default() }, |ui| {
-                show(&mut app, ui)
-            });
-        crate::i18n::set_current(crate::i18n::Lang::EN);
-        let text_shapes: Vec<_> =
-            output.shapes.iter().filter_map(|shape| if let egui::Shape::Text(text) = &shape.shape { Some(text) } else { None }).collect();
-        let description = text_shapes.iter().find(|text| text.galley.job.text == blurb).unwrap();
-        let action = text_shapes
-            .iter()
-            .find(|text| text.galley.job.text == crate::i18n::tr(de, "Use now") && (text.pos.x - description.pos.x).abs() < 0.1)
-            .unwrap();
-        assert!(description.galley.rows.len() <= 2);
-        assert!(
-            description.pos.y + description.galley.size().y + 4.0 <= action.pos.y,
-            "the translated description must leave a visible gap before its action"
-        );
-        output.drop_without_applying_deltas();
+        for code in ["de", "ar"] {
+            let lang = crate::i18n::Lang::from_code(code).unwrap();
+            crate::i18n::set_current(lang);
+            let ctx = egui::Context::default();
+            ctx.set_fonts(theme::font_definitions());
+            let mut app = PdfCraftApp::new();
+            let blurb = catalog::group("form")
+                .unwrap()
+                .sections
+                .first()
+                .unwrap()
+                .items
+                .iter()
+                .take(3)
+                .map(|item| crate::i18n::tr(lang, item.label))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            // Two frames: fonts load on the first.
+            let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 900.0));
+            ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show(&mut app, ui)).drop_without_applying_deltas();
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show(&mut app, ui));
+            crate::i18n::set_current(crate::i18n::Lang::EN);
+            let text_shapes: Vec<_> =
+                output.shapes.iter().filter_map(|shape| if let egui::Shape::Text(text) = &shape.shape { Some(text) } else { None }).collect();
+            let description = text_shapes.iter().find(|text| text.galley.job.text == blurb).unwrap();
+            // The reading edge of a text: its right end in Arabic, its left end otherwise.
+            let edge = |text: &egui::epaint::TextShape| text.pos.x + if code == "ar" { text.galley.rect.max.x } else { text.galley.rect.min.x };
+            let action = text_shapes
+                .iter()
+                .find(|text| text.galley.job.text == crate::i18n::tr(lang, "Use now") && (edge(text) - edge(description)).abs() < 0.5)
+                .unwrap_or_else(|| panic!("{code}: the action is lined up with the description"));
+            assert!(description.galley.rows.len() <= 2, "{code}");
+            assert!(
+                description.pos.y + description.galley.size().y + 4.0 <= action.pos.y,
+                "{code}: the description must leave a visible gap before its action: {} + {} vs {}",
+                description.pos.y,
+                description.galley.size().y,
+                action.pos.y
+            );
+            output.drop_without_applying_deltas();
+        }
     }
 }
