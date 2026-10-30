@@ -10,18 +10,22 @@ workspace = true
 
 [features]
 # A synthetic .docx for other crates' tests.
-test-support = ["dep:zip"]
+test-support = ["dep:zip", "dep:cfb"]
 
 [dependencies]
 zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
+# Synthetic .doc fixtures (compound files); already in the graph through wordcraft-docbin.
+cfb = { version = "0.15", optional = true }
 # WordCraft crates (pinned in the root Cargo.toml). They inherit their own workspace's
 # settings, so they build exactly as they do in WordCraft.
 wordcraft-docx = { workspace = true }
+wordcraft-docbin = { workspace = true }
 wordcraft-pdf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate"] }
+cfb = "0.15"
 
 [[example]]
 name = "docx2pdf"
