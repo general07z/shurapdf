@@ -25,14 +25,14 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
-            ui.label(egui::RichText::new(tl!("Welcome to PdfCraft")).font(theme::semibold(24.0)));
+            ui.label(egui::RichText::new(tl!("Welcome to PdfCraft").replace("PdfCraft", crate::PRODUCT_NAME)).font(theme::semibold(24.0)));
             ui.label(
                 egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
                     .color(t.text_muted)
                     .font(theme::regular(14.0)),
             );
             ui.add_space(14.0);
-            if !app.community_card_closed {
+            if crate::COMMUNITY_PROMPTS && !app.community_card_closed {
                 egui::Frame::NONE
                     .fill(t.card)
                     .stroke(Stroke::new(1.0, t.border))
@@ -41,7 +41,10 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            widgets::artcraft_mark(ui, 28.0);
+                            // A community icon where upstream shows the ArtCraft mark (a trademark
+                            // forks may not show).
+                            let (mark, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+                            icons::paint(ui, mark, "messages-square", 26.0, t.accent_text);
                             ui.vertical(|ui| {
                                 ui.label(egui::RichText::new(tl!("Join the ArtCraft community")).font(theme::semibold(15.0)));
                                 ui.label(egui::RichText::new(tl!("Get help, share feedback and follow development on Discord.")).color(t.text_muted));

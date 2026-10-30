@@ -140,12 +140,18 @@ if ($env:CRAFT_FONTS_DIR) {
 # ---- end font notices for the MSI --------------------------------------------------------------
 
 # ---- MSI ---------------------------------------------------------------------------------------
+# A build's own product name, manufacturer and upgrade identity (a fork such as ShuraPDF); unset,
+# the installer is PdfCraft's.
+$Brand = @()
+foreach ($pair in @(@('ProductName', $env:PDFCRAFT_PRODUCT_NAME), @('Manufacturer', $env:PDFCRAFT_MANUFACTURER), @('UpgradeCode', $env:PDFCRAFT_UPGRADE_CODE))) {
+  if ($pair[1]) { $Brand += @('-d', "$($pair[0])=$($pair[1])") }
+}
 $Msi = Join-Path $Dist "pdfcraft-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "ModelsDir=$Models" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
-    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" `
+    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" @Brand `
     -o $Msi
 }
 # Inspect the built MSI, not just the XML, before signing/publishing it. In a child process, so

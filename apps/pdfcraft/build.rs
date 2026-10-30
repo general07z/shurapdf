@@ -15,15 +15,19 @@ fn main() {
     println!("cargo:rerun-if-changed=../../assets/app-icon/pdfcraft-document.ico");
     println!("cargo:rerun-if-changed=src/windows_manifest.rs");
     println!("cargo:rerun-if-env-changed=PDFCRAFT_REQUIRE_WINRES");
+    println!("cargo:rerun-if-env-changed=PDFCRAFT_PRODUCT_NAME");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
+    // A build may name the product (PDFCRAFT_PRODUCT_NAME, e.g. ShuraPDF); the file stays pdfcraft.exe.
+    let product = std::env::var("PDFCRAFT_PRODUCT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "PdfCraft".to_owned());
+    let description = format!("{product} PDF workbench");
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../../assets/app-icon/pdfcraft.ico")
         .set_icon_with_id("../../assets/app-icon/pdfcraft-document.ico", "2")
         .set_manifest(windows_manifest::WINDOWS_MANIFEST)
-        .set("ProductName", "PdfCraft")
-        .set("FileDescription", "PdfCraft PDF workbench")
+        .set("ProductName", &product)
+        .set("FileDescription", &description)
         .set("LegalCopyright", "Copyright (c) the PdfCraft contributors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "pdfcraft.exe")
         .set("InternalName", "pdfcraft");

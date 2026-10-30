@@ -240,6 +240,18 @@ struct PendingOpen {
     then: Option<&'static str>,
 }
 
+/// The product name in window titles: PdfCraft, or the name a build gives it at compile time
+/// (`PDFCRAFT_PRODUCT_NAME`, e.g. ShuraPDF). Settings, data folders and file names keep PdfCraft.
+pub const PRODUCT_NAME: &str = match option_env!("PDFCRAFT_PRODUCT_NAME") {
+    Some(name) if !name.is_empty() => name,
+    _ => "PdfCraft",
+};
+
+/// A build under its own name (an organisation's fork) leaves out the upstream community prompts:
+/// the home screen's ArtCraft community card and the title bar's Discord button. Help ▸ the
+/// community links stay.
+pub const COMMUNITY_PROMPTS: bool = !matches!(option_env!("PDFCRAFT_PRODUCT_NAME"), Some(name) if !name.is_empty());
+
 pub struct PdfCraftApp {
     /// Tools side and pane widths; which panes are open is `left_open` and `right`.
     pub side_panels: side_panels::SidePanels,
