@@ -374,7 +374,9 @@ pub fn add_annotation(doc: &mut Document, new: &NewAnnotation, meta: &Meta) -> R
             let size = if font_size.is_finite() && *font_size > 0.0 { font_size.clamp(1.0, 400.0) } else { 12.0 };
             let [r, g, b] = style.color.map(|x| x.clamp(0.0, 1.0));
             d.set(b"DA".to_vec(), PdfString::literal(format!("{} {} {} rg /Helv {} Tf", n(r), n(g), n(b), n(size)).into_bytes()));
-            d.set(b"Q".to_vec(), Object::Int(0));
+            // Arabic or Hebrew text starts at the right edge, as it is typed.
+            let align = if pdfcraft_fonts::visual_line::paragraph_rtl(&new.contents) { 2 } else { 0 };
+            d.set(b"Q".to_vec(), Object::Int(align));
             if let Some(f) = style.fill {
                 d.set(b"C".to_vec(), rgb(f));
             }

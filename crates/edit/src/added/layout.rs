@@ -1,8 +1,8 @@
+use pdfcraft_fonts::visual_line::visual_pieces;
+pub(super) use pdfcraft_fonts::visual_line::{Piece, is_arabic, is_bidi_control, is_hebrew, is_thai};
+
 use super::types::{AddedImage, AddedText};
-use super::{
-    Content, Document, EditError, GlyphError, Level, ObjRef, Object, ParagraphBidiInfo, ShapedCluster, ShapedScript, shape_arabic, shape_hebrew,
-    shape_thai,
-};
+use super::{Content, Document, EditError, GlyphError, ObjRef, Object, ShapedScript};
 
 pub(super) fn nums(doc: &Document, o: Option<&Object>) -> Vec<f64> {
     o.map(|o| doc.resolve(o)).and_then(|a| a.as_array().map(|a| a.iter().filter_map(Object::as_f64).collect())).unwrap_or_default()
@@ -102,22 +102,6 @@ fn thai_lines(t: &AddedText, para: &str, width: f64) -> Result<Vec<String>, Edit
     Ok(lines)
 }
 
-pub(super) fn is_thai(c: char) -> bool {
-    matches!(u32::from(c), 0x0E00..=0x0E7F)
-}
-
-/// Arabic letters, marks, digits and punctuation: an item with any of them is shaped with the
-/// craft-fonts Arabic face.
-pub(super) fn is_arabic(c: char) -> bool {
-    matches!(u32::from(c), 0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFC)
-}
-
-/// Hebrew letters, points, cantillation marks and punctuation (and the presentation forms): an
-/// item with any of them is drawn with the craft-fonts Hebrew face.
-pub(super) fn is_hebrew(c: char) -> bool {
-    matches!(u32::from(c), 0x0591..=0x05F4 | 0xFB1D..=0xFB4F)
-}
-
 /// The first character of `t` that would be drawn as `?`: outside WinAnsiEncoding and not drawn
 /// with the craft-fonts Arabic (#125) or Hebrew (#128) face, or Arabic or Hebrew that the face can't
 /// draw (or that has no face to draw it). Page-content tools refuse such text; the Add-text editor
@@ -163,87 +147,14 @@ pub(super) fn shaped_arabic(c: char) -> bool {
     is_arabic(c) && !is_bidi_control(c)
 }
 
-/// Direction marks, embeddings, overrides and isolates: they steer the order and are not drawn.
-fn is_bidi_control(c: char) -> bool {
-    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-}
-
-fn mirrored(c: char) -> char {
-    match c {
-        '(' => ')',
-        ')' => '(',
-        '[' => ']',
-        ']' => '[',
-        '{' => '}',
-        '}' => '{',
-        '<' => '>',
-        '>' => '<',
-        '«' => '»',
-        '»' => '«',
-        other => other,
-    }
-}
-
-/// A piece of a line with shaped text, in drawing order.
-pub(super) enum Piece {
-    /// Shown in the item's own standard font.
-    Latin(String),
-    Shaped(Vec<ShapedCluster>),
-}
-
 /// A line of a shaped-text item in drawing order (the Unicode bidirectional algorithm, UAX #9), and
 /// its width at the item's size. `rtl` is its paragraph's direction.
 pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec<Piece>, f64), EditError> {
-    // unicode-bidi indexes the first level of a line, so an empty one would panic.
-    if line.is_empty() {
-        return Ok((Vec::new(), 0.0));
-    }
-    let base = if rtl { Level::rtl() } else { Level::ltr() };
-    let info = ParagraphBidiInfo::new(line, Some(base));
-    let (levels, runs) = info.visual_runs(0..line.len());
-    let mut pieces = Vec::new();
-    for run in runs {
-        let run_rtl = levels.get(run.start).is_some_and(Level::is_rtl);
-        // Runs lie on character boundaries; a missing slice is skipped, never a panic.
-        let Some(text) = line.get(run) else { continue };
-        // Arabic and Hebrew letters take their face; so do spaces and punctuation between them
-        // (Hebrew's when they follow Hebrew), which the shaper then mirrors. Latin text (and what
-        // the faces lack) keeps the item's font.
-        let mut segments: Vec<(Option<ShapedScript>, String)> = Vec::new();
-        for c in text.chars().filter(|c| !is_bidi_control(*c)) {
-            let after_hebrew = segments.last().is_some_and(|(kind, _)| *kind == Some(ShapedScript::Hebrew));
-            let script = if is_thai(c) {
-                Some(ShapedScript::Thai)
-            } else if is_hebrew(c) || (run_rtl && after_hebrew && !c.is_alphanumeric() && pdfcraft_fonts::hebrew_has(c)) {
-                Some(ShapedScript::Hebrew)
-            } else if is_arabic(c) || (run_rtl && !c.is_alphanumeric() && pdfcraft_fonts::arabic_has(c)) {
-                Some(ShapedScript::Arabic)
-            } else {
-                None
-            };
-            match segments.last_mut() {
-                Some((kind, s)) if *kind == script => s.push(c),
-                _ => segments.push((script, c.to_string())),
-            }
-        }
-        if run_rtl {
-            segments.reverse();
-        }
-        for (script, s) in segments {
-            pieces.push(if let Some(script) = script {
-                let shaped = match script {
-                    ShapedScript::Arabic => shape_arabic(&s, run_rtl).map_err(|e| arabic_error(e, &s))?,
-                    ShapedScript::Hebrew => shape_hebrew(&s, run_rtl).map_err(|e| hebrew_error(e, &s))?,
-                    ShapedScript::Thai => shape_thai(&s).map_err(|e| thai_error(e, &s))?,
-                };
-                Piece::Shaped(shaped)
-            } else if run_rtl {
-                Piece::Latin(s.chars().rev().map(mirrored).collect())
-            } else {
-                Piece::Latin(s)
-            });
-        }
-    }
+    let pieces = visual_pieces(line, rtl).map_err(|f| match f.script {
+        ShapedScript::Arabic => arabic_error(f.error, &f.text),
+        ShapedScript::Hebrew => hebrew_error(f.error, &f.text),
+        ShapedScript::Thai => thai_error(f.error, &f.text),
+    })?;
     let width = pieces
         .iter()
         .map(|p| match p {

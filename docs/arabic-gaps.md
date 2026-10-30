@@ -1,6 +1,6 @@
 # Arabic PDF tool: gap tracker
 
-> **Status:** live · **Last updated:** 2026-10-30 (W3–W5, W7, W8 done; W2 synthetic part) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
+> **Status:** live · **Last updated:** 2026-10-30 (W3–W5, W7, W8 done; W2 synthetic part; Arabic form fields and Fill & Sign) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
 > Commit this file as `docs/arabic-gaps.md` in your fork. Update a row whenever its parity entry changes.
 
 ## Goals vs. what PdfCraft already has
@@ -31,8 +31,8 @@
 | Arabic caret and selection while editing | ❌ | `edit.rtl-cjk-editing` |
 | Arabic fallback font when the PDF's font lacks a letter | ❌ | `edit.rtl-cjk-editing` |
 | Fully mirrored RTL interface, qualified with real IME input | 🟡 menus, panes, rail, tool strip and tool rows mirrored; tab strip, some dialogs and real IME not yet | `misc.rtl-ui` |
-| Arabic in form fields / Fill & Sign text | ❓ verify | `form.fill-sign-text` |
-| Arabic OCR for scanned documents | ❓ verify (language selection is partial) | `ocr.ocr-languages` |
+| Arabic in form fields / Fill & Sign text | ✅ shaped glyph outlines with /ActualText in text and combo fields, Fill & Sign text and text boxes (unit tests, Poppler render); comb, password and list-box fields not yet | `form.fill-text`, `form.fill-sign-text`, `comment.text-box` |
+| Arabic OCR for scanned documents | ❌ checked: the OCR engine (`ocrs`) has Latin-only models; Arabic needs another engine (W11) | `ocr.ocr-languages` |
 
 ## Work queue (do in order, one PR each)
 
@@ -46,6 +46,8 @@
 - [x] **W8** Council builds default to Arabic: build with `PDFCRAFT_DEFAULT_LANGUAGE=ar` and a fresh install starts in Arabic whatever the Windows language (saved settings still win; Preferences ▸ Language can change it). RTL review done by screenshot: text and translation good, "Window" menu translated; the layout is not mirrored yet (moved to W5).
 - [ ] **W9** Arabic fonts the Council actually uses (Simplified Arabic, Traditional Arabic, Sakkal Majalla). These are Windows system fonts and **must not be committed**. *Code checked:* WordCraft reads `%WINDIR%\Fonts` and `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and matches a document's font by name, so these resolve on Council PCs. **Needs the owner:** on a Council PC, convert a .docx set in Simplified Arabic and run `pdffonts` (or File ▸ Properties ▸ Fonts) on the PDF: the font must say SimplifiedArabic, embedded.
 - [ ] **W10** Windows installer + internal deployment. *Build done:* `.github/workflows/shura-windows.yml` builds the MSI and portable zip (Arabic by default, craft-fonts with their OFL notices) on every push to `main`, signs them when the `WINDOWS_CERTIFICATE` secrets exist (`docs/code-signing.md`; pilot certificate script `packaging/windows/new-signing-certificate.ps1`), and publishes a release for a `v*` tag. **Needs the owner:** create the pilot certificate (or ask ICT for one from the Council CA), push a tag, and decide deployment (Intune/SCCM/GPO). The installer still says "PdfCraft" (product name and icon in `packaging/windows/*.wxs`).
+
+- [ ] **W11** Arabic OCR. *Assessed:* `crates/ocr` runs `ocrs`, whose recognition model reads only the Latin alphabet, so scanned Arabic gets no text layer. Options: Windows' built-in OCR (`Windows.Media.Ocr`, which reads Arabic once the Arabic language pack is installed; Windows only, no model to ship), or an Arabic recognition model in ONNX run through `rten` (cross-platform, but a model with a compatible licence must be found and its accuracy measured). Recommended: Windows OCR, since every Council PC runs Windows.
 
 ## Definition of done for any item
 
