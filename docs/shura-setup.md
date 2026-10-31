@@ -230,3 +230,39 @@ Plus mechanical guards: `cargo xtask layers` (architecture) and `cargo xtask ass
 - **"Looks like Acrobat Pro":** PdfCraft already copies Acrobat's *layout* (Home, All tools, right-hand panels). Never add Adobe icons, logos or names. That is a legal risk, and `cargo xtask assets` will fail.
 - **Government use:** treat this as a pilot until it has passed testing on real Council documents and a security review. For legally binding signatures, use the Council's approved certificates (PKCS#12 or the Windows certificate store, both already supported). Do not rely on drawn signatures.
 - **Upstream moves very fast** (hundreds of commits a week). Rebase your branch often. Consider opening the Word import as a PR to `storytold/pdfcraft`. If they merge it, you no longer have to maintain it.
+
+## The Windows build and the private `shuraword`
+
+Fixes to the Word layout engine (WordCraft) are made in the private `general07z/shuraword`. The
+Windows build (`.github/workflows/shura-windows.yml`) uses that fork, at the commit written in
+`packaging/windows/shuraword-rev.txt`, once it has a read-only key for it; without the key it
+builds with the public `storytold/wordcraft` from `Cargo.toml`, as before. The shared CI always
+uses the public copy and needs no key.
+
+One-time setup, on your Windows PC in PowerShell, with the GitHub CLI signed in (`gh auth login`):
+
+```powershell
+ssh-keygen -t ed25519 -C "shurapdf Windows build" -f "$HOME\shuraword-ci"
+```
+
+Press Enter twice when it asks for a passphrase (none: the build can't type one).
+
+```powershell
+gh repo deploy-key add "$HOME\shuraword-ci.pub" --repo general07z/shuraword --title "shurapdf Windows build (read-only)"
+```
+
+```powershell
+Get-Content -Raw "$HOME\shuraword-ci" | gh secret set SHURAWORD_DEPLOY_KEY --repo general07z/shurapdf
+```
+
+```powershell
+Remove-Item "$HOME\shuraword-ci", "$HOME\shuraword-ci.pub"
+```
+
+The key can only read `shuraword` (deploy keys are read-only unless "Allow write access" is ticked;
+leave it unticked). Without the GitHub CLI, do the same on github.com: `shuraword` ▸ Settings ▸
+Deploy keys ▸ Add deploy key (paste the `.pub` file), and `shurapdf` ▸ Settings ▸ Secrets and
+variables ▸ Actions ▸ New repository secret `SHURAWORD_DEPLOY_KEY` (paste the private file).
+
+To use a newer `shuraword` commit in the Windows build, put its full commit id in
+`packaging/windows/shuraword-rev.txt` (an ordinary pull request).
