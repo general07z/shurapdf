@@ -430,6 +430,11 @@
 	Compress a PDF	ضغط ملف PDF
 	Optimize	تحسين
 	Reduce file size	تقليل حجم الملف
+	Convert Word documents with	تحويل مستندات Word باستخدام
+	Microsoft Word when installed, else built-in	Microsoft Word عند توفره، وإلا المحرك المدمج
+	Microsoft Word	Microsoft Word
+	Built-in engine	المحرك المدمج
+	Microsoft Word makes PDFs identical to Word's own Save as PDF. The built-in engine works without Office.	يصدر Microsoft Word ملفات PDF مطابقة لميزة الحفظ بصيغة PDF في Word. يعمل المحرك المدمج دون Office.
 	High compression	ضغط عال
 	Advanced optimization	تحسين متقدم
 	Audit space usage	تدقيق استخدام المساحة

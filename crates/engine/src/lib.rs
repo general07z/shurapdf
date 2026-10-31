@@ -119,6 +119,7 @@ pub use pdfcraft_redact::patterns::{
 pub use pdfcraft_redact::sanitize::{HIDDEN, Hidden};
 pub use pdfcraft_sign as sign;
 pub use pdfcraft_sign::{SignOptions, SignatureInfo, Status as SignatureStatus, TrustStore};
+pub use pdfcraft_word_import::{WordEngine, engine as word_engine, set_engine as set_word_engine};
 pub use pdfcraft_xfdf::Format as DataFormat;
 
 use bookmarks::outline_rows;

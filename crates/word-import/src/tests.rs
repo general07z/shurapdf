@@ -38,3 +38,39 @@ fn a_broken_compound_file_is_an_error() {
     junk.extend_from_slice(&[0; 600]);
     assert!(matches!(word_to_pdf(&junk, &WordImportOptions::default()), Err(WordImportError::Read(_))));
 }
+
+/// Automatic uses Word when it converts, and the built-in engine when Word is missing or fails;
+/// Microsoft Word reports those instead; Built-in never asks Word. A password Word can't open
+/// asks for it (or says it's wrong) as the built-in engine does.
+#[test]
+fn the_engine_choice_decides_who_converts() {
+    use super::{OfficeError, WordEngine, word_to_pdf_with};
+    let docx = synthetic_docx();
+    let opts = WordImportOptions::default();
+    let word_pdf = || Ok(b"%PDF-word".to_vec());
+    let missing = || Err(OfficeError::Unavailable);
+    let failed = || Err(OfficeError::Failed("Word crashed".into()));
+    let convert = |engine, word: &dyn Fn() -> Result<Vec<u8>, OfficeError>| word_to_pdf_with(&docx, &opts, engine, |_, _| word());
+
+    assert_eq!(convert(WordEngine::Auto, &word_pdf).unwrap(), b"%PDF-word");
+    for fallback in [&missing as &dyn Fn() -> _, &failed] {
+        let pdf = convert(WordEngine::Auto, fallback).unwrap();
+        assert!(pdf.starts_with(b"%PDF-") && pdf != b"%PDF-word", "the built-in engine took over");
+    }
+    assert_eq!(convert(WordEngine::Word, &word_pdf).unwrap(), b"%PDF-word");
+    assert!(matches!(convert(WordEngine::Word, &missing), Err(WordImportError::Word(m)) if m.contains("isn't installed")));
+    assert!(matches!(convert(WordEngine::Word, &failed), Err(WordImportError::Word(m)) if m == "Word crashed"));
+    let pdf = word_to_pdf_with(&docx, &opts, WordEngine::BuiltIn, |_, _| panic!("Word must not be asked")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+
+    let locked = |pw: Option<&str>| {
+        let opts = WordImportOptions { password: pw.map(str::to_owned), ..Default::default() };
+        word_to_pdf_with(&docx, &opts, WordEngine::Auto, |_, _| Err(OfficeError::Password))
+    };
+    assert!(matches!(locked(None), Err(WordImportError::Encrypted)));
+    assert!(matches!(locked(Some("wrong")), Err(WordImportError::WrongPassword)));
+
+    for engine in WordEngine::ALL {
+        assert_eq!(WordEngine::from_name(engine.name()), Some(engine));
+    }
+}

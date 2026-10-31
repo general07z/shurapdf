@@ -86,6 +86,7 @@ impl PdfCraftApp {
             all_tools_tab: (None, false),
             recent: Vec::new(),
             reopen_last_session: false,
+            word_engine: pdfcraft_engine::WordEngine::default(),
             restore_last_view: true,
             last_views: Vec::new(),
             last_session: Default::default(),

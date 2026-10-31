@@ -80,6 +80,7 @@ impl PdfCraftApp {
             "docking_right": self.right,
             "recent": self.recent,
             "reopen_last_session": self.reopen_last_session,
+            "word_engine": self.word_engine.name(),
             "restore_last_view": self.restore_last_view,
             "last_views": self.last_views_to_save(),
             // Kept only while the preference is on.
@@ -189,6 +190,10 @@ impl PdfCraftApp {
     fn restore_layout_prefs(&mut self, v: &serde_json::Value) {
         if let Some(on) = v["reopen_last_session"].as_bool() {
             self.reopen_last_session = on;
+        }
+        if let Some(engine) = v["word_engine"].as_str().and_then(pdfcraft_engine::WordEngine::from_name) {
+            self.word_engine = engine;
+            pdfcraft_engine::set_word_engine(engine);
         }
         if let Some(on) = v["restore_last_view"].as_bool() {
             self.restore_last_view = on;
