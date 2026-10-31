@@ -285,7 +285,9 @@ impl Automation {
         let path = self.resolve(a.str("path")?, true)?;
         let mut settings = match a.opt_str("preset")? {
             None => Preset::Standard.settings(),
-            Some(p) => Preset::from_name(p).ok_or_else(|| ToolError::InvalidArgs(format!("unknown preset {p:?} (standard, mobile)")))?.settings(),
+            Some(p) => {
+                Preset::from_name(p).ok_or_else(|| ToolError::InvalidArgs(format!("unknown preset {p:?} (standard, mobile, high)")))?.settings()
+            }
         };
         if let Some(c) = a.opt_str("compatibility")? {
             settings.compatibility = Compatibility::from_name(c)

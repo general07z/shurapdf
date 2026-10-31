@@ -1440,7 +1440,7 @@ pub fn tools() -> Vec<ToolDef> {
                 json!({
                     "doc": doc(),
                     "path": { "type": "string" },
-                    "preset": { "type": "string", "enum": ["standard", "mobile"] },
+                    "preset": { "type": "string", "enum": ["standard", "mobile", "high"] },
                     "compatibility": { "type": "string", "enum": ["retain", "1.4", "1.5", "1.6", "1.7", "2.0"] },
                     "merge_fragments": { "type": "boolean" },
                     "color": { "type": "object" },

@@ -304,6 +304,11 @@ impl PdfCraftApp {
         self.start_optimize(crate::optimize_ui::OptimizeKind::Reduce, &pdfcraft_engine::optimize::Settings::default(), &[]);
     }
 
+    /// Reduce File Size with the High compression preset: images to 100 ppi, JPEG low quality.
+    pub(crate) fn reduce_file_size_high(&mut self) {
+        self.start_optimize(crate::optimize_ui::OptimizeKind::Reduce, &pdfcraft_engine::optimize::Preset::High.settings(), &[]);
+    }
+
     /// Save an optimized copy (Reduce File Size, Optimize PDF) next to the original, reporting
     /// the saving. A Reduce File Size copy that isn't smaller is not saved (#490).
     pub(crate) fn save_optimized(

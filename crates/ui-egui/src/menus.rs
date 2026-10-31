@@ -122,6 +122,7 @@ const FILE: &[&str] = &[
     "file.close_all",
     SEP,
     "optimize.reduce",
+    "optimize.reduce_high",
     "optimize.advanced",
     SEP,
     "file.properties",

@@ -326,6 +326,7 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
             title: "Optimize",
             items: &[
                 item("Reduce file size", "file-down", "optimize.reduce", Ready),
+                item("High compression", "file-down", "optimize.reduce_high", Ready),
                 item("Advanced optimization", "settings-2", "optimize.advanced", Ready),
                 item("Audit space usage", "gauge", "optimize.audit", Planned("M11")),
             ],
