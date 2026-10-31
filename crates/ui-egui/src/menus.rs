@@ -226,6 +226,8 @@ const SIGN: &[&str] = &[
 const WINDOW: &[&str] = &["view.next_tab", "view.previous_tab"];
 const HELP: &[&str] =
     &["help.shortcuts", SEP, "help.app_page", "help.github", "help.website", "help.discord", SEP, "help.check_updates", SEP, "help.about"];
+/// A branded build's Help menu (its owner's choice): updates and About only, no upstream links.
+const HELP_BRANDED: &[&str] = &["help.check_updates", SEP, "help.about"];
 
 /// A registry shortcut as a craft-keymap chord: `command` is ⌘ (Ctrl elsewhere) and `mac_ctrl`
 /// the Control key on macOS. `None` for a key craft-keymap doesn't name.
@@ -333,7 +335,7 @@ impl PdfCraftApp {
         )];
         sign.extend(list(SIGN, &mut used));
         let window = list(WINDOW, &mut used);
-        let help = list(HELP, &mut used);
+        let help = list(if crate::COMMUNITY_PROMPTS { HELP } else { HELP_BRANDED }, &mut used);
         let mut view = vec![
             Node::submenu(tl!("Zoom"), list(ZOOM, &mut used)),
             Node::submenu(tl!("Rotate view"), list(&[ROTATE_CW, ROTATE_CCW], &mut used)),

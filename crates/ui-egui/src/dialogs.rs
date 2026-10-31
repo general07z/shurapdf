@@ -1498,6 +1498,18 @@ fn dialog_shortcuts(ui: &mut egui::Ui) -> bool {
 /// `Dialog::About` content. Returns `false` when it has its own buttons and no footer is wanted.
 fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
     let t = Tokens::get(ui.ctx());
+    // A branded build shows its name and version only (its owner's choice); the licence notices
+    // ship beside the program.
+    if !crate::COMMUNITY_PROMPTS {
+        ui.horizontal(|ui| {
+            widgets::app_icon(ui, 40.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(crate::PRODUCT_NAME).font(theme::semibold(20.0)));
+                ui.label(crate::i18n::fmt(tl!("Version {v}"), &[("v", &pdfcraft_engine::build_info::version())]));
+            });
+        });
+        return true;
+    }
     // Tabs About · Contributors · Models (craftrules standards/contributors.md).
     let tab_id = egui::Id::unique("about_tab");
     let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
