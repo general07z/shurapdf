@@ -2,8 +2,9 @@ name: ShuraPDF Windows build
 
 # Fork workflow (general07z/shurapdf; see the fork rules in CLAUDE.md). Builds the Council build
 # for Windows x64 with the repository's own packaging/windows/package.ps1: a portable zip and an
-# MSI, Arabic by default (PDFCRAFT_DEFAULT_LANGUAGE), with the craft-fonts faces (Arabic text added
-# to PDFs) and their OFL notices. Signed when the WINDOWS_CERTIFICATE secrets exist
+# MSI, English by default (PDFCRAFT_DEFAULT_LANGUAGE; users switch to Arabic in Preferences), with the
+# craft-fonts faces (Arabic text added to PDFs) and their OFL notices. Branded as ShuraPDF; Help ▸ Check
+# for updates looks only at this repository's releases (PDFCRAFT_UPDATE_REPO, PDFCRAFT_PACKAGE_ID). Signed when the WINDOWS_CERTIFICATE secrets exist
 # (docs/code-signing.md), unsigned with a warning otherwise. Every run keeps the packages as an
 # artifact; a v* tag also publishes them, with the public signing certificate, as a release.
 on:
@@ -26,12 +27,15 @@ jobs:
       # Only for `gh release create` on a tag; the checkout keeps no credentials.
       contents: write
     env:
-      PDFCRAFT_DEFAULT_LANGUAGE: ar
+      PDFCRAFT_DEFAULT_LANGUAGE: en
       # The Council build's name and installer identity (packaging/windows/pdfcraft.wxs). Keep the
       # upgrade code for good: every later ShuraPDF MSI upgrades the installed one through it.
       PDFCRAFT_PRODUCT_NAME: ShuraPDF
       PDFCRAFT_MANUFACTURER: Shura Council, Kingdom of Bahrain
       PDFCRAFT_UPGRADE_CODE: 9358461B-B30C-449A-8DC0-4DE798492EAA
+      # Package names (shurapdf-<version>-windows-x64.msi) and the in-app updater's source.
+      PDFCRAFT_PACKAGE_ID: shurapdf
+      PDFCRAFT_UPDATE_REPO: ${{ github.repository }}
       CRAFT_FONTS_DIR: ${{ github.workspace }}\craft-fonts
       DIST: ${{ github.workspace }}\dist
       SIGN_DESCRIPTION: ShuraPDF
@@ -109,6 +113,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $files = @(Get-ChildItem dist -Include *.msi, *.zip, *.cer -Recurse | ForEach-Object FullName)
-          gh release create $env:GITHUB_REF_NAME @files --repo $env:GITHUB_REPOSITORY --title "ShuraPDF $env:GITHUB_REF_NAME" --notes "Windows x64 build, Arabic interface by default. Install the .msi, or unzip the portable .zip and run pdfcraft.exe. If signed with the pilot certificate, trust shurapdf-signing.cer first (docs/code-signing.md)."
+          $packages = @(Get-ChildItem dist -Include *.msi, *.zip -Recurse)
+          # The in-app updater checks each download against SHA256SUMS.txt.
+          $sums = $packages | ForEach-Object { "$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())  $($_.Name)" }
+          [IO.File]::WriteAllText((Join-Path $env:DIST 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"))
+          $files = @(Get-ChildItem dist -Include *.msi, *.zip, *.cer, SHA256SUMS.txt -Recurse | ForEach-Object FullName)
+          gh release create $env:GITHUB_REF_NAME @files --repo $env:GITHUB_REPOSITORY --title "ShuraPDF $env:GITHUB_REF_NAME" --notes "Windows x64 build. Install the .msi, or unzip the portable .zip and run pdfcraft.exe. Installed copies offer this release through Help > Check for updates once builds are signed. If signed with the pilot certificate, trust shurapdf-signing.cer first (docs/code-signing.md)."
           if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
