@@ -146,3 +146,19 @@ impl Drop for TempDir {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::{OfficeError, convert};
+
+    /// On Windows, asking Word either converts (Office installed) or says Word isn't there (a
+    /// build machine without Office); it never reports success without a PDF, which it did when
+    /// the script reached PowerShell line by line and never ran.
+    #[test]
+    fn word_converts_or_says_it_is_missing() {
+        match convert(&crate::testkit::synthetic_docx(), None) {
+            Ok(pdf) => assert!(pdf.starts_with(b"%PDF-")),
+            Err(e) => assert_eq!(e, OfficeError::Unavailable, "Word is either there or not: {e:?}"),
+        }
+    }
+}
