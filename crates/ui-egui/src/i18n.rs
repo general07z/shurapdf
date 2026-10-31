@@ -307,6 +307,8 @@ impl LangInfo {
             }
             // Catalogs keep logical text: the fork shapes and reorders each run once. Accessibility
             // names, copied text and search therefore see the same logical string as the source.
+            let mut catalog = catalog;
+            catalog.rename_translations(renamed);
             catalog
         })
     }
@@ -648,9 +650,70 @@ pub fn key_name(s: &str) -> &str {
     current().catalog().contextual("key", s).unwrap_or(s)
 }
 
-/// Translate an English UI string; unknown strings come back unchanged.
+/// Translate an English UI string; unknown strings come back unchanged (in a branded build,
+/// with the product's own name; see [`renamed`]).
 pub fn tr(lang: Lang, s: &str) -> &str {
-    lang.catalog().plain(s).unwrap_or(s)
+    lang.catalog().plain(s).unwrap_or_else(|| branded(s))
+}
+
+/// The upstream product name as interface text says it.
+const UPSTREAM_NAME: &str = "PdfCraft";
+
+/// `text` with the product named as this build names itself ([`crate::PRODUCT_NAME`]), or `None`
+/// when nothing changes. Only the name as a word is replaced: `PdfCraft.Document` (a file type
+/// id) or `PdfCraftData` (a folder) stay as they are, since they name things on disk, not the app.
+fn renamed(text: &str) -> Option<String> {
+    renamed_as(text, crate::PRODUCT_NAME)
+}
+
+/// [`renamed`] for the product name `name`.
+fn renamed_as(text: &str, name: &str) -> Option<String> {
+    if name == UPSTREAM_NAME || !text.contains(UPSTREAM_NAME) {
+        return None;
+    }
+    // Part of a longer word, a path or an id: not the app's name.
+    let joins = |c: char| c.is_alphanumeric() || matches!(c, '\\' | '/' | '_');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(UPSTREAM_NAME) {
+        let (before, from) = rest.split_at(at);
+        let Some(after) = from.strip_prefix(UPSTREAM_NAME) else { break };
+        let joined_before = before.chars().next_back().is_some_and(joins);
+        let mut next = after.chars();
+        let joined_after = match next.next() {
+            Some('.') => next.next().is_some_and(char::is_alphanumeric),
+            Some(c) => joins(c),
+            None => false,
+        };
+        out.push_str(before);
+        out.push_str(if joined_before || joined_after { UPSTREAM_NAME } else { name });
+        rest = after;
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// The most untranslated strings [`branded`] keeps a renamed copy of.
+const MAX_BRANDED: usize = 4096;
+
+/// `s` as [`renamed`] says it, for English text that no catalog holds. The interface's strings
+/// are a fixed set, so each renamed one is kept for the rest of the run (at most [`MAX_BRANDED`];
+/// past that, text shows unrenamed rather than growing without bound).
+fn branded(s: &str) -> &str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, PoisonError};
+    static RENAMED: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let Some(text) = renamed(s) else { return s };
+    let mut cache = RENAMED.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(done) = cache.get(s) {
+        return done;
+    }
+    if cache.len() >= MAX_BRANDED {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(text.into_boxed_str());
+    cache.insert(s.to_owned(), leaked);
+    leaked
 }
 
 /// How the layers below say their own sentences in the current language.
@@ -766,7 +829,7 @@ pub fn menu_label(id: &str, label: &str) -> String {
 /// A plural-aware message: `one`/`other` are the English forms (with `{n}` where the count goes).
 pub fn trn(lang: Lang, n: u64, one: &str, other: &str) -> String {
     let idx = (lang.0.plural)(n);
-    let text = lang.catalog().plural(one, other, idx).unwrap_or(if n == 1 { one } else { other });
+    let text = lang.catalog().plural(one, other, idx).unwrap_or_else(|| branded(if n == 1 { one } else { other }));
     fmt(text, &[("n", &n.to_string())])
 }
 

@@ -1532,15 +1532,16 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
                 .small(),
             );
             ui.add_space(12.0);
-            // Credit by name only: the ArtCraft logo is a trademark forks may not show.
-            if crate::PRODUCT_NAME != "PdfCraft" {
-                ui.label(egui::RichText::new("Based on PdfCraft (github.com/storytold/pdfcraft), part of ArtCraft").color(t.text_muted));
+            // A branded build names its own publisher and leaves out the upstream credit and
+            // community links; the licence notices still ship beside the program.
+            if let Some(publisher) = crate::PUBLISHER {
+                ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Developed by {publisher}"), &[("publisher", publisher)])).color(t.text_muted));
             } else {
                 ui.label(egui::RichText::new(format!("{} ArtCraft", tl!("Part of"))).color(t.text_muted));
-            }
-            ui.add_space(6.0);
-            if let Some(cmd) = widgets::community_links(ui) {
-                req.link_command = Some(cmd);
+                ui.add_space(6.0);
+                if let Some(cmd) = widgets::community_links(ui) {
+                    req.link_command = Some(cmd);
+                }
             }
         }
     }

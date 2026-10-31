@@ -155,6 +155,19 @@ impl Catalog {
         (c, errors)
     }
 
+    /// Every translation with `rename` applied (a branded build names itself in its catalogs).
+    pub fn rename_translations(&mut self, rename: impl Fn(&str) -> Option<String>) {
+        let apply = |text: &mut String| {
+            if let Some(renamed) = rename(text) {
+                *text = renamed;
+            }
+        };
+        self.plain.values_mut().for_each(apply);
+        self.contextual.values_mut().flat_map(|m| m.values_mut()).for_each(apply);
+        self.ids.values_mut().for_each(apply);
+        self.plurals.values_mut().flat_map(|forms| forms.iter_mut()).for_each(apply);
+    }
+
     pub fn plain(&self, s: &str) -> Option<&str> {
         self.plain.get(s).map(String::as_str)
     }

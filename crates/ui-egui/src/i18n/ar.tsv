@@ -1465,6 +1465,7 @@
 	Version {v}	الإصدار {v}
 	A clean-room, open-source PDF application written in Rust. MIT OR Apache-2.0.	تطبيق PDF مفتوح المصدر مكتوب بلغة Rust بأسلوب الغرفة النظيفة. MIT OR Apache-2.0.
 	Part of	جزء من
+	Developed by {publisher}	تطوير {publisher}
 	Summarize Options	خيارات التلخيص
 	Choose a layout:	اختر تخطيطًا:
 	Comments only	التعليقات فقط

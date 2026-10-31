@@ -1230,3 +1230,21 @@ fn a_build_can_default_to_arabic() {
     assert_eq!(default_pref_from(None), AUTO);
     assert_eq!(Lang::from_pref(default_pref_from(Some("ar"))).code(), "ar");
 }
+
+/// A branded build names itself in interface text, English and translated alike, but not where
+/// "PdfCraft" is part of a file type id, a folder or a path.
+#[test]
+fn a_branded_build_renames_the_app_in_interface_text_only() {
+    let r = |s: &str| renamed_as(s, "ShuraPDF");
+    assert_eq!(r("Welcome to PdfCraft").as_deref(), Some("Welcome to ShuraPDF"));
+    assert_eq!(r("PdfCraft didn't shut down normally.").as_deref(), Some("ShuraPDF didn't shut down normally."));
+    assert_eq!(r("أغلق PdfCraft بشكل غير طبيعي").as_deref(), Some("أغلق ShuraPDF بشكل غير طبيعي"));
+    assert_eq!(r("Edit with PdfCraft…").as_deref(), Some("Edit with ShuraPDF…"));
+    assert_eq!(r("PdfCraft. Then PdfCraft, PdfCraft!").as_deref(), Some("ShuraPDF. Then ShuraPDF, ShuraPDF!"));
+    assert_eq!(
+        r("PdfCraft.Document and PdfCraftData and %LOCALAPPDATA%\\PdfCraft\\Recovery").as_deref(),
+        Some("PdfCraft.Document and PdfCraftData and %LOCALAPPDATA%\\PdfCraft\\Recovery")
+    );
+    assert_eq!(r("no name here"), None);
+    assert_eq!(renamed_as("Welcome to PdfCraft", "PdfCraft"), None, "an unbranded build is unchanged");
+}
