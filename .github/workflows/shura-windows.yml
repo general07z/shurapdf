@@ -42,6 +42,8 @@ jobs:
       SIGN_URL: https://github.com/${{ github.repository }}
       # Whether the signing secrets exist (a step's `if` can read job env, not secrets).
       HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      # Whether the read-only deploy key for the private general07z/shuraword exists.
+      HAS_SHURAWORD: ${{ secrets.SHURAWORD_DEPLOY_KEY != '' }}
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,6 +82,42 @@ jobs:
         run: |
           # A tag v1.2.3 (or v1.2.3-shura.1) names the packages; otherwise Cargo.toml's version.
           if ($env:GITHUB_REF -like 'refs/tags/v*') { "PDFCRAFT_VERSION=$($env:GITHUB_REF_NAME.Substring(1))" >> $env:GITHUB_ENV }
+      # The Council's WordCraft fork (Word layout fixes) instead of the public storytold/wordcraft
+      # pinned in Cargo.toml, at the commit in packaging/windows/shuraword-rev.txt. Only this
+      # build uses it; the shared CI keeps the public copy and needs no key. Skipped without the
+      # SHURAWORD_DEPLOY_KEY secret (docs/shura-setup.md).
+      - name: WordCraft from shuraword
+        if: env.HAS_SHURAWORD == 'true'
+        shell: pwsh
+        env:
+          SHURAWORD_DEPLOY_KEY: ${{ secrets.SHURAWORD_DEPLOY_KEY }}
+        run: |
+          $ssh = Join-Path $HOME '.ssh'
+          New-Item -ItemType Directory -Force -Path $ssh | Out-Null
+          $key = Join-Path $ssh 'shuraword'
+          # OpenSSH wants LF line endings and a final newline, and a key only this account can read.
+          [IO.File]::WriteAllText($key, ($env:SHURAWORD_DEPLOY_KEY.Trim() -replace "`r", '') + "`n")
+          icacls $key /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+          # GitHub's published SSH host key (docs.github.com, "GitHub's SSH key fingerprints").
+          $known = Join-Path $ssh 'known_hosts_github'
+          Set-Content -LiteralPath $known -Value 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
+          $k = $key -replace '\\', '/'; $kh = $known -replace '\\', '/'
+          git config --global core.sshCommand "ssh -i '$k' -o IdentitiesOnly=yes -o UserKnownHostsFile='$kh' -o StrictHostKeyChecking=yes"
+          "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> $env:GITHUB_ENV
+          $env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
+          $rev = (Get-Content -Raw packaging/windows/shuraword-rev.txt).Trim()
+          if ($rev -notmatch '^[0-9a-f]{40}$') { throw "packaging/windows/shuraword-rev.txt must hold one full commit id, not '$rev'" }
+          $patch = "`n[patch.`"https://github.com/storytold/wordcraft`"]`n"
+          foreach ($crate in 'wordcraft-docx', 'wordcraft-docbin', 'wordcraft-pdf') {
+            $patch += "$crate = { git = `"ssh://git@github.com/general07z/shuraword.git`", rev = `"$rev`" }`n"
+          }
+          Add-Content -LiteralPath .cargo/config.toml -Value $patch
+          # Record the patched sources in Cargo.lock (this build only), so the --locked build below
+          # uses exactly them.
+          cargo fetch
+          if ($LASTEXITCODE -ne 0) { throw 'fetching shuraword failed: check the deploy key and the commit id' }
+          if (-not (Select-String -LiteralPath Cargo.lock -SimpleMatch 'general07z/shuraword' -Quiet)) { throw 'Cargo.lock does not use shuraword: the patch did not apply' }
+          Write-Output "WordCraft from general07z/shuraword at $rev"
       - name: Build, sign and package
         shell: pwsh
         env:
