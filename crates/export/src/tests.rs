@@ -769,3 +769,37 @@ fn a_paragraph_is_a_heading_only_when_its_text_is() {
     assert!(!xml.contains("Heading2"), "the lead-in made its paragraph a heading: {xml}");
     assert_eq!(word_paragraphs(&xml).len(), 2, "{xml}");
 }
+
+/// An Arabic line drawn as three runs (Arabic, then a number and a Latin word in another font)
+/// comes out of Word as one right-to-left paragraph in reading order: the Arabic first, then the
+/// number and the word in their own order, with the spaces between the same neighbours; Arabic
+/// runs are marked right to left and carry the complex-script size Word uses for them.
+#[test]
+fn word_writes_arabic_paragraphs_right_to_left_in_reading_order() {
+    let block = |text: &str, x0: f64, x1: f64, bold: bool| Block {
+        text: text.into(),
+        rect: [x0, 700.0, x1, 712.0],
+        size: 12.0,
+        bold,
+        italic: false,
+        color: [0.0; 3],
+        rotation: 0.0,
+        space_around: [false; 2],
+    };
+    // On the page, left to right: "2026", "Law", then the Arabic (right-aligned).
+    let blocks = vec![block("2026", 300.0, 326.0, false), block("Law", 329.0, 350.0, false), block("مجلس الشورى", 353.0, 420.0, true)];
+    let arabic_page = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let xml = part(&docx(&[arabic_page], "Arabic"), "word/document.xml");
+    let para = xml.split("<w:p>").find(|p| p.contains("مجلس")).expect("the Arabic paragraph");
+    assert!(para.starts_with("<w:pPr><w:bidi/></w:pPr>"), "{para}");
+    let texts: Vec<&str> = para.split("<w:t xml:space=\"preserve\">").skip(1).map(|t| t.split("</w:t>").next().unwrap()).collect();
+    assert_eq!(texts, ["مجلس الشورى ", "2026 ", "Law"], "reading order: {para}");
+    let arabic = para.split("<w:r>").find(|r| r.contains("مجلس")).unwrap();
+    assert!(arabic.contains("<w:b/><w:bCs/>") && arabic.contains("<w:szCs w:val=\"24\"/>") && arabic.contains("<w:rtl/>"), "{arabic}");
+    let latin = para.split("<w:r>").find(|r| r.contains("Law")).unwrap();
+    assert!(!latin.contains("<w:rtl/>"), "{latin}");
+
+    // A Latin paragraph is untouched: no bidi, runs in page order.
+    let xml = part(&docx(&[page()], "Report"), "word/document.xml");
+    assert!(!xml.contains("<w:bidi/>") && !xml.contains("<w:rtl/>"));
+}

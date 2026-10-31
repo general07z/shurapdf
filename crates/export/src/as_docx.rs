@@ -1,6 +1,6 @@
 use super::Zip;
 use super::as_html::esc;
-use super::layout::{Image, Item, Page, Table, body_size, items};
+use super::layout::{Block, Image, Item, Page, Run, Table, body_size, items};
 
 /// A colour's 8-bit sRGB components (NaN and out-of-range values clamp; NaN reads as 0).
 pub(crate) fn rgb8(c: [f64; 3]) -> [u8; 3] {
@@ -14,21 +14,84 @@ pub(crate) fn hex(c: [f64; 3]) -> Option<String> {
     (r | g | b != 0).then(|| format!("{r:02X}{g:02X}{b:02X}"))
 }
 
-/// A formatted text run (shared by paragraphs and table cells).
+/// Arabic and Hebrew letters (and the Arabic presentation forms): right-to-left script.
+fn is_rtl_letter(c: char) -> bool {
+    matches!(u32::from(c), 0x0591..=0x05F4 | 0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFC)
+        && c.is_alphabetic()
+}
+
+/// Whether `text` reads right to left: it has more Arabic or Hebrew letters than other letters.
+pub(crate) fn reads_rtl(text: &str) -> bool {
+    let (rtl, other) =
+        text.chars().filter(|c| c.is_alphabetic()).fold((0usize, 0usize), |(r, o), c| if is_rtl_letter(c) { (r + 1, o) } else { (r, o + 1) });
+    rtl > other
+}
+
+/// The paragraph properties that make Word lay out a right-to-left paragraph (`<w:bidi/>`).
+fn bidi_ppr(rtl: bool) -> &'static str {
+    if rtl { "<w:bidi/>" } else { "" }
+}
+
+/// A formatted text run (shared by paragraphs and table cells). Word applies the complex-script
+/// size, bold and italic (`szCs`, `bCs`, `iCs`) to Arabic and Hebrew, not the plain ones, so both
+/// are written; a run with right-to-left letters is marked `rtl`.
 fn run_xml(text: &str, size: f64, bold: bool, italic: bool, color: [f64; 3]) -> String {
     let mut rpr = String::new();
     if bold {
-        rpr.push_str("<w:b/>");
+        rpr.push_str("<w:b/><w:bCs/>");
     }
     if italic {
-        rpr.push_str("<w:i/>");
+        rpr.push_str("<w:i/><w:iCs/>");
     }
     if let Some(h) = hex(color) {
         rpr.push_str(&format!("<w:color w:val=\"{h}\"/>"));
     }
     let half_points = if size.is_finite() { (size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
-    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/>"));
+    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/><w:szCs w:val=\"{half_points}\"/>"));
+    if text.chars().any(is_rtl_letter) {
+        rpr.push_str("<w:rtl/>");
+    }
     format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(text))
+}
+
+/// A paragraph's runs in reading order. Runs come in left-to-right page order; in a right-to-left
+/// paragraph Word wants them in reading order, so the order is reversed, except that a stretch of
+/// left-to-right runs (Latin words, numbers) keeps its own order. The word spaces the page showed
+/// between neighbours stay between the same neighbours.
+fn reading_order<'a>(runs: &'a [Run<'a>], rtl: bool) -> Vec<(String, &'a Block)> {
+    if !rtl {
+        return runs.iter().map(|r| (r.text.clone(), r.block)).collect();
+    }
+    // Each run's text without the separating space, and whether a space followed it on the page.
+    let parts: Vec<(&str, bool, &Block)> = runs.iter().map(|r| (r.text.trim_end_matches(' '), r.text.ends_with(' '), r.block)).collect();
+    let ltr = |t: &str| !t.chars().any(is_rtl_letter) && t.chars().any(char::is_alphanumeric);
+    // Groups of page-order indices: a right-to-left run alone, consecutive left-to-right runs together.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, (t, _, _)) in parts.iter().enumerate() {
+        let joins = ltr(t) && groups.last().and_then(|g| g.last()).is_some_and(|&j| parts.get(j).is_some_and(|p| ltr(p.0)));
+        match groups.last_mut() {
+            Some(g) if joins => g.push(i),
+            _ => groups.push(vec![i]),
+        }
+    }
+    let spaced_after = |i: usize| parts.get(i).is_some_and(|p| p.1);
+    let mut out: Vec<(String, &Block)> = Vec::with_capacity(parts.len());
+    // Groups in reading order: right to left. Inside a group runs keep page order, and a space
+    // after one of them is the space before its right neighbour, the next run read. Between
+    // groups, the next one read is the group to the left: the space between them on the page
+    // followed that group's last run.
+    for (g, group) in groups.iter().enumerate().rev() {
+        for (k, &i) in group.iter().enumerate() {
+            let Some(&(text, _, block)) = parts.get(i) else { continue };
+            let spaced = if k + 1 < group.len() {
+                spaced_after(i)
+            } else {
+                g.checked_sub(1).and_then(|left| groups.get(left)).and_then(|left| left.last()).is_some_and(|&j| spaced_after(j))
+            };
+            out.push((if spaced { format!("{text} ") } else { text.to_owned() }, block));
+        }
+    }
+    out
 }
 
 /// One Word table: explicit absent borders (alignment alone cannot prove PDF rules), a grid sized
@@ -53,7 +116,8 @@ pub(crate) fn docx_table(t: &Table) -> String {
             let span = if c.span > 1 { format!("<w:gridSpan w:val=\"{}\"/>", c.span) } else { String::new() };
             let w: i64 = widths.iter().skip(column).take(c.span).sum();
             s.push_str(&format!(
-                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}</w:p></w:tc>",
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}{}</w:p></w:tc>",
+                if reads_rtl(&c.text) { "<w:pPr><w:bidi/></w:pPr>" } else { "" },
                 run_xml(&c.text, c.size, c.bold, c.italic, c.color)
             ));
             column = column.saturating_add(c.span);
@@ -170,8 +234,10 @@ fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, sha
             "position:absolute;margin-left:{x:.3}pt;margin-top:{y:.3}pt;width:{w:.3}pt;height:{h:.3}pt;rotation:{rotation:.3};z-index:{z};mso-position-horizontal-relative:page;mso-position-vertical-relative:page"
         );
         s.push_str(&format!(
-            "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
-            shape_id, run_xml(&b.text, b.size, b.bold, b.italic, b.color)
+            "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr>{}<w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
+            shape_id,
+            bidi_ppr(reads_rtl(&b.text)),
+            run_xml(&b.text, b.size, b.bold, b.italic, b.color)
         ));
     }
     for im in &page.images {
@@ -247,14 +313,17 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
                 match &it {
                     Item::Para(runs, lvl) => {
                         let style = match lvl {
-                            1 => "<w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>",
-                            2 => "<w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr>",
+                            1 => "<w:pStyle w:val=\"Heading1\"/>",
+                            2 => "<w:pStyle w:val=\"Heading2\"/>",
                             _ => "",
                         };
+                        let rtl = reads_rtl(&runs.iter().map(|r| r.text.as_str()).collect::<String>());
                         body.push_str("<w:p>");
-                        body.push_str(style);
-                        for r in runs {
-                            body.push_str(&run_xml(&r.text, r.block.size, r.block.bold, r.block.italic, r.block.color));
+                        if !style.is_empty() || rtl {
+                            body.push_str(&format!("<w:pPr>{style}{}</w:pPr>", bidi_ppr(rtl)));
+                        }
+                        for (text, block) in reading_order(runs, rtl) {
+                            body.push_str(&run_xml(&text, block.size, block.bold, block.italic, block.color));
                         }
                         body.push_str("</w:p>");
                     }
