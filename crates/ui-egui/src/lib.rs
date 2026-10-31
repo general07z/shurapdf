@@ -380,6 +380,9 @@ pub struct PdfCraftApp {
     pub recent: Vec<RecentFile>,
     /// Preferences: reopen the files that were open when PdfCraft last closed (#442).
     pub reopen_last_session: bool,
+    /// Preferences ▸ Convert Word documents with: Microsoft Word when installed, Word only, or the
+    /// built-in engine. Applied to the engine with [`pdfcraft_engine::set_word_engine`].
+    pub word_engine: pdfcraft_engine::WordEngine,
     /// Restore last view settings when reopening documents (Preferences ▸ Documents and view;
     /// #1767): the page, zoom and page display a file was last shown with. On by default.
     pub restore_last_view: bool,

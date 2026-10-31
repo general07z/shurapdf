@@ -497,6 +497,8 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     // The web build has no files on disk to watch.
     #[cfg(not(target_arch = "wasm32"))]
     ui.add(widgets::checkbox(&mut app.reload_changed_files, tl!("Reload documents when their files change on disk")));
+    #[cfg(not(target_arch = "wasm32"))]
+    word_engine_pref(app, ui, t);
     // The notice's "Don't show again" turns this off (#4035); the restrictions stay either way.
     ui.add(widgets::checkbox(&mut app.show_secured_notice, tl!("Show a notice when a document is secured")));
     ui.horizontal(|ui| {
@@ -723,6 +725,41 @@ fn reading_colours_section(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens)
     });
     ui.label(egui::RichText::new(tl!("Colours are remapped while rendering; the document itself never changes.")).small().color(t.text_muted));
     ui.add_space(8.0);
+}
+
+/// Preferences ▸ Convert Word documents with: who turns Word files into PDFs (Create, Combine,
+/// Insert). Microsoft Word gives exactly Word's own Save as PDF; the built-in engine needs no Office.
+#[cfg(not(target_arch = "wasm32"))]
+fn word_engine_pref(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    use pdfcraft_engine::WordEngine;
+    let name = |e: WordEngine| match e {
+        WordEngine::Auto => tl!("Microsoft Word when installed, else built-in"),
+        WordEngine::Word => tl!("Microsoft Word"),
+        WordEngine::BuiltIn => tl!("Built-in engine"),
+    };
+    let before = app.word_engine;
+    ui.horizontal(|ui| {
+        let label = ui.label(tl!("Convert Word documents with"));
+        craft_ui::ComboBox::from_id_salt("word-engine")
+            .selected_text(name(app.word_engine))
+            .show_ui(ui, |ui| {
+                for e in WordEngine::ALL {
+                    if ui.selectable_value(&mut app.word_engine, e, name(e)).clicked() {
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .labelled_by(label.id);
+    });
+    if app.word_engine != before {
+        pdfcraft_engine::set_word_engine(app.word_engine);
+    }
+    ui.label(
+        egui::RichText::new(tl!("Microsoft Word makes PDFs identical to Word's own Save as PDF. The built-in engine works without Office."))
+            .small()
+            .color(t.text_muted),
+    );
 }
 
 #[cfg(test)]
