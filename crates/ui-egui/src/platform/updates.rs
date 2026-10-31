@@ -7,8 +7,14 @@ use egui::{Align, Layout};
 
 use crate::{PdfCraftApp, theme, widgets};
 
-/// Where every PdfCraft release is listed.
-pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
+/// Where every release of this build is listed: upstream's, or a branded build's own
+/// (`PDFCRAFT_UPDATE_REPO`, as [`crate::UPDATE_APP`] updates from).
+pub fn releases_page() -> String {
+    match option_env!("PDFCRAFT_UPDATE_REPO") {
+        Some(repo) if !repo.is_empty() => format!("https://github.com/{repo}/releases"),
+        _ => "https://github.com/storytold/pdfcraft/releases".to_owned(),
+    }
+}
 
 /// Stands in for the network in tests.
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,7 +68,7 @@ impl PdfCraftApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.open_url(RELEASES_PAGE);
+            self.open_url(&releases_page());
         }
     }
 
@@ -135,7 +141,7 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 ui.label(
                     egui::RichText::new(crate::i18n::fmt(
                         tl!("You have version {c}. All releases are listed at {page}."),
-                        &[("c", current), ("page", RELEASES_PAGE)],
+                        &[("c", current), ("page", &releases_page())],
                     ))
                     .color(t.text_muted),
                 );

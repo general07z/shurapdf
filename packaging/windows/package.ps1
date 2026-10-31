@@ -142,11 +142,14 @@ if ($env:CRAFT_FONTS_DIR) {
 # ---- MSI ---------------------------------------------------------------------------------------
 # A build's own product name, manufacturer and upgrade identity (a fork such as ShuraPDF); unset,
 # the installer is PdfCraft's.
+# A branded build names its packages after itself (PDFCRAFT_PACKAGE_ID, e.g. shurapdf), as its
+# in-app updater looks for them in its own releases.
+$PackageId = if ($env:PDFCRAFT_PACKAGE_ID) { $env:PDFCRAFT_PACKAGE_ID } else { 'pdfcraft' }
 $Brand = @()
 foreach ($pair in @(@('ProductName', $env:PDFCRAFT_PRODUCT_NAME), @('Manufacturer', $env:PDFCRAFT_MANUFACTURER), @('UpgradeCode', $env:PDFCRAFT_UPGRADE_CODE))) {
   if ($pair[1]) { $Brand += @('-d', "$($pair[0])=$($pair[1])") }
 }
-$Msi = Join-Path $Dist "pdfcraft-$Version-windows-$Arch.msi"
+$Msi = Join-Path $Dist "$PackageId-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
@@ -167,7 +170,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Ms
 & (Join-Path $PSScriptRoot 'sign.ps1') $Msi
 
 # ---- portable zip ------------------------------------------------------------------------------
-$Portable = Join-Path $TargetDir "windows-package\pdfcraft-$Version-windows-$Arch-portable"
+$Portable = Join-Path $TargetDir "windows-package\$PackageId-$Version-windows-$Arch-portable"
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
@@ -188,7 +191,7 @@ if ($HasCraftFontLicences -eq 1) {
 # digital IDs go to PdfCraftData\ next to the exe instead of %APPDATA% (#157; see
 # crates/ui-egui/src/portable.rs).
 Copy-Item (Join-Path $PSScriptRoot 'portable.txt') $Portable
-$Zip = Join-Path $Dist "pdfcraft-$Version-windows-$Arch-portable.zip"
+$Zip = Join-Path $Dist "$PackageId-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $Portable -DestinationPath $Zip
 

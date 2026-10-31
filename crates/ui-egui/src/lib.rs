@@ -11,11 +11,35 @@
 
 /// PdfCraft as craft-update knows it, with its 128 px icon and accent colour: the update
 /// prompt shows both, and an AppImage's menu entry gets the icon.
+///
+/// A branded build updates from its own releases, never upstream's: `PDFCRAFT_UPDATE_REPO`
+/// (`owner/repo`) and `PDFCRAFT_PACKAGE_ID` (the stem of its release assets, as its packaging
+/// names them) set at compile time, with [`PRODUCT_NAME`] and [`PUBLISHER`] in the prompt.
 #[cfg(not(target_arch = "wasm32"))]
-pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
-    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png")),
-    accent: Some([0xb7, 0x02, 0x28]),
-    ..craft_update::suite::PDFCRAFT
+pub const UPDATE_APP: craft_update::app::App = {
+    let upstream = craft_update::suite::PDFCRAFT;
+    let branded = PUBLISHER.is_some() || option_env!("PDFCRAFT_UPDATE_REPO").is_some();
+    craft_update::app::App {
+        id: match option_env!("PDFCRAFT_PACKAGE_ID") {
+            Some(id) if !id.is_empty() => id,
+            _ => upstream.id,
+        },
+        name: PRODUCT_NAME,
+        repo: match option_env!("PDFCRAFT_UPDATE_REPO") {
+            Some(repo) if !repo.is_empty() => repo,
+            _ => upstream.repo,
+        },
+        // Upstream's earlier names (PrintCraft) were never this build's.
+        former_ids: if branded { &[] } else { upstream.former_ids },
+        former_names: if branded { &[] } else { upstream.former_names },
+        icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png")),
+        accent: Some([0xb7, 0x02, 0x28]),
+        developer: match PUBLISHER {
+            Some(publisher) => publisher,
+            None => upstream.developer,
+        },
+        ..upstream
+    }
 };
 
 use crate::control::Host as _;
@@ -245,6 +269,13 @@ struct PendingOpen {
 pub const PRODUCT_NAME: &str = match option_env!("PDFCRAFT_PRODUCT_NAME") {
     Some(name) if !name.is_empty() => name,
     _ => "PdfCraft",
+};
+
+/// Who publishes a branded build (`PDFCRAFT_MANUFACTURER`, as its installer says), for Help ▸
+/// About; `None` for PdfCraft itself.
+pub const PUBLISHER: Option<&str> = match option_env!("PDFCRAFT_MANUFACTURER") {
+    Some(name) if !name.is_empty() => Some(name),
+    _ => None,
 };
 
 /// A build under its own name (an organisation's fork) leaves out the upstream community prompts:

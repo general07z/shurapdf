@@ -1,6 +1,6 @@
 # ShuraPDF: setup
 
-> **Status:** live · **Last updated:** 2026-10-30 · **Change:** the Word engine is now fetched from GitHub; `shuraword` is optional
+> **Status:** live · **Last updated:** 2026-10-31 · **Change:** branding and update variables
 
 Your projects on GitHub:
 
@@ -88,6 +88,19 @@ On Windows PowerShell:
 ```powershell
 $env:PDFCRAFT_DEFAULT_LANGUAGE="ar"; $env:CRAFT_FONTS_DIR="..\craft-fonts"; cargo build -p pdfcraft --release
 ```
+
+The Council build sets more variables at compile time (`.github/workflows/shura-windows.yml` does this for every Windows package):
+
+| Variable | Council value | Effect |
+|---|---|---|
+| `PDFCRAFT_PRODUCT_NAME` | `ShuraPDF` | Name in the window title, menus, About, interface text and installer |
+| `PDFCRAFT_MANUFACTURER` | `Shura Council, Kingdom of Bahrain` | Installer publisher, "Developed by …" in About, update prompt |
+| `PDFCRAFT_UPGRADE_CODE` | `9358461B-…` | The installer's own upgrade identity (never change it once released) |
+| `PDFCRAFT_PACKAGE_ID` | `shurapdf` | Package file names (`shurapdf-<version>-windows-x64.msi`), which the in-app updater looks for |
+| `PDFCRAFT_UPDATE_REPO` | `general07z/shurapdf` | Where Help ▸ Check for updates looks: this repository's releases, never upstream's |
+| `PDFCRAFT_DEFAULT_LANGUAGE` | `en` (or `ar`) | Language of a fresh install; users can change it in Preferences |
+
+With none of them set, the build is plain PdfCraft.
 
 `CRAFT_FONTS_DIR` matters for Arabic: without it the build has no Arabic face for text you add to a PDF (Word conversion uses the system fonts and doesn't need it).
 
