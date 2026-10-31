@@ -137,6 +137,9 @@ impl ImageSettings {
     /// The Mobile preset: bicubic to 96 ppi above 144 ppi, JPEG high quality. Pages read on a
     /// screen; text in scans stays legible.
     pub const MOBILE: ImageSettings = ImageSettings { downsample: true, target_ppi: 96.0, above_ppi: 144.0, compression: Compression::Jpeg(80) };
+    /// The High compression preset: bicubic to 100 ppi above 150 ppi, JPEG low quality. The
+    /// smallest files that still read and print legibly on office paper; photos lose detail.
+    pub const HIGH: ImageSettings = ImageSettings { downsample: true, target_ppi: 100.0, above_ppi: 150.0, compression: Compression::Jpeg(40) };
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,16 +204,19 @@ pub enum Preset {
     Standard,
     /// Smaller files for reading on a phone or screen: images to 96 ppi above 144, JPEG high.
     Mobile,
+    /// The smallest files: images to 100 ppi above 150, JPEG low quality ([`ImageSettings::HIGH`]).
+    High,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 2] = [Preset::Standard, Preset::Mobile];
+    pub const ALL: [Preset; 3] = [Preset::Standard, Preset::Mobile, Preset::High];
 
     /// The name tools use.
     pub fn name(self) -> &'static str {
         match self {
             Preset::Standard => "standard",
             Preset::Mobile => "mobile",
+            Preset::High => "high",
         }
     }
 
@@ -222,6 +228,7 @@ impl Preset {
         match self {
             Preset::Standard => Settings::default(),
             Preset::Mobile => Settings { color: ImageSettings::MOBILE, gray: ImageSettings::MOBILE, ..Settings::default() },
+            Preset::High => Settings { color: ImageSettings::HIGH, gray: ImageSettings::HIGH, ..Settings::default() },
         }
     }
 

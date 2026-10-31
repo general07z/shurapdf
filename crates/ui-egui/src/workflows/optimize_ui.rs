@@ -163,6 +163,7 @@ pub(crate) fn body(ui: &mut egui::Ui, d: &mut OptimizeDraft, t: &Tokens) -> (boo
         let name = |p: Preset| match p {
             Preset::Standard => tl!("Standard"),
             Preset::Mobile => tl!("Mobile"),
+            Preset::High => tl!("High compression"),
         };
         let current = Preset::of(&d.settings);
         craft_ui::ComboBox::from_id_salt("optimize-preset").selected_text(current.map_or(tl!("Custom"), name)).show_ui(ui, |ui| {

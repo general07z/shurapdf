@@ -944,6 +944,29 @@ fn the_mobile_preset_makes_a_printed_page_small() {
     assert_eq!(Preset::from_name("mobile"), Some(Preset::Mobile));
 }
 
+/// The High compression preset goes further than Reduce File Size's Standard choices: images to
+/// 100 ppi rather than 150, at JPEG low quality, so the same printed page comes out smaller.
+#[test]
+fn the_high_compression_preset_is_smaller_than_standard() {
+    use pdfcraft_optimize::Preset;
+    let (doc, _) = printed_page(200, |_| true, |_, s| s);
+    let bytes = |d: &Document| write_full(d, &SaveOptions::default()).unwrap().len();
+    let mut standard = doc.clone();
+    optimize(&mut standard, &Preset::Standard.settings()).unwrap();
+    let mut high = doc.clone();
+    let r = optimize(&mut high, &Preset::High.settings()).unwrap();
+    assert_eq!((r.merged_images, r.images_resampled), (1, 1), "{r:?}");
+    let width = |d: &Document| drawn_images(d)[0].dict.int(b"Width");
+    // 24 pt = 1/3 in: 33 px at 100 ppi. (Standard may keep these flat strips whole: a 150 ppi
+    // JPEG of them would be no smaller.)
+    assert_eq!(width(&high), Some(33));
+    assert!(width(&high) < width(&standard));
+    assert!(bytes(&high) <= bytes(&standard), "{} → {}", bytes(&standard), bytes(&high));
+    assert!(bytes(&high) * 10 < bytes(&doc), "{} → {}", bytes(&doc), bytes(&high));
+    assert_eq!(Preset::of(&Preset::High.settings()), Some(Preset::High));
+    assert_eq!(Preset::from_name("high"), Some(Preset::High));
+}
+
 #[test]
 fn images_that_do_not_tile_a_picture_are_left_alone() {
     let unmerged = |doc: &mut Document, settings: &Settings| {
