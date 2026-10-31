@@ -67,7 +67,7 @@ pub fn convert(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, OfficeEr
     let output = dir.path.join("document.pdf");
     let errors = dir.path.join("errors.txt");
     std::fs::write(&input, bytes).map_err(|e| OfficeError::Failed(format!("couldn't write the Word file ({e})")))?;
-    let code = run(&input, &output, &errors, password)?;
+    let code = run(SCRIPT, &input, &output, &errors, password)?;
     match code {
         0 => std::fs::read(&output).map_err(|e| OfficeError::Failed(format!("Word wrote no PDF ({e})"))),
         EXIT_UNAVAILABLE => Err(OfficeError::Unavailable),
@@ -82,7 +82,7 @@ pub fn convert(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, OfficeEr
 
 /// Runs the script and waits for it, at most [`TIMEOUT`]. Its exit code; a PowerShell that can't
 /// start means no Word.
-fn run(input: &Path, output: &Path, errors: &Path, password: Option<&str>) -> Result<i32, OfficeError> {
+fn run(script: &str, input: &Path, output: &Path, errors: &Path, password: Option<&str>) -> Result<i32, OfficeError> {
     let error_file = std::fs::File::create(errors).map_err(|e| OfficeError::Failed(e.to_string()))?;
     let mut command = Command::new("powershell.exe");
     command
@@ -104,7 +104,7 @@ fn run(input: &Path, output: &Path, errors: &Path, password: Option<&str>) -> Re
     let mut child = command.spawn().map_err(|_| OfficeError::Unavailable)?;
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        if let Err(e) = stdin.write_all(SCRIPT.as_bytes()) {
+        if let Err(e) = stdin.write_all(script.as_bytes()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(OfficeError::Failed(format!("couldn't start Word ({e})")));
@@ -149,7 +149,24 @@ impl Drop for TempDir {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
-    use super::{OfficeError, convert};
+    use super::{OfficeError, convert, run};
+
+    /// A multi-line script runs whole: the file its `try` block writes is there afterwards. (With
+    /// Word installed, the conversion script's `try` block is where Word is driven; a build
+    /// machine has no Word, so this probe stands in for it.)
+    #[test]
+    fn a_multi_line_script_runs_whole() {
+        let dir = std::env::temp_dir().join(format!("shurapdf-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (out, errors) = (dir.join("out.txt"), dir.join("errors.txt"));
+        let probe = "$ErrorActionPreference = 'Stop'\n$code = 0\ntry {\n  Set-Content -LiteralPath $env:SHURAPDF_WORD_OUT -Value 'ran'\n} catch {\n  $code = 2\n} finally {\n  $done = 1\n}\nexit $code\n";
+        let code = run(probe, &dir.join("in.docx"), &out, &errors, None).unwrap();
+        let said = std::fs::read_to_string(&errors).unwrap_or_default();
+        assert_eq!(code, 0, "{said}");
+        assert!(out.exists(), "the try block never ran: {said}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// On Windows, asking Word either converts (Office installed) or says Word isn't there (a
     /// build machine without Office); it never reports success without a PDF, which it did when
