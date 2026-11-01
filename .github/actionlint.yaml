@@ -2,3 +2,5 @@
 self-hosted-runner:
   labels:
     - macos-release
+    # The Council's Windows runner with Office (.github/workflows/shura-word-fidelity.yml).
+    - shura-word
