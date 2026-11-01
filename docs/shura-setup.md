@@ -270,7 +270,7 @@ To use a newer `shuraword` commit in the Windows build, put its full commit id i
 ## Measuring the built-in engine against Microsoft Word
 
 `.github/workflows/shura-word-fidelity.yml` compares the two engines on the Council's self-hosted
-Windows runner (labels `self-hosted`, `windows`, `shura-word`; it needs Office installed and
+Windows runner (any self-hosted Windows runner registered on `shurapdf`; it needs Office installed and
 signed in as a normal user, not SYSTEM). Start it by hand: **Actions ▸ ShuraPDF Word fidelity ▸
 Run workflow**. It never runs on pull requests.
 
