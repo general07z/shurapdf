@@ -221,6 +221,14 @@ fn main() {
     if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
         eprintln!("summary.md: {e}");
     }
+    // In GitHub Actions, the table also goes on the run's page.
+    if let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        let appended = std::fs::OpenOptions::new().append(true).create(true).open(path).and_then(|mut f| f.write_all(md.as_bytes()));
+        if let Err(e) = appended {
+            eprintln!("step summary: {e}");
+        }
+    }
     if word_failed {
         eprintln!("Microsoft Word could not convert: see the errors above");
         std::process::exit(1);
