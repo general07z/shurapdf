@@ -60,6 +60,7 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 /// does (if Word refuses those export options, a plain Save As PDF). Macros are forced off and no
 /// dialog is shown. It succeeds only when the PDF is there.
 const SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $word = $null
 $doc = $null
 $code = 0
@@ -75,14 +76,19 @@ try {
   $word.Visible = $false
   $word.DisplayAlerts = 0
   $word.AutomationSecurity = 3
-  $word.ScreenUpdating = $false
   $password = $env:SHURAPDF_WORD_PASSWORD
   $out = $env:SHURAPDF_WORD_OUT
   $missing = [Type]::Missing
   # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate,
   # Revert, WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair,
   # DocumentDirection, NoEncodingDialog
-  $doc = $word.Documents.Open($env:SHURAPDF_WORD_IN, $false, $true, $false, $password, $password, $false, $password, $password, $missing, $missing, $false, $false, $missing, $true)
+  try {
+    $doc = $word.Documents.Open($env:SHURAPDF_WORD_IN, $false, $true, $false, $password, $password, $false, $password, $password, $missing, $missing, $false, $false, $missing, $true)
+  } catch {
+    # Some Word versions refuse the extra options ("Command failed"): the six every Word takes.
+    if ($_.Exception.Message -match 'password' -or $_.Exception.HResult -eq -2146822880) { throw }
+    $doc = $word.Documents.Open($env:SHURAPDF_WORD_IN, $false, $true, $false, $password, $password)
+  }
   try {
     $doc.ExportAsFixedFormat($out, 17, $false, 0, 0, 1, 1, 0, $true, $true, 1, $true, $true, $false)
   } catch {
@@ -97,7 +103,7 @@ try {
   if ($message -match 'password' -or $_.Exception.HResult -eq -2146822880) {
     $code = 3
   } else {
-    [Console]::Error.WriteLine($message)
+    [Console]::Error.WriteLine("$message (script line $($_.InvocationInfo.ScriptLineNumber))")
     $code = 2
   }
 } finally {
@@ -152,7 +158,7 @@ pub fn convert(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, OfficeEr
     let errors = dir.path.join("errors.txt");
     let pid = dir.path.join("word.pid");
     std::fs::write(&input, bytes).map_err(|e| OfficeError::Failed(format!("couldn't write the Word file ({e})")))?;
-    let said = |path: &Path| std::fs::read_to_string(path).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let said = |path: &Path| std::fs::read_to_string(path).map(|s| plain_message(&s)).unwrap_or_default();
     let code = run(SCRIPT, &Paths { input: &input, output: &output, errors: &errors, pid: &pid }, password, timeout_for(bytes.len()))?;
     match code {
         0 => {
@@ -204,6 +210,12 @@ fn content_types(bytes: &[u8]) -> Option<String> {
     let mut text = String::new();
     part.take(1024 * 1024).read_to_string(&mut text).ok()?;
     Some(text)
+}
+
+/// What PowerShell wrote to standard error, without the XML it wraps progress records in when
+/// its output isn't a console (`#< CLIXML` and `<Objs …>` lines).
+fn plain_message(stderr: &str) -> String {
+    stderr.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("#< CLIXML") && !l.starts_with('<')).collect::<Vec<_>>().join(" ")
 }
 
 /// The files the script reads and writes.
@@ -313,6 +325,14 @@ mod tests {
         for junk in [&b""[..], b"PK\x03\x04 not a zip", b"plain text"] {
             assert_eq!(extension(junk), "docx");
         }
+    }
+
+    /// PowerShell's progress records (XML on standard error) never reach the user's message.
+    #[test]
+    fn progress_xml_is_dropped_from_messages() {
+        let stderr = "#< CLIXML\r\nCommand failed (script line 30)\r\n<Objs Version=\"1.1.0.1\"><Obj S=\"progress\"></Obj></Objs>\r\n";
+        assert_eq!(super::plain_message(stderr), "Command failed (script line 30)");
+        assert_eq!(super::plain_message(""), "");
     }
 
     /// Three minutes, more for big files, never more than ten.
