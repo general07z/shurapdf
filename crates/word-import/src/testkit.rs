@@ -39,6 +39,71 @@ pub fn rich_arabic_docx() -> Vec<u8> {
     docx(&body, Some(&rtl_para("الأمانة العامة")))
 }
 
+/// The synthetic documents the Word-fidelity comparison converts with Microsoft Word and with
+/// the built-in engine (`apps/pdfcraft-cli/examples/word_fidelity.rs`), each named, each built
+/// around something Council documents do: Arabic labels ending in a colon, justified Arabic, a
+/// right-to-left table whose shaded merged column runs across a page break, text in Aptos (the
+/// Microsoft 365 default), and the mixed Arabic letter of [`rich_arabic_docx`].
+pub fn fidelity_corpus() -> Vec<(&'static str, Vec<u8>)> {
+    let run = |text: &str, rtl: bool, size: u32| {
+        let rtl = if rtl { "<w:rtl/>" } else { "" };
+        format!(r#"<w:r><w:rPr>{rtl}<w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+    };
+    let para = |ppr: &str, runs: &str| format!("<w:p><w:pPr>{ppr}</w:pPr>{runs}</w:p>");
+    let labels = [
+        para("", &run("موقع الحكومة:", true, 24)),
+        para("<w:jc w:val=\"center\"/>", &run("موقع البرلمان:", true, 24)),
+        para("<w:bidi/>", &run("موقع وكالة الأنباء:", true, 24)),
+        para("<w:bidi/>", &format!("{}{}", run("الموقع الرسمي: ", true, 24), run("https://www.example.org/", false, 24))),
+        para("", &format!("{}{}", run("Site: ", false, 24), run("موقع الحكومة (الرسمي):", true, 24))),
+    ]
+    .concat();
+    let sentence =
+        "تهدف هذه المصادر إلى رصد التطورات التشريعية في الدول الشقيقة، مع إضافة بعض القنوات الإعلامية التي يجب التحقق من مدى صحة ما يرد فيها. ";
+    let justified = [
+        para("<w:bidi/><w:jc w:val=\"both\"/>", &run(&sentence.repeat(4), true, 28)),
+        para("<w:bidi/><w:jc w:val=\"both\"/>", &run(&sentence.repeat(3), true, 24)),
+    ]
+    .concat();
+    let cell = |text: &str, extra: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>{extra}</w:tcPr><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr>{}</w:p></w:tc>"#,
+            run(text, true, 22)
+        )
+    };
+    let shaded = r#"<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>"#;
+    let mut rows = String::new();
+    for i in 0..40 {
+        let merge = if i % 10 == 0 { format!(r#"<w:vMerge w:val="restart"/>{shaded}"#) } else { format!("<w:vMerge/>{shaded}") };
+        let country = if i % 10 == 0 {
+            ["مملكة البحرين", "المملكة العربية السعودية", "دولة الكويت", "سلطنة عمان"].get(i / 10).copied().unwrap_or("")
+        } else {
+            ""
+        };
+        rows.push_str(&format!("<w:tr>{}{}</w:tr>", cell(country, &merge), cell(&format!("موقع رقم {}:", i + 1), "")));
+    }
+    let table = format!(
+        r#"<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="6000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>{rows}</w:tbl><w:p/>"#
+    );
+    let aptos_run = |text: &str| {
+        format!(
+            r#"<w:r><w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:cs="Arial"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+        )
+    };
+    let aptos = [
+        para("", &aptos_run("Aptos is the default font of Microsoft 365 since 2023.")),
+        para("", &aptos_run(&"The quick brown fox jumps over the lazy dog. ".repeat(8))),
+    ]
+    .concat();
+    vec![
+        ("arabic-labels", docx(&labels, None)),
+        ("justified-arabic", docx(&justified, None)),
+        ("merged-table-page-break", docx(&table, None)),
+        ("aptos-text", docx(&aptos, None)),
+        ("rich-arabic-letter", rich_arabic_docx()),
+    ]
+}
+
 /// A `.docx` package around `body` (the children of `w:body`), with `header` (the children of
 /// `w:hdr`) as the default header when given.
 #[allow(clippy::unwrap_used)] // test fixture over in-memory buffers

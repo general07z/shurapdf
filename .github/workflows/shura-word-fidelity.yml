@@ -1,0 +1,108 @@
+name: ShuraPDF Word fidelity
+
+# Fork workflow (see the fork rules in CLAUDE.md). Measures how close the built-in Word engine
+# (WordCraft from general07z/shuraword) comes to Microsoft Word's own Save as PDF:
+# apps/pdfcraft-cli/examples/word_fidelity.rs converts each document with both and scores every
+# page. GitHub's Windows machine builds the tool; the Council's self-hosted runner (labels
+# self-hosted, windows, shura-word), which has Office, runs it.
+#
+# Manual only (workflow_dispatch), never on pull requests: code from a pull request must never
+# reach the self-hosted runner. The artifact holds only the synthetic documents of
+# pdfcraft_word_import::testkit::fidelity_corpus. Real documents stay in a folder on the runner
+# (input private_dir) and are reported as numbered scores: no name, text or picture leaves it.
+on:
+  workflow_dispatch:
+    inputs:
+      shuraword_rev:
+        description: shuraword commit to build (full id; empty = packaging/windows/shuraword-rev.txt)
+        required: false
+        default: ''
+      private_dir:
+        description: Folder on the runner with real Word documents (scores only)
+        required: false
+        default: 'C:\shura-fidelity\docs'
+
+concurrency:
+  group: shura-word-fidelity
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the comparison tool
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      CRAFT_FONTS_DIR: ${{ github.workspace }}\craft-fonts
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Same craft-fonts commit as the Windows release build.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+          path: craft-fonts
+          persist-credentials: false
+      - name: Rust (stable)
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: shura-word-fidelity
+      - name: WordCraft from shuraword
+        shell: pwsh
+        env:
+          SHURAWORD_DEPLOY_KEY: ${{ secrets.SHURAWORD_DEPLOY_KEY }}
+          SHURAWORD_REV: ${{ inputs.shuraword_rev }}
+        run: ./packaging/windows/use-shuraword.ps1 -Rev $env:SHURAWORD_REV
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p pdfcraft-cli --example word_fidelity
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: word-fidelity-tool
+          path: target/release/examples/word_fidelity.exe
+          retention-days: 1
+
+  compare:
+    name: Word vs built-in (Council runner)
+    needs: build
+    runs-on: [self-hosted, windows, shura-word]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: word-fidelity-tool
+          path: ${{ runner.temp }}\word-fidelity-tool
+      - name: Compare
+        shell: powershell
+        env:
+          PRIVATE_DIR: ${{ inputs.private_dir }}
+          OUT: ${{ runner.temp }}\word-fidelity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path -LiteralPath $env:OUT) { Remove-Item -Recurse -Force -LiteralPath $env:OUT }
+          $tool = Join-Path $env:RUNNER_TEMP 'word-fidelity-tool\word_fidelity.exe'
+          $arguments = @($env:OUT)
+          if ($env:PRIVATE_DIR -and (Test-Path -LiteralPath $env:PRIVATE_DIR -PathType Container)) { $arguments += @('--private', $env:PRIVATE_DIR) }
+          & $tool @arguments
+          $code = $LASTEXITCODE
+          if (Test-Path -LiteralPath "$env:OUT\summary.md") { Get-Content -Raw -LiteralPath "$env:OUT\summary.md" >> $env:GITHUB_STEP_SUMMARY }
+          exit $code
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: word-fidelity-results
+          path: ${{ runner.temp }}\word-fidelity
+          retention-days: 14

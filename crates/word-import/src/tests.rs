@@ -74,3 +74,18 @@ fn the_engine_choice_decides_who_converts() {
         assert_eq!(WordEngine::from_name(engine.name()), Some(engine));
     }
 }
+
+/// Every fidelity-corpus document converts with the built-in engine, under a distinct name that is
+/// safe as a folder name (the comparison tool writes `OUT_DIR/<name>/`).
+#[test]
+fn the_fidelity_corpus_converts() {
+    let corpus = super::testkit::fidelity_corpus();
+    assert!(corpus.len() >= 5);
+    let mut names = std::collections::HashSet::new();
+    for (name, docx) in &corpus {
+        assert!(names.insert(*name), "{name} twice");
+        assert!(name.chars().all(|c| c.is_ascii_lowercase() || c == '-'), "{name}");
+        let pdf = super::built_in(docx, &WordImportOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(pdf.starts_with(b"%PDF-"), "{name}");
+    }
+}
