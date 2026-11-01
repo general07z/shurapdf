@@ -1,10 +1,23 @@
 //! Converting through Microsoft Word itself, when it is installed (Windows): Word opens the file
 //! read-only with macros off and saves it as PDF, so the result is exactly Word's own "Save as
-//! PDF". Word is driven by a short PowerShell script (passed encoded on the command line); the file paths and
-//! the password reach it as environment variables, never inside the script's text.
+//! PDF". Word is driven by a short PowerShell script (passed encoded on the command line, so the
+//! execution policy doesn't apply); the file paths and the password reach it as environment
+//! variables, never inside the script's text.
+//!
+//! The cases it is built for (each checked against real Word by `word_fidelity --checks`):
+//! - Word not installed, or installed but unable to start (blocked, broken, not licensed): told
+//!   apart, so Automatic falls back and Microsoft Word says which.
+//! - Word already open with the user's documents: a separate, hidden Word is started and only it
+//!   is closed; the user's Word is never touched.
+//! - Several conversions at once (Combine): one Word at a time.
+//! - Word stuck (a dialog nobody sees, a huge document): stopped after a time that grows with the
+//!   file size, and the hidden Word it started is ended too, never left running.
+//! - Password-protected files, files with macros (`.docm`), templates, Word 97-2003 `.doc`.
+//! - User and temp folders with Arabic names.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Why Word did not convert the file.
@@ -12,39 +25,64 @@ use std::time::{Duration, Instant};
 pub enum OfficeError {
     /// No Microsoft Word on this computer (or not Windows).
     Unavailable,
+    /// Word is installed but could not be started: its message.
+    CannotStart(String),
+    /// Word took longer than its time limit and was stopped.
+    TimedOut,
     /// Word could not open the file with the password given (or without one).
     Password,
-    /// Word failed, or took longer than [`TIMEOUT`]: its message.
+    /// Word failed on this file: its message.
     Failed(String),
 }
 
-/// The longest a conversion may take before Word is stopped.
-pub const TIMEOUT: Duration = Duration::from_secs(180);
+/// The time Word gets for a file of `len` bytes: three minutes, plus half a minute per MiB, at most
+/// ten minutes.
+pub fn timeout_for(len: usize) -> Duration {
+    let mib = u64::try_from(len / (1024 * 1024)).unwrap_or(u64::MAX);
+    Duration::from_secs(180u64.saturating_add(mib.saturating_mul(30)).min(600))
+}
 
-/// Exit codes the script uses for [`OfficeError::Unavailable`] and [`OfficeError::Password`].
+/// Exit codes the script uses.
 const EXIT_UNAVAILABLE: i32 = 10;
+const EXIT_CANNOT_START: i32 = 11;
 const EXIT_PASSWORD: i32 = 3;
 
 /// Given to Word when there is no password: a protected file then fails at once.
 const NO_PASSWORD: &str = "\u{1}shurapdf-no-password\u{1}";
 
-/// Opens `SHURAPDF_WORD_IN` read-only (with the password in `SHURAPDF_WORD_PASSWORD`; a file
-/// without one ignores it) and exports `SHURAPDF_WORD_OUT` as PDF with heading bookmarks and
-/// document structure, as Word's Save as PDF does (if Word refuses those export options, a plain
-/// Save As PDF). Macros are forced off and no dialog is shown. It succeeds only when the PDF is
-/// there.
+/// One conversion at a time: each starts its own Word, and twenty at once would swamp the PC.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// Starts a hidden Word of its own (the user's open Word is never used), notes its process id in
+/// `SHURAPDF_WORD_PID` so a stuck Word can be ended, opens `SHURAPDF_WORD_IN` read-only (with the
+/// password in `SHURAPDF_WORD_PASSWORD`; a file without one ignores it) and exports
+/// `SHURAPDF_WORD_OUT` as PDF with heading bookmarks and document structure, as Word's Save as PDF
+/// does (if Word refuses those export options, a plain Save As PDF). Macros are forced off and no
+/// dialog is shown. It succeeds only when the PDF is there.
 const SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $word = $null
 $doc = $null
 $code = 0
-try { $word = New-Object -ComObject Word.Application } catch { exit 10 }
+if (-not (Test-Path -LiteralPath 'Registry::HKEY_CLASSES_ROOT\Word.Application\CLSID')) { exit 10 }
+$before = @(Get-Process -Name WINWORD -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+try { $word = New-Object -ComObject Word.Application } catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 11
+}
 try {
+  $mine = @(Get-Process -Name WINWORD -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | ForEach-Object { $_.Id })
+  if ($mine.Count -gt 0) { Set-Content -LiteralPath $env:SHURAPDF_WORD_PID -Value ($mine -join ' ') -Encoding ASCII }
   $word.Visible = $false
   $word.DisplayAlerts = 0
   $word.AutomationSecurity = 3
+  $word.ScreenUpdating = $false
   $password = $env:SHURAPDF_WORD_PASSWORD
   $out = $env:SHURAPDF_WORD_OUT
-  $doc = $word.Documents.Open($env:SHURAPDF_WORD_IN, $false, $true, $false, $password, $password)
+  $missing = [Type]::Missing
+  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate,
+  # Revert, WritePasswordDocument, WritePasswordTemplate, Format, Encoding, Visible, OpenAndRepair,
+  # DocumentDirection, NoEncodingDialog
+  $doc = $word.Documents.Open($env:SHURAPDF_WORD_IN, $false, $true, $false, $password, $password, $false, $password, $password, $missing, $missing, $false, $false, $missing, $true)
   try {
     $doc.ExportAsFixedFormat($out, 17, $false, 0, 0, 1, 1, 0, $true, $true, 1, $true, $true, $false)
   } catch {
@@ -64,7 +102,11 @@ try {
   }
 } finally {
   if ($doc) { try { $doc.Close(0) } catch {} }
-  if ($word) { try { $word.Quit(0) } catch {} }
+  if ($word) {
+    # Only this script's own Word, and only once it holds nothing else.
+    try { if ($word.Documents.Count -eq 0) { $word.Quit(0) } } catch {}
+    try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
+  }
 }
 exit $code
 "#;
@@ -102,42 +144,87 @@ pub fn convert(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, OfficeEr
     if !cfg!(windows) {
         return Err(OfficeError::Unavailable);
     }
+    // A poisoned lock only means an earlier conversion panicked; the next one may still run.
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = TempDir::new().map_err(|e| OfficeError::Failed(format!("couldn't make a working folder ({e})")))?;
-    // Word recognises the format from the content; the name only has to look like a Word file.
-    let extension = if bytes.starts_with(&crate::COMPOUND_FILE) { "doc" } else { "docx" };
-    let input = dir.path.join(format!("document.{extension}"));
+    let input = dir.path.join(format!("document.{}", extension(bytes)));
     let output = dir.path.join("document.pdf");
     let errors = dir.path.join("errors.txt");
+    let pid = dir.path.join("word.pid");
     std::fs::write(&input, bytes).map_err(|e| OfficeError::Failed(format!("couldn't write the Word file ({e})")))?;
-    let code = run(SCRIPT, &input, &output, &errors, password)?;
+    let said = |path: &Path| std::fs::read_to_string(path).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let code = run(SCRIPT, &Paths { input: &input, output: &output, errors: &errors, pid: &pid }, password, timeout_for(bytes.len()))?;
     match code {
-        0 => std::fs::read(&output).map_err(|e| {
-            let said = std::fs::read_to_string(&errors).unwrap_or_default();
-            OfficeError::Failed(format!(
-                "Word wrote no PDF ({e}){}",
-                if said.trim().is_empty() { String::new() } else { format!(": {}", said.trim()) }
-            ))
-        }),
+        0 => {
+            let pdf = std::fs::read(&output).map_err(|e| {
+                let said = said(&errors);
+                OfficeError::Failed(format!("Word wrote no PDF ({e}){}", if said.is_empty() { String::new() } else { format!(": {said}") }))
+            })?;
+            if pdf.starts_with(b"%PDF-") { Ok(pdf) } else { Err(OfficeError::Failed("Word wrote a file that isn't a PDF".into())) }
+        }
         EXIT_UNAVAILABLE => Err(OfficeError::Unavailable),
+        EXIT_CANNOT_START => {
+            let said = said(&errors);
+            Err(OfficeError::CannotStart(if said.is_empty() { "Word didn't start".into() } else { said }))
+        }
         EXIT_PASSWORD => Err(OfficeError::Password),
         _ => {
-            let message = std::fs::read_to_string(&errors).unwrap_or_default();
-            let message = message.trim();
-            Err(OfficeError::Failed(if message.is_empty() { format!("Word stopped with code {code}") } else { message.to_owned() }))
+            let said = said(&errors);
+            Err(OfficeError::Failed(if said.is_empty() { format!("Word stopped with code {code}") } else { said }))
         }
     }
 }
 
-/// Runs the script and waits for it, at most [`TIMEOUT`]. Its exit code; a PowerShell that can't
-/// start means no Word.
-fn run(script: &str, input: &Path, output: &Path, errors: &Path, password: Option<&str>) -> Result<i32, OfficeError> {
-    let error_file = std::fs::File::create(errors).map_err(|e| OfficeError::Failed(e.to_string()))?;
+/// The name Word needs to see: it refuses a macro-enabled document or a template whose name
+/// says otherwise. Word 97-2003 files are `.doc`; a `.docx` package's content types tell the
+/// rest. Unreadable packages are left to Word as `.docx`.
+fn extension(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&crate::COMPOUND_FILE) {
+        // A Word 97-2003 file, or a password-protected package: Word reads both as .doc.
+        return "doc";
+    }
+    let Some(types) = content_types(bytes) else { return "docx" };
+    let main = |kind: &str| types.contains(&format!("application/vnd.{kind}"));
+    if main("ms-word.document.macroEnabled.main+xml") {
+        "docm"
+    } else if main("ms-word.template.macroEnabledTemplate.main+xml") {
+        "dotm"
+    } else if main("openxmlformats-officedocument.wordprocessingml.template.main+xml") {
+        "dotx"
+    } else {
+        "docx"
+    }
+}
+
+/// `[Content_Types].xml` of a zip package (at most 1 MiB of it).
+fn content_types(bytes: &[u8]) -> Option<String> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let part = zip.by_name("[Content_Types].xml").ok()?;
+    let mut text = String::new();
+    part.take(1024 * 1024).read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
+/// The files the script reads and writes.
+struct Paths<'a> {
+    input: &'a Path,
+    output: &'a Path,
+    errors: &'a Path,
+    pid: &'a Path,
+}
+
+/// Runs the script and waits for it, at most `limit`. Its exit code; a PowerShell that can't
+/// start means no Word. When the time is up, the script and the Word it started are both ended.
+fn run(script: &str, paths: &Paths, password: Option<&str>, limit: Duration) -> Result<i32, OfficeError> {
+    let error_file = std::fs::File::create(paths.errors).map_err(|e| OfficeError::Failed(e.to_string()))?;
     let mut command = Command::new("powershell.exe");
     command
         .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"])
         .arg(encoded(script))
-        .env("SHURAPDF_WORD_IN", input)
-        .env("SHURAPDF_WORD_OUT", output)
+        .env("SHURAPDF_WORD_IN", paths.input)
+        .env("SHURAPDF_WORD_OUT", paths.output)
+        .env("SHURAPDF_WORD_PID", paths.pid)
         // Without a password, one that can't match: an empty one could make Word ask for it in
         // a window nobody sees, until the timeout.
         .env("SHURAPDF_WORD_PASSWORD", password.filter(|p| !p.is_empty()).unwrap_or(NO_PASSWORD))
@@ -155,14 +242,31 @@ fn run(script: &str, input: &Path, output: &Path, errors: &Path, password: Optio
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status.code().unwrap_or(-1)),
-            Ok(None) if started.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(100)),
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(OfficeError::Failed(format!("Word took longer than {} seconds", TIMEOUT.as_secs())));
+                end_word(paths.pid);
+                return Err(OfficeError::TimedOut);
             }
             Err(e) => return Err(OfficeError::Failed(e.to_string())),
         }
+    }
+}
+
+/// Ends the Word processes the script noted as its own (process ids, space-separated). Only
+/// numbers are passed on, so the file can't make this run anything else.
+fn end_word(pid_file: &Path) {
+    let Ok(text) = std::fs::read_to_string(pid_file) else { return };
+    for pid in text.split_whitespace().filter_map(|p| p.parse::<u32>().ok()) {
+        let mut kill = Command::new("taskkill.exe");
+        kill.args(["/F", "/PID", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            kill.creation_flags(0x0800_0000);
+        }
+        let _ = kill.status();
     }
 }
 
@@ -190,7 +294,34 @@ impl Drop for TempDir {
 
 #[cfg(test)]
 mod tests {
-    use super::{SCRIPT, base64, encoded};
+    use super::{SCRIPT, base64, encoded, extension, timeout_for};
+    use crate::testkit::{encrypted_docx, synthetic_doc, synthetic_docx, with_main_type};
+
+    /// Word refuses a macro-enabled document or a template saved under a `.docx` name, so the
+    /// file Word is given is named after what it holds.
+    #[test]
+    fn word_gets_the_name_its_content_needs() {
+        assert_eq!(extension(&synthetic_docx()), "docx");
+        assert_eq!(extension(&synthetic_doc(&["نص"])), "doc");
+        assert_eq!(extension(&encrypted_docx("كلمة")), "doc");
+        assert_eq!(extension(&with_main_type(&synthetic_docx(), "application/vnd.ms-word.document.macroEnabled.main+xml")), "docm");
+        assert_eq!(
+            extension(&with_main_type(&synthetic_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml")),
+            "dotx"
+        );
+        assert_eq!(extension(&with_main_type(&synthetic_docx(), "application/vnd.ms-word.template.macroEnabledTemplate.main+xml")), "dotm");
+        for junk in [&b""[..], b"PK\x03\x04 not a zip", b"plain text"] {
+            assert_eq!(extension(junk), "docx");
+        }
+    }
+
+    /// Three minutes, more for big files, never more than ten.
+    #[test]
+    fn bigger_files_get_more_time() {
+        assert_eq!(timeout_for(0).as_secs(), 180);
+        assert_eq!(timeout_for(4 * 1024 * 1024).as_secs(), 300);
+        assert_eq!(timeout_for(usize::MAX).as_secs(), 600);
+    }
 
     #[test]
     fn base64_matches_rfc_4648() {
@@ -227,7 +358,9 @@ mod windows_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (out, errors) = (dir.join("out.txt"), dir.join("errors.txt"));
         let probe = "$ErrorActionPreference = 'Stop'\n$code = 0\ntry {\n  Set-Content -LiteralPath $env:SHURAPDF_WORD_OUT -Value 'ran'\n} catch {\n  $code = 2\n} finally {\n  $done = 1\n}\nexit $code\n";
-        let code = run(probe, &dir.join("in.docx"), &out, &errors, None).unwrap();
+        let (input, pid) = (dir.join("in.docx"), dir.join("word.pid"));
+        let paths = super::Paths { input: &input, output: &out, errors: &errors, pid: &pid };
+        let code = run(probe, &paths, None, super::timeout_for(0)).unwrap();
         let said = std::fs::read_to_string(&errors).unwrap_or_default();
         assert_eq!(code, 0, "{said}");
         assert!(out.exists(), "the try block never ran: {said}");

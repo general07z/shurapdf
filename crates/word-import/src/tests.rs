@@ -60,6 +60,14 @@ fn the_engine_choice_decides_who_converts() {
     assert_eq!(convert(WordEngine::Word, &word_pdf).unwrap(), b"%PDF-word");
     assert!(matches!(convert(WordEngine::Word, &missing), Err(WordImportError::Word(m)) if m.contains("isn't installed")));
     assert!(matches!(convert(WordEngine::Word, &failed), Err(WordImportError::Word(m)) if m == "Word crashed"));
+    // Installed but not starting, or stuck: Automatic falls back; Microsoft Word says which.
+    let blocked = || Err(OfficeError::CannotStart("Class not registered".into()));
+    let stuck = || Err(OfficeError::TimedOut);
+    for fallback in [&blocked as &dyn Fn() -> _, &stuck] {
+        assert!(convert(WordEngine::Auto, fallback).unwrap().starts_with(b"%PDF-"));
+    }
+    assert!(matches!(convert(WordEngine::Word, &blocked), Err(WordImportError::Word(m)) if m.contains("didn't start (Class not registered)")));
+    assert!(matches!(convert(WordEngine::Word, &stuck), Err(WordImportError::Word(m)) if m.contains("180 seconds")));
     let pdf = word_to_pdf_with(&docx, &opts, WordEngine::BuiltIn, |_, _| panic!("Word must not be asked")).unwrap();
     assert!(pdf.starts_with(b"%PDF-"));
 
