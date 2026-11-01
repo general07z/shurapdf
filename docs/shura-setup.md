@@ -1,6 +1,6 @@
 # ShuraPDF: setup
 
-> **Status:** live · **Last updated:** 2026-10-31 · **Change:** branding and update variables
+> **Status:** live · **Last updated:** 2026-11-01 · **Change:** Word fidelity runner
 
 Your projects on GitHub:
 
@@ -266,3 +266,20 @@ variables ▸ Actions ▸ New repository secret `SHURAWORD_DEPLOY_KEY` (paste th
 
 To use a newer `shuraword` commit in the Windows build, put its full commit id in
 `packaging/windows/shuraword-rev.txt` (an ordinary pull request).
+
+## Measuring the built-in engine against Microsoft Word
+
+`.github/workflows/shura-word-fidelity.yml` compares the two engines on the Council's self-hosted
+Windows runner (labels `self-hosted`, `windows`, `shura-word`; it needs Office installed and
+signed in as a normal user, not SYSTEM). Start it by hand: **Actions ▸ ShuraPDF Word fidelity ▸
+Run workflow**. It never runs on pull requests.
+
+- GitHub's Windows machine builds the comparison tool (`apps/pdfcraft-cli/examples/word_fidelity.rs`)
+  with `shuraword`; the runner converts each test document with Word and with the built-in engine.
+- The run's summary shows a score per page (100% = the same ink in the same place). The artifact
+  **word-fidelity-results** has, for each synthetic test document, both PDFs and a picture per
+  page: Word | built-in | difference (blue only in Word, red only in the built-in engine).
+- To score real documents, copy them to `C:\shura-fidelity\docs` on the runner. They are reported
+  as `private-1`, `private-2`… with scores only; no file name, text, PDF or picture is uploaded.
+- `shuraword_rev` builds a candidate `shuraword` commit, to measure a fix before
+  `packaging/windows/shuraword-rev.txt` moves to it.
