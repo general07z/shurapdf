@@ -212,6 +212,53 @@ impl SignatureImage {
         Self::from_bytes(&png.into_inner())
     }
 
+    /// The image with its paper made transparent, whatever its colour: the paper is the brightness
+    /// most of the image has (its 85th percentile), and a pixel stays as far as it is darker than
+    /// that, fading in over a soft edge so strokes keep smooth sides. White, grey, cream or yellowed
+    /// paper, a scan or a photo, all go, and ink keeps its colour (as Acrobat does when a signature
+    /// image is added). An image whose background is already transparent (a quarter of it or more)
+    /// keeps it, and only near-white is cleared, as before; so does a dark image with no paper.
+    pub fn remove_background(&self) -> Result<Self, SignatureImageError> {
+        let [w, h] = self.size;
+        let rgba = self.rgba.as_ref();
+        let luma = |p: &[u8; 4]| (u32::from(p[0]) * 299 + u32::from(p[1]) * 587 + u32::from(p[2]) * 114) / 1000;
+        let pixels = rgba.as_chunks::<4>().0;
+        let clear = pixels.iter().filter(|p| p[3] == 0).count();
+        let mut histogram = [0u64; 256];
+        for p in pixels.iter().filter(|p| p[3] >= 128) {
+            if let Some(slot) = histogram.get_mut(luma(p).min(255) as usize) {
+                *slot += 1;
+            }
+        }
+        let solid: u64 = histogram.iter().sum();
+        let paper = {
+            let target = solid.saturating_mul(85) / 100;
+            let mut seen = 0u64;
+            histogram.iter().position(|n| {
+                seen += n;
+                seen > target
+            })
+        };
+        let Some(paper) = paper.filter(|&p| solid > 0 && p >= 96 && clear.saturating_mul(4) < pixels.len()) else {
+            return self.remove_white_background(245, 35);
+        };
+        let paper = paper as f32;
+        let mut out = image::RgbaImage::from_raw(w as u32, h as u32, rgba.clone()).ok_or(SignatureImageError::Size)?;
+        for pixel in out.pixels_mut() {
+            let darker = paper - luma(&pixel.0) as f32;
+            let keep = ((darker - Self::PAPER_MARGIN) / Self::PAPER_FEATHER).clamp(0.0, 1.0);
+            pixel.0[3] = (f32::from(pixel.0[3]) * keep).round() as u8;
+        }
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(out).write_to(&mut png, ImageFormat::Png)?;
+        Self::from_bytes(&png.into_inner())
+    }
+
+    /// How much darker than the paper a pixel must be to start showing, and over how much more it
+    /// becomes solid (brightness, 0–255): paper grain and a scanner's noise stay below it.
+    const PAPER_MARGIN: f32 = 15.0;
+    const PAPER_FEATHER: f32 = 35.0;
+
     /// The user-space box for the image with its left edge at `at` (a user-space point on `page`),
     /// vertically centered, with the same 150 pt width cap as typed names. Left and centered are
     /// as displayed: on a page with `/Rotate` the box runs along the turned page's axes.
@@ -382,6 +429,36 @@ mod tests {
             let rect = image.rect(&page(rotation), at, false).unwrap();
             assert!(rect.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.01), "{rotation}: {rect:?}, want {want:?}");
         }
+    }
+
+    /// A signature on grey or cream paper (a scan, a photo) loses its paper whatever its colour, as
+    /// in Acrobat; ink, blue or black, stays solid with its colour; an image already transparent
+    /// around its ink keeps its ink.
+    #[test]
+    fn coloured_paper_is_cleared_and_ink_is_kept() {
+        for paper in [[200u8, 200, 195], [238, 228, 200], [255, 255, 255]] {
+            let mut source = image::RgbaImage::from_pixel(20, 10, image::Rgba([paper[0], paper[1], paper[2], 255]));
+            for x in 0..20 {
+                source.put_pixel(x, 5, image::Rgba([25, 35, 120, 255]));
+            }
+            // Paper grain: a little darker than the paper, not ink.
+            source.put_pixel(3, 2, image::Rgba([paper[0].saturating_sub(8), paper[1].saturating_sub(8), paper[2].saturating_sub(8), 255]));
+            let mut encoded = Cursor::new(Vec::new());
+            source.write_to(&mut encoded, ImageFormat::Png).unwrap();
+            let cleaned = SignatureImage::from_bytes(&encoded.into_inner()).unwrap().remove_background().unwrap();
+            let pixels = cleaned.rgba().as_chunks::<4>().0;
+            let at = |x: usize, y: usize| pixels[y * 20 + x];
+            assert_eq!(at(0, 0)[3], 0, "{paper:?}: paper is transparent");
+            assert_eq!(at(3, 2)[3], 0, "{paper:?}: grain is transparent");
+            assert_eq!(at(7, 5), [25, 35, 120, 255], "{paper:?}: ink keeps its colour, solid");
+        }
+        // Already transparent around the ink: the ink stays.
+        let mut source = image::RgbaImage::from_pixel(10, 10, image::Rgba([0, 0, 0, 0]));
+        source.put_pixel(5, 5, image::Rgba([20, 20, 20, 255]));
+        let mut encoded = Cursor::new(Vec::new());
+        source.write_to(&mut encoded, ImageFormat::Png).unwrap();
+        let cleaned = SignatureImage::from_bytes(&encoded.into_inner()).unwrap().remove_background().unwrap();
+        assert_eq!(cleaned.rgba().as_chunks::<4>().0[55], [20, 20, 20, 255]);
     }
 
     #[test]

@@ -539,7 +539,7 @@ impl PdfCraftApp {
             let image = std::fs::File::open(path)
                 .map_err(pdfcraft_engine::signature_image::SignatureImageError::from)
                 .and_then(SignatureImage::read)
-                .and_then(|image| image.remove_white_background(245, 35));
+                .and_then(|image| image.remove_background());
             match (image, app.sign_draft.as_mut()) {
                 (Ok(image), Some(d)) => {
                     d.graphic = SignGraphic::Image(image.clone());
