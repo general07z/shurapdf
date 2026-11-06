@@ -107,10 +107,12 @@ try {
     $code = 2
   }
 } finally {
-  if ($doc) { try { $doc.Close(0) } catch {} }
+  # Close and Quit take their arguments by reference: PowerShell refuses a plain 0
+  # ("should be a System.Management.Automation.PSReference").
+  if ($doc) { try { $doc.Close([ref]0) } catch { try { $doc.Close() } catch {} } }
   if ($word) {
     # Only this script's own Word, and only once it holds nothing else.
-    try { if ($word.Documents.Count -eq 0) { $word.Quit(0) } } catch {}
+    try { if ($word.Documents.Count -eq 0) { $word.Quit([ref]0) } } catch {}
     try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
   }
 }
@@ -326,7 +328,8 @@ fn word_safe_base() -> PathBuf {
     if temp.to_string_lossy().is_ascii() || !cfg!(windows) {
         return temp;
     }
-    if let Some(short) = short_path(&temp).filter(|p| p.to_string_lossy().is_ascii()) {
+    // `cmd` writes a name it can't show in its code page as `?`: no short name, then.
+    if let Some(short) = short_path(&temp).filter(|p| p.to_string_lossy().is_ascii() && !p.to_string_lossy().contains('?')) {
         return short;
     }
     std::env::var_os("ProgramData")
@@ -351,6 +354,11 @@ fn short_path(path: &Path) -> Option<PathBuf> {
     let text = String::from_utf8(out.stdout).ok()?;
     let line = text.lines().next()?.trim();
     (out.status.success() && !line.is_empty()).then(|| PathBuf::from(line))
+}
+
+/// The folder conversions through Word work in (diagnostics: `word_fidelity --checks`).
+pub fn working_folder() -> PathBuf {
+    word_safe_base()
 }
 
 /// A folder of its own for one conversion ([`word_safe_base`]), removed when dropped.

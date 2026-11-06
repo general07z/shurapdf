@@ -200,7 +200,7 @@ fn saved_as_doc(work: &Path, docx: &[u8]) -> Option<Vec<u8>> {
     std::fs::create_dir_all(&dir).ok()?;
     let (input, output) = (dir.join("fixture.docx"), dir.join("fixture.doc"));
     std::fs::write(&input, docx).ok()?;
-    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $d = $w.Documents.Open($env:FIXTURE_IN, $false, $true)\n  $d.SaveAs2($env:FIXTURE_OUT, 0)\n  $d.Close(0)\n} finally { $w.Quit(0) }\n";
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $d = $w.Documents.Open($env:FIXTURE_IN, $false, $true)\n  $d.SaveAs2($env:FIXTURE_OUT, 0)\n  $d.Close([ref]0)\n} finally { $w.Quit([ref]0) }\n";
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let status = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &base64(&utf16)])
@@ -208,6 +208,7 @@ fn saved_as_doc(work: &Path, docx: &[u8]) -> Option<Vec<u8>> {
         .env("FIXTURE_OUT", &output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .ok()?;
     let bytes = status.success().then(|| std::fs::read(&output).ok()).flatten();
@@ -232,7 +233,7 @@ fn base64(bytes: &[u8]) -> String {
 /// The child half of the Arabic temp folder check: one conversion with Word, then exit.
 pub fn convert_one() -> ! {
     let r = with(WordEngine::Word, &synthetic_docx(), None);
-    println!("{} (temp: {})", outcome(&r), std::env::temp_dir().display());
+    println!("{} (temp: {}; Word works in {})", outcome(&r), std::env::temp_dir().display(), pdfcraft_word_import::working_folder().display());
     std::process::exit(if r.as_ref().is_ok_and(|p| made_by_word(p)) { 0 } else { 1 });
 }
 
