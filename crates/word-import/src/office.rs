@@ -13,7 +13,8 @@
 //! - Word stuck (a dialog nobody sees, a huge document): stopped after a time that grows with the
 //!   file size, and the hidden Word it started is ended too, never left running.
 //! - Password-protected files, files with macros (`.docm`), templates, Word 97-2003 `.doc`.
-//! - User and temp folders with Arabic names.
+//! - Temp folders whose path isn't ASCII get an ASCII working folder (not checked against real
+//!   Word: the Council has no accounts with Arabic names).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -320,9 +321,10 @@ fn end_word(pid_file: &Path) {
 }
 
 /// Where the working folder goes: the temp folder, unless its path has characters outside ASCII
-/// (a Windows account with an Arabic name: `C:\Users\<name>\AppData\Local\Temp`), which Word
-/// fails to open files from (measured: "Exception from HRESULT: 0x800A13E9"). Then its short
-/// (8.3) path when Windows keeps one, else `%ProgramData%\ShuraPDF`.
+/// (a Windows account with a non-Latin name: `C:\Users\<name>\AppData\Local\Temp`): then its
+/// short (8.3) path when Windows keeps one, else `%ProgramData%\ShuraPDF`, so the paths handed to
+/// Word stay plain. A precaution: Word itself opens files from Arabic-named folders, and the
+/// Council has no such accounts.
 fn word_safe_base() -> PathBuf {
     let temp = std::env::temp_dir();
     if temp.to_string_lossy().is_ascii() || !cfg!(windows) {

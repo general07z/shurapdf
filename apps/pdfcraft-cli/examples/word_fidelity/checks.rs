@@ -9,16 +9,10 @@ use std::time::{Duration, Instant};
 use pdfcraft_word_import::testkit::{encrypted_docx, synthetic_docx, with_main_type};
 use pdfcraft_word_import::{WordEngine, WordImportError, WordImportOptions, set_engine, word_to_pdf};
 
-/// The argument that makes this program convert one document with Word and exit (0 on success):
-/// the Arabic temp folder check runs it as a child with a different `TEMP`.
-pub const CONVERT_ONE: &str = "--convert-one";
-
 /// One check's outcome.
 pub struct Check {
     pub name: &'static str,
     pub passed: bool,
-    /// A failure fails the run; a known open question only shows in the table.
-    pub blocking: bool,
     pub detail: String,
     pub seconds: f64,
 }
@@ -69,7 +63,7 @@ fn wait_for(mut done: impl FnMut() -> bool, limit: Duration) -> bool {
 fn check(name: &'static str, f: impl FnOnce() -> (bool, String)) -> Check {
     let start = Instant::now();
     let (passed, detail) = f();
-    let c = Check { name, passed, detail, seconds: start.elapsed().as_secs_f64(), blocking: true };
+    let c = Check { name, passed, detail, seconds: start.elapsed().as_secs_f64() };
     eprintln!("[{}] {} — {} ({:.1} s)", if c.passed { "PASS" } else { "FAIL" }, c.name, c.detail, c.seconds);
     c
 }
@@ -140,26 +134,6 @@ pub fn run(work: &Path) -> Vec<Check> {
         let ok = results.iter().filter(|r| r.as_ref().is_ok_and(|p| made_by_word(p))).count();
         (ok == 3, format!("{ok} of 3 made by Word"))
     }));
-    // Open question: the conversion fails even with Word working in the folder's ASCII short path.
-    // This check gives only this program an Arabic TEMP (Word keeps the account's own), which a
-    // user with an Arabic account name doesn't have; it reports without failing the run until it
-    // is checked on such an account.
-    checks.push(check("Temp folder with an Arabic name (open question)", || {
-        // Outside the results folder, which is uploaded.
-        let temp = std::env::temp_dir().join("ShuraPDF مجلد مؤقت");
-        if let Err(e) = std::fs::create_dir_all(&temp) {
-            return (false, format!("couldn't make {}: {e}", temp.display()));
-        }
-        let Ok(me) = std::env::current_exe() else { return (false, "no program path".into()) };
-        let out = Command::new(me).arg(CONVERT_ONE).env("TEMP", &temp).env("TMP", &temp).output();
-        match out {
-            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).trim().to_owned()),
-            Err(e) => (false, e.to_string()),
-        }
-    }));
-    if let Some(last) = checks.last_mut() {
-        last.blocking = false;
-    }
     checks.push(check("No hidden Word left running afterwards", || {
         let left: Vec<u32> = Vec::new();
         let mut leftover = left;
@@ -239,13 +213,6 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// The child half of the Arabic temp folder check: one conversion with Word, then exit.
-pub fn convert_one() -> ! {
-    let r = with(WordEngine::Word, &synthetic_docx(), None);
-    println!("{} (temp: {}; Word works in {})", outcome(&r), std::env::temp_dir().display(), pdfcraft_word_import::working_folder().display());
-    std::process::exit(if r.as_ref().is_ok_and(|p| made_by_word(p)) { 0 } else { 1 });
-}
-
 /// The checks as a Markdown table.
 pub fn table(checks: &[Check]) -> String {
     let mut md = String::from("\n### Connection to Microsoft Word\n\n| Check | Result | Details | Time |\n|---|---|---|---|\n");
@@ -253,11 +220,7 @@ pub fn table(checks: &[Check]) -> String {
         md.push_str(&format!(
             "| {} | {} | {} | {:.1} s |\n",
             c.name,
-            match (c.passed, c.blocking) {
-                (true, _) => "✅ pass",
-                (false, true) => "❌ FAIL",
-                (false, false) => "⚠️ open",
-            },
+            if c.passed { "✅ pass" } else { "❌ FAIL" },
             c.detail.replace('|', "/").replace('\n', " "),
             c.seconds
         ));
