@@ -18,6 +18,14 @@ pub(super) fn latin_width(t: &AddedText, s: &str) -> f64 {
     t.family.width(s, t.size, t.bold, t.italic) + t.char_spacing * s.chars().count() as f64
 }
 
+/// The advance of `s` in the item's chosen face, shaped (with its spacing), when it has one and the
+/// face can shape it.
+pub(super) fn face_width(t: &AddedText, s: &str) -> Option<f64> {
+    let face = t.face.as_ref()?;
+    let run = pdfcraft_fonts::source_shaping::shape(&face.program, s).ok()?;
+    Some(run.advance * t.size + t.char_spacing * s.chars().count() as f64)
+}
+
 /// The lines of a text item after wrapping to its box width.
 pub fn lines(t: &AddedText) -> Vec<String> {
     wrapped(t).into_iter().map(|(line, _)| line).collect()
@@ -36,6 +44,28 @@ pub(super) fn wrapped(t: &AddedText) -> Vec<(String, bool)> {
     WRAP_CALLS.with(|c| c.set(c.get().saturating_add(1)));
     let width = (t.rect[2] - t.rect[0]).max(t.size);
     let mut out = Vec::new();
+    if t.face.is_some() {
+        // In a chosen face every script is shaped by it; words are measured one by one, as Arabic is.
+        for para in t.text.split('\n') {
+            let rtl = unicode_bidi::get_base_direction(para) == unicode_bidi::Direction::Rtl;
+            let measure = |s: &str| face_width(t, s).unwrap_or_else(|| latin_width(t, s));
+            let space = measure(" ");
+            let (mut line, mut line_w) = (String::new(), 0.0);
+            for word in para.split(' ') {
+                let candidate_w = if line.is_empty() { measure(word) } else { line_w + space + measure(word) };
+                if !line.is_empty() && candidate_w > width {
+                    out.push((std::mem::take(&mut line), rtl));
+                    line = word.to_string();
+                    line_w = measure(word);
+                } else {
+                    line = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+                    line_w = candidate_w;
+                }
+            }
+            out.push((line, rtl));
+        }
+        return out;
+    }
     for para in t.text.split('\n') {
         // Arabic or Hebrew: laid out with the bidirectional algorithm and shaped.
         let rtl_script = para.chars().any(|c| is_arabic(c) || is_hebrew(c));
@@ -107,6 +137,10 @@ fn thai_lines(t: &AddedText, para: &str, width: f64) -> Result<Vec<String>, Edit
 /// draw (or that has no face to draw it). Page-content tools refuse such text; the Add-text editor
 /// keeps it open.
 pub fn first_undrawable(t: &AddedText) -> Option<char> {
+    if let Some(face) = &t.face {
+        // The chosen face draws everything it has a glyph for.
+        return t.text.chars().find(|c| !matches!(c, '\n' | '\r') && !pdfcraft_fonts::embedding::covers(&face.program, &c.to_string()));
+    }
     if t.text.chars().any(is_thai) {
         if let Some(c) = t.text.chars().find(|c| is_thai(*c) && !pdfcraft_fonts::thai_has(*c)) {
             return Some(c);
@@ -266,5 +300,8 @@ fn copy_key(c: &Content) -> Content {
 
 /// The widest explicit line before wrapping, measured with the PDF writing fonts.
 pub fn text_width(t: &AddedText) -> f64 {
+    if t.face.is_some() {
+        return t.text.split('\n').map(|line| face_width(t, line).unwrap_or_else(|| latin_width(t, line))).fold(0.0, f64::max);
+    }
     t.text.split('\n').map(|line| shaped_width(t, line, unicode_bidi::get_base_direction(line) == unicode_bidi::Direction::Rtl)).fold(0.0, f64::max)
 }

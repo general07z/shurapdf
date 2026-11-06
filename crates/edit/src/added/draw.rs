@@ -1,7 +1,7 @@
 use super::layout::{
     Piece, arabic_error, hebrew_error, is_arabic, is_hebrew, is_thai, latin_width, lines, norm, shaped_layout, text_rect, thai_error, wrapped,
 };
-use super::types::{AddedText, Align, Family};
+use super::types::{AddedText, Align, Face, Family};
 use super::{
     Content, Dict, Document, EditError, GlyphError, GlyphOutline, HashMap, HashSet, ObjRef, Object, PdfString, ShapedCluster, ShapedScript, Stream,
     literal, matrix_number, n, shaped_glyph, win_ansi,
@@ -27,6 +27,74 @@ pub(super) const SYNTHETIC_ITALIC_SKEW: f64 = 0.21;
 /// A line of a shaped-text item after layout: its text, whether its paragraph runs right to left,
 /// its pieces in drawing order and its width at the item's size.
 pub(super) type LaidLine = (String, bool, Vec<Piece>, f64);
+
+/// Draw a text item in its chosen [`Face`]: every line shaped by the face (bidi, joining, marks),
+/// all of the item's glyphs in one embedded Type 0 font with a ToUnicode map, each line with
+/// `/ActualText` in typing order, so copy and search read it as typed. The font's resource name
+/// never takes one the page (`taken`) or the item already uses.
+fn draw_face(doc: &mut Document, t: &AddedText, face: &Face, taken: &Dict, fonts: &mut Dict, out: &mut Vec<u8>) -> Result<(), EditError> {
+    let laid = wrapped(t)
+        .into_iter()
+        .map(|(line, _)| pdfcraft_fonts::source_shaping::shape(&face.program, &line).map(|run| (line, run)).map_err(EditError::Invalid))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mappings: Vec<_> = laid.iter().flat_map(|(_, run)| run.glyphs.iter().map(|g| (g.text.clone(), g.id))).collect();
+    if mappings.is_empty() {
+        return Ok(());
+    }
+    // Names in use, held by placeholders that can't be mistaken for a program to reuse.
+    let mut scratch = Dict::new();
+    for (key, _) in taken.iter().chain(fonts.iter()) {
+        scratch.set(key.clone(), Object::Null);
+    }
+    let seeded: HashSet<Vec<u8>> = scratch.iter().map(|(key, _)| key.clone()).collect();
+    let resource = pdfcraft_fonts::embedding::embed_mapping(doc, &mut scratch, &face.program, &face.name, &mappings).map_err(EditError::Invalid)?;
+    for (key, value) in scratch.iter().filter(|(key, _)| !seeded.contains(*key)) {
+        fonts.set(key.clone(), value.clone());
+    }
+    let font = fonts
+        .get(resource.as_bytes())
+        .and_then(|f| doc.resolve(f).as_dict().cloned())
+        .ok_or_else(|| EditError::Invalid("the chosen font could not be embedded".into()))?;
+    let metrics = pdfcraft_fonts::pdf::Metrics::from_dict(doc, &font);
+    let r = text_rect(t);
+    let [cr, cg, cb] = t.color.map(|v| v.clamp(0.0, 1.0));
+    let per_unit = 1000.0 / t.size.max(0.01);
+    let mut code: u32 = 0;
+    for (i, (line, run)) in laid.iter().enumerate() {
+        let w = run.advance * t.size + t.char_spacing * line.chars().count() as f64;
+        let x = match t.align {
+            Align::Left | Align::Justify => r[0],
+            Align::Center => r[0] + ((r[2] - r[0]) - w) / 2.0,
+            Align::Right => r[2] - w,
+        };
+        // Baseline: as the standard-font lines are placed.
+        let y = r[3] - (i as f64 * 1.2 + 0.95) * t.size;
+        let logical: String = line.encode_utf16().map(|u| format!("{u:04X}")).collect();
+        out.extend(format!("/Span <</ActualText <FEFF{logical}>>> BDC\n").bytes());
+        out.extend(format!("BT /{resource} {} Tf {} {} {} rg 1 0 0 1 {} {} Tm [", n(t.size), n(cr), n(cg), n(cb), n(x), n(y)).bytes());
+        // Each glyph where shaping put it: a TJ adjustment from where the one before ends (its
+        // advance in the embedded widths); a mark set above or below by the text rise.
+        let (mut pen, mut extra, mut raised) = (0.0, 0.0, 0.0);
+        for glyph in &run.glyphs {
+            code = code.saturating_add(1);
+            let target = (glyph.position[0] * t.size + extra) * per_unit;
+            let rise = glyph.position[1] * t.size;
+            if (rise - raised).abs() > 1e-9 {
+                out.extend(format!("] TJ {} Ts [", n(rise)).bytes());
+                raised = rise;
+            }
+            if (target - pen).abs() > 1e-6 {
+                out.extend(format!("{} ", n(pen - target)).bytes());
+            }
+            let c = u16::try_from(code).map_err(|_| EditError::Invalid("the text has too many glyphs for one font".into()))?;
+            out.extend(format!("<{c:04X}> ").bytes());
+            pen = target + metrics.width(u32::from(c)) * 1000.0;
+            extra += t.char_spacing * glyph.text.chars().count() as f64;
+        }
+        out.extend_from_slice(b"] TJ ET EMC\n");
+    }
+    Ok(())
+}
 
 /// Draw a text item that has Arabic, Hebrew or Thai in it. Each line is laid out in display order; their glyphs
 /// come from Type 3 fonts drawn from the craft-fonts face's outlines (no font file is embedded),
@@ -292,6 +360,12 @@ pub(super) fn draw(doc: &mut Document, c: &Content, view: [f64; 6], taken: &Dict
                 font.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
             }
             let mut fonts = Dict::new();
+            if let Some(face) = &t.face {
+                draw_face(doc, t, face, taken, &mut fonts, &mut out)?;
+                res.set(b"Font".to_vec(), Object::Dict(fonts));
+                out.extend_from_slice(b"Q\n");
+                return Ok((out, res));
+            }
             fonts.set(name.clone().into_bytes(), Object::Dict(font));
             let face_or_new = |has: fn(char) -> bool, face: bool| t.text.chars().any(has) && (face || !existing);
             if t.text.chars().any(is_thai)
