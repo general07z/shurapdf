@@ -28,14 +28,16 @@ pub enum FilePurpose {
     RedactWords,
 }
 
-/// Discover installed document fonts off the GUI thread, only when the picker is opened.
+/// The installed document fonts, discovered off the GUI thread on first use: `None` until the
+/// scan has finished.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn installed_font_files(ctx: &egui::Context) -> Option<Vec<pdfcraft_engine::text_fonts::FontFile>> {
-    use std::sync::{Mutex, OnceLock};
-    type Files = Arc<Mutex<Option<Vec<pdfcraft_engine::text_fonts::FontFile>>>>;
-    static CACHE: OnceLock<Files> = OnceLock::new();
-    let files = CACHE.get_or_init(|| {
-        let files: Files = Arc::new(Mutex::new(None));
+type InstalledFonts = Arc<std::sync::Mutex<Option<Vec<pdfcraft_engine::text_fonts::FontFile>>>>;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn installed_fonts(ctx: &egui::Context) -> &'static InstalledFonts {
+    static CACHE: std::sync::OnceLock<InstalledFonts> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let files: InstalledFonts = Arc::new(std::sync::Mutex::new(None));
         let result = files.clone();
         let ctx = ctx.clone();
         if std::thread::Builder::new()
@@ -53,8 +55,21 @@ pub(crate) fn installed_font_files(ctx: &egui::Context) -> Option<Vec<pdfcraft_e
             *result = Some(Vec::new());
         }
         files
-    });
-    files.lock().ok().and_then(|f| f.clone())
+    })
+}
+
+/// Discover installed document fonts off the GUI thread, on first use (the picker, or Edit text
+/// opening: [`start_installed_font_scan`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn installed_font_files(ctx: &egui::Context) -> Option<Vec<pdfcraft_engine::text_fonts::FontFile>> {
+    installed_fonts(ctx).lock().ok().and_then(|f| f.clone())
+}
+
+/// Start the installed-font scan without waiting for it, so that by the time a paragraph is
+/// opened for editing its face can be drawn from the installed copy (Arabic in Word's PDFs).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn start_installed_font_scan(ctx: &egui::Context) {
+    installed_fonts(ctx);
 }
 
 /// The picker for `purpose`: PDFs, and for Create and Insert also what they convert.

@@ -32,17 +32,20 @@ pub fn installed_directories() -> Vec<PathBuf> {
     }
 }
 
-/// Bounded, symlink-free scan. Only standalone, openly licensed, embeddable faces are listed.
+/// Bounded, symlink-free scan. Only standalone faces the user may embed are listed: openly
+/// licensed, or permitting editable embedding ([`pdfcraft_fonts::embedding::validate_document_input`]).
+/// The budgets cover a full Windows Fonts folder (often several hundred megabytes) with room to
+/// spare; the scan runs off the interface thread.
 /// The caller controls roots (automation resolves confinement before calling this).
 pub fn discover(roots: &[PathBuf]) -> Vec<FontFile> {
     use std::io::Read;
     let mut pending: Vec<_> = roots.iter().take(16).map(|r| (r.clone(), 0usize)).collect();
     let mut files = Vec::new();
     let mut entries = 0usize;
-    let mut budget = 64u64 << 20;
+    let mut budget = 1u64 << 30;
     let mut seen = std::collections::HashSet::new();
     while let Some((path, depth)) = pending.pop() {
-        if entries >= 4096 || budget == 0 {
+        if entries >= MAX_ENTRIES || budget == 0 {
             break;
         }
         entries += 1;
@@ -52,7 +55,7 @@ pub fn discover(roots: &[PathBuf]) -> Vec<FontFile> {
         }
         if meta.is_dir() && depth < 4 {
             if let Ok(children) = std::fs::read_dir(&path) {
-                let remaining = 4096usize.saturating_sub(entries.saturating_add(pending.len()));
+                let remaining = MAX_ENTRIES.saturating_sub(entries.saturating_add(pending.len()));
                 pending.extend(children.take(remaining).filter_map(Result::ok).map(|p| (p.path(), depth + 1)));
             }
         } else if meta.is_file() && meta.len() <= (16 << 20) && font_extension(&path) {
@@ -73,6 +76,9 @@ pub fn discover(roots: &[PathBuf]) -> Vec<FontFile> {
     files.sort_by(|a, b| a.face.cmp(&b.face).then(a.path.cmp(&b.path)));
     files
 }
+/// Files and folders the scan looks at, at most.
+const MAX_ENTRIES: usize = 8192;
+
 fn font_extension(path: &Path) -> bool {
     path.extension().and_then(std::ffi::OsStr::to_str).is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"))
 }
