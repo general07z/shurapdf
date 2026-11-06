@@ -277,6 +277,36 @@ fn embed_shaped_resources(doc: &mut Document, fonts: &mut Dict, runs: &ShapedRun
     Ok(resources)
 }
 
+/// `row` with every character credited to its first character's source run, when all of them are
+/// in one font resource and their runs look and paint alike (size, colour, weight, slant, text
+/// state), and the row needs shaping; else as it was.
+fn one_look_one_source(mut row: Vec<StyledChar>, lines: &[TextLine]) -> Vec<StyledChar> {
+    let Some((_, first_line, first_font)) = row.first().cloned() else { return row };
+    let Some(first) = lines.get(first_line) else { return row };
+    // Only a row that must be shaped; any other keeps its runs (and their paint) as they are.
+    let text: String = row.iter().map(|c| c.0).collect();
+    if !pdfcraft_fonts::source_shaping::required(&text) {
+        return row;
+    }
+    let alike = row.iter().all(|(_, line, font)| {
+        *font == first_font
+            && lines.get(*line).is_some_and(|l| {
+                (l.size - first.size).abs() < 0.01
+                    && l.color == first.color
+                    && l.bold == first.bold
+                    && l.italic == first.italic
+                    && l.paint == first.paint
+                    && l.origin.state.draws_like(&first.origin.state)
+            })
+    });
+    if alike {
+        for c in &mut row {
+            c.1 = first_line;
+        }
+    }
+    row
+}
+
 fn validate_contextual_rows(rows: &[Vec<StyledChar>], kept: &[bool]) -> Result<(), EditError> {
     for (row, _) in rows.iter().zip(kept).filter(|(_, retained)| !**retained) {
         let text: String = row.iter().map(|character| character.0).collect();
@@ -284,7 +314,7 @@ fn validate_contextual_rows(rows: &[Vec<StyledChar>], kept: &[bool]) -> Result<(
             && row.first().is_some_and(|first| row.iter().any(|character| character.1 != first.1 || character.2 != first.2))
         {
             return Err(EditError::Invalid(
-                "contextual/bidi text across font or style boundaries needs a uniform full-face row; mixed contextual runs are not yet supported"
+                "this Arabic line mixes styles (bold and regular, say), which can't yet be redrawn in one chosen font: keep the source font, or edit the parts separately"
                     .into(),
             ));
         }
@@ -795,6 +825,9 @@ pub(crate) fn rewrite_styled_block(
     let o = &lead.origin;
     // What is in force where the rewrite is drawn, and what the text after it expects.
     let after = if split { &o.state } else { &o.bt_state };
+    // Runs of one look are one run to shape: Word draws a right-to-left line in many (a word, a
+    // bracket, a digit), and shaping each apart would neither join nor order the line.
+    let rows: Vec<Vec<StyledChar>> = if overrides.is_empty() { rows.into_iter().map(|row| one_look_one_source(row, lines)).collect() } else { rows };
     validate_contextual_rows(&rows, &kept)?;
     let measured: Vec<_> = rows.iter().map(|row| measure(row)).collect::<Result<_, _>>()?;
     let shaped = prepare_shaped_rows(doc, &fonts, &rows, &kept, advance)?;

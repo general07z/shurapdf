@@ -233,6 +233,18 @@ pub fn to_logical(visual: &str) -> String {
     if !balanced(&chosen) && balanced(&swapped) { swapped } else { chosen }
 }
 
+/// `text` with its brackets turned the other way, when they don't pair up as read and do once
+/// turned: a line whose runs were read one by one, each holding a single bracket, so
+/// [`to_logical`] couldn't tell which way the producer mapped them (Word maps a bracket in a
+/// right-to-left run to the character it stands for, `(2)` drawn as three runs).
+pub(crate) fn rebalanced(text: &str) -> Option<String> {
+    if balanced(text) {
+        return None;
+    }
+    let swapped: String = text.chars().map(mirrored).collect();
+    balanced(&swapped).then_some(swapped)
+}
+
 /// Whether every closing bracket closes an open one.
 fn balanced(text: &str) -> bool {
     let mut open: Vec<char> = Vec::new();

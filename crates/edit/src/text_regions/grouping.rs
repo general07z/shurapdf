@@ -306,6 +306,7 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
             block.editor_text.push('\n');
         }
         let rtl = reads_rtl(&row, lines);
+        let row_start = block.editor_text.len();
         for &index in &row {
             let Some(line) = lines.get(index) else { continue };
             // Some producers position separate words without encoding a space.
@@ -323,6 +324,13 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
             row_text.push_str(&line.text);
             block.invisible &= line.origin.state.render_mode == 3;
             block.lines.push(index);
+        }
+        // Brackets read one run at a time can come out turned the wrong way (see `rebalanced`).
+        // Turning them keeps every byte where it was, so the spans still fit.
+        if rtl && let Some(fixed) = block.editor_text.get(row_start..).and_then(crate::bidi::rebalanced) {
+            block.editor_text.truncate(row_start);
+            block.editor_text.push_str(&fixed);
+            row_text = crate::bidi::rebalanced(&row_text).unwrap_or(row_text);
         }
         if !block.text.is_empty() {
             if block.text.ends_with('-') {

@@ -192,8 +192,20 @@ fn on_same_baseline(line: &TextLine, target: &TextLine) -> bool {
 
 /// Rewrite paragraph `block` with new text (or its own) and formatting, rewrapped to its width.
 pub fn rewrite_block(doc: &mut Document, page: usize, block: usize, text: Option<&str>, style: &BlockStyle) -> Result<LineEdit, EditError> {
-    let style = with_registered_face(doc, page, style)?;
-    let edit = rewrite_block_with_limit(doc, page, block, text, &style, MAX_TYPE3_GLYPHS)?;
+    if style.face.is_some() && style.resource.is_none() {
+        // The paragraph's own face first, on a copy; if it can't draw the paragraph (a line that
+        // mixes weights, say), the paragraph is rewritten as it would be without it.
+        let mut trial = doc.clone();
+        let attempt = with_registered_face(&mut trial, page, style)
+            .and_then(|with_face| rewrite_block_with_limit(&mut trial, page, block, text, &with_face, MAX_TYPE3_GLYPHS));
+        if let Ok(edit) = attempt {
+            *doc = trial;
+            drop_unused_fallback_fonts(doc, page);
+            return Ok(edit);
+        }
+        return rewrite_block(doc, page, block, text, &BlockStyle { face: None, ..style.clone() });
+    }
+    let edit = rewrite_block_with_limit(doc, page, block, text, style, MAX_TYPE3_GLYPHS)?;
     drop_unused_fallback_fonts(doc, page);
     Ok(edit)
 }

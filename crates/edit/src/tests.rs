@@ -4767,11 +4767,12 @@ fn multi_glyph_rtl_actual_text_keeps_its_own_reading_order() {
 /// A page shaped as Microsoft Word's Save as PDF writes Arabic: a subset whose ToUnicode gives a
 /// ligature glyph its letters in typing order (code `Y` is لأ), and, in `content`, each run of a
 /// line in its own text object, placed further left than the one before.
-/// Codes: space, A س, B م, C ل, D ا, E ن, Y لأ, 1 and 2.
+/// Codes: space, `(` and `)` (mapped, as Word maps them, to the character they stand for, not
+/// the shape drawn), A س, B م, C ل, D ا, E ن, Y لأ, 1 and 2.
 fn word_arabic_page(content: &str) -> Document {
     let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
-                1 begincodespacerange <00> <FF> endcodespacerange 9 beginbfchar \
-                <20> <0020> <31> <0031> <32> <0032> <41> <0633> <42> <0645> <43> <0644> <44> <0627> <45> <0646> <59> <06440623> \
+                1 begincodespacerange <00> <FF> endcodespacerange 11 beginbfchar \
+                <20> <0020> <28> <0028> <29> <0029> <31> <0031> <32> <0032> <41> <0633> <42> <0645> <43> <0644> <44> <0627> <45> <0646> <59> <06440623> \
                 endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
     let widths: Vec<_> = (32..=89).map(|c| if c == 32 { "250" } else { "500" }).collect();
     build(&[
@@ -4828,6 +4829,78 @@ fn word_runs_drawn_leftwards_make_one_arabic_row() {
     // A Latin line whose next run sits to its left is not read backwards: two paragraphs.
     let latin = fixture_lines("BT /F1 12 Tf 300 700 Td (12) Tj ET BT /F1 12 Tf 270 700 Td (12) Tj ET");
     assert_eq!(latin, 2);
+}
+
+/// From a Council letter made by Word: "عدد (2) شاشة" read as "عدد ) 2( شاشة". Word draws the
+/// number and each bracket in runs of their own and opens a run with a space it takes straight
+/// back; the brackets of one line are turned back the right way, and the taken-back space is no
+/// space. A justified line (a widened gap before each space glyph) keeps one space per gap.
+#[test]
+fn word_brackets_spaces_and_justified_gaps_read_as_typed() {
+    // Taken back: a space glyph, then 250 thousandths of an em back over it (its own width).
+    let taken = word_arabic_page("BT /F1 12 Tf 300 700 Td [( ) 250 (BA)] TJ ET");
+    assert_eq!(text::text_lines(&taken, 0).unwrap()[0].text, "سم");
+    // Justified: a gap of 0.3 em, then the space glyph, is one space.
+    let justified = word_arabic_page("BT /F1 12 Tf 300 700 Td [(BA) -300 ( DE)] TJ ET");
+    assert_eq!(text::text_lines(&justified, 0).unwrap()[0].text, "نا سم");
+    // "سم (12) نا": the bracket before the number with the first word, the number, the bracket
+    // after it with the last word, each run left of the one before (6 pt a glyph, 3 pt a space).
+    let brackets = word_arabic_page(
+        "BT /F1 12 Tf 291 700 Td [( ) 250 (\\( BA)] TJ ET BT /F1 12 Tf 279 700 Td (12) Tj ET \
+         BT /F1 12 Tf 258 700 Td (DE \\)) Tj ET",
+    );
+    for doc in [&brackets, &reopen(&brackets)] {
+        let texts: Vec<String> = text::text_blocks(doc, 0).unwrap().into_iter().map(|b| b.editor_text).collect();
+        assert_eq!(texts, ["سم (12) نا"]);
+    }
+}
+
+/// The report: "Edit text failed: contextual/bidi text across font or style boundaries…" on a Word
+/// line. Its runs (words, a number) look alike, so in the paragraph's own face they are shaped as
+/// one; retyping it in that face works and reads back as typed.
+#[test]
+fn retyped_word_row_of_many_runs_keeps_its_face() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let (_, postscript) = pdfcraft_fonts::embedding::names(&program).unwrap();
+    let mut doc = word_arabic_page(
+        "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET BT /F1 12 Tf 485 700 Td (DE) Tj ET \
+         BT /F1 12 Tf 482 700 Td ( ) Tj ET BT /F1 12 Tf 470 700 Td (12) Tj ET",
+    );
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "سم نا 12");
+    let typed = "سم نا 13";
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::text_edit_layout(&doc, 0, 0, typed, &style).unwrap();
+    text::rewrite_block(&mut doc, 0, 0, Some(typed), &style).unwrap();
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let line = lines.iter().find(|l| l.text == typed).unwrap_or_else(|| panic!("reads as typed: {lines:?}"));
+    assert!(line.base_font.contains(&postscript), "in the paragraph's face: {}", line.base_font);
+}
+
+/// When the face given for a paragraph can't draw it (here Inter, which has no Arabic; in use, a
+/// Word line that mixes bold and regular runs), retyping falls back to the craft-fonts redraw
+/// rather than failing, and measuring the draft does too.
+#[test]
+fn a_face_that_cannot_draw_the_paragraph_falls_back_rather_than_fails() {
+    let inter = include_bytes!("../../../assets/fonts/Inter-Regular.ttf").to_vec();
+    let content = "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET BT /F1 12 Tf 485 700 Td (DE) Tj ET";
+    let style = text::BlockStyle { face: Some(Arc::new(inter)), ..Default::default() };
+    let mut doc = word_arabic_page(content);
+    let measured = text::text_edit_layout(&doc, 0, 0, "سم نا مس", &style);
+    let result = text::rewrite_block(&mut doc, 0, 0, Some("سم نا مس"), &style);
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        // Without the craft-fonts face the fallback has no Arabic face either: the old refusal.
+        assert!(result.is_err());
+        return;
+    }
+    measured.unwrap();
+    result.unwrap();
+    let texts: Vec<String> = text::text_lines(&reopen(&doc), 0).unwrap().into_iter().map(|l| l.text).collect();
+    // Rewrapped to the paragraph's width, the words read in order.
+    assert_eq!(texts.join(" "), "سم نا مس");
 }
 
 /// How many paragraphs `content` makes on [`word_arabic_page`].

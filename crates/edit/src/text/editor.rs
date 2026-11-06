@@ -73,10 +73,15 @@ pub struct TextEditLayout {
 
 pub fn text_edit_layout(doc: &Document, page: usize, block: usize, text: &str, style: &BlockStyle) -> Result<TextEditLayout, EditError> {
     if style.face.is_some() && style.resource.is_none() {
-        // Measured as Apply will draw it: with the face registered, on a copy.
+        // Measured as Apply will draw it: with the face registered, on a copy, or without the
+        // face when it can't draw the paragraph (see `rewrite_block`).
         let mut copy = doc.clone();
-        let style = super::rewrite::with_registered_face(&mut copy, page, style)?;
-        return TextSession::open(&copy, page, block)?.layout(text, &style);
+        let measured = super::rewrite::with_registered_face(&mut copy, page, style)
+            .and_then(|with_face| TextSession::open(&copy, page, block)?.layout(text, &with_face));
+        if measured.is_ok() {
+            return measured;
+        }
+        return TextSession::open(doc, page, block)?.layout(text, &BlockStyle { face: None, ..style.clone() });
     }
     TextSession::open(doc, page, block)?.layout(text, style)
 }
