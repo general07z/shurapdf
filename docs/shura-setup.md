@@ -1,6 +1,6 @@
 # ShuraPDF: setup
 
-> **Status:** live · **Last updated:** 2026-11-01 · **Change:** Word fidelity runner
+> **Status:** live · **Last updated:** 2026-11-01 · **Change:** Word connection cases
 
 Your projects on GitHub:
 
@@ -283,3 +283,23 @@ Run workflow**. It never runs on pull requests.
   as `private-1`, `private-2`… with scores only; no file name, text, PDF or picture is uploaded.
 - `shuraword_rev` builds a candidate `shuraword` commit, to measure a fix before
   `packaging/windows/shuraword-rev.txt` moves to it.
+- Each run first checks the connection to Microsoft Word (table **Connection to Microsoft
+  Word**), through real Word on the runner, in every situation the Word setting must handle:
+  `.docx`, `.doc`, `.docm` (macros stay off) and `.dotx` files, a protected file without, with a
+  wrong and with an Arabic password, a damaged file (fails within 90 seconds), three conversions
+  at once, a temp folder with an Arabic name, the user's own Word staying open, and no hidden
+  Word left running afterwards. The run fails if one does.
+
+### How "Convert Word documents with" behaves
+
+| Situation | Automatic (default) | Microsoft Word |
+|---|---|---|
+| Word converts the file | Word's own PDF | Word's own PDF |
+| Word not installed | built-in engine | message: not installed |
+| Word installed but won't start (setup not finished, blocked, unlicensed) | built-in engine, and for the rest of the session | message: didn't start, with Word's reason |
+| Word stuck (3 min, more for big files; 10 min at most) | Word is stopped; built-in engine, and for the rest of the session | Word is stopped; message |
+| Password-protected file | asks for the password | asks for the password |
+| Word can't read this file | built-in engine | Word's message |
+
+Word always runs as a separate hidden copy with macros off; a Word the user has open is never
+used or closed. One conversion runs at a time. Changing the setting gives Word another chance.

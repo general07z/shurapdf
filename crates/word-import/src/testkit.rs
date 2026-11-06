@@ -162,6 +162,28 @@ pub fn encrypted_docx(password: &str) -> Vec<u8> {
     wordcraft_docx::encrypt_with_spin_count(&synthetic_docx(), password, 1000).unwrap()
 }
 
+/// `docx` with the main document part declared as `main` in its content types: a macro-enabled
+/// document (`application/vnd.ms-word.document.macroEnabled.main+xml`) or a template.
+#[allow(clippy::unwrap_used)] // test fixture over in-memory buffers
+pub fn with_main_type(docx: &[u8], main: &str) -> Vec<u8> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..zip.len() {
+        let mut part = zip.by_index(i).unwrap();
+        let name = part.name().unwrap().to_string();
+        let mut bytes = Vec::new();
+        part.read_to_end(&mut bytes).unwrap();
+        if name == "[Content_Types].xml" {
+            let plain = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+            bytes = String::from_utf8(bytes).unwrap().replace(plain, main).into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        out.write_all(&bytes).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
 /// A minimal Word 97-2003 `.doc` whose main text is `paragraphs`, each ended by a paragraph mark:
 /// a compound file with a WordDocument stream (a Word 97 FIB) and a 0Table stream (one piece
 /// table, text stored as UTF-16). Built from the [MS-DOC] specification, after WordCraft's own

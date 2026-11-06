@@ -65,6 +65,8 @@ static ENGINE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0)
 
 /// Choose the engine for the conversions that follow.
 pub fn set_engine(engine: WordEngine) {
+    // A new choice gives Word another chance.
+    WORD_GAVE_UP.store(false, std::sync::atomic::Ordering::Relaxed);
     let code = WordEngine::ALL.iter().position(|e| *e == engine).and_then(|i| u8::try_from(i).ok()).unwrap_or(0);
     ENGINE.store(code, std::sync::atomic::Ordering::Relaxed);
 }
@@ -115,11 +117,27 @@ impl Default for WordImportOptions {
 /// The signature of an OLE compound file: a Word 97-2003 `.doc`, or a password-protected `.docx`.
 const COMPOUND_FILE: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
+/// Set when Word couldn't start or got stuck during this session: Automatic then goes straight to
+/// the built-in engine instead of making every conversion wait for Word again. Choosing an
+/// engine in Preferences clears it; Microsoft Word (the explicit choice) always asks Word.
+static WORD_GAVE_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Convert Word bytes to PDF bytes with the chosen [`engine`]: Microsoft Word when the choice
 /// allows it and Word is installed (falling back to the built-in engine on [`WordEngine::Auto`]),
 /// else the built-in engine.
 pub fn word_to_pdf(bytes: &[u8], opts: &WordImportOptions) -> Result<Vec<u8>, WordImportError> {
-    word_to_pdf_with(bytes, opts, engine(), office::convert)
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut engine = engine();
+    if engine == WordEngine::Auto && WORD_GAVE_UP.load(Relaxed) {
+        engine = WordEngine::BuiltIn;
+    }
+    word_to_pdf_with(bytes, opts, engine, |bytes, password| {
+        let result = office::convert(bytes, password);
+        if matches!(result, Err(OfficeError::Unavailable | OfficeError::CannotStart(_) | OfficeError::TimedOut)) {
+            WORD_GAVE_UP.store(true, Relaxed);
+        }
+        result
+    })
 }
 
 /// [`word_to_pdf`] with the engine and the Word converter given (tests stand in for Word).
@@ -140,10 +158,21 @@ fn word_to_pdf_with(
         Ok(pdf) => Ok(pdf),
         // Asking for the password (or saying it is wrong) is the same for both engines.
         Err(OfficeError::Password) => Err(if password.is_some() { WordImportError::WrongPassword } else { WordImportError::Encrypted }),
-        Err(OfficeError::Unavailable) if engine == WordEngine::Word => {
-            Err(WordImportError::Word("Microsoft Word isn't installed on this computer; choose another engine in Preferences".into()))
-        }
-        Err(OfficeError::Failed(message)) if engine == WordEngine::Word => Err(WordImportError::Word(message)),
+        Err(e) if engine == WordEngine::Word => Err(WordImportError::Word(match e {
+            OfficeError::Unavailable => "Microsoft Word isn't installed on this computer; choose another engine in Preferences".into(),
+            OfficeError::CannotStart(why) => {
+                format!(
+                    "Microsoft Word is installed but didn't start ({why}); open Word once to finish its setup, or choose another engine in Preferences"
+                )
+            }
+            OfficeError::TimedOut => format!(
+                "Microsoft Word took longer than {} seconds and was stopped; open the file in Word to check for a message, or choose another engine in Preferences",
+                office::timeout_for(bytes.len()).as_secs()
+            ),
+            OfficeError::Failed(message) => message,
+            // Handled above; kept so the match names every case.
+            OfficeError::Password => "the password is incorrect".into(),
+        })),
         Err(_) => built_in(bytes, opts),
     }
 }

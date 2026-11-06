@@ -14,9 +14,14 @@
 //! `WORD_FIDELITY_REFERENCE=builtin` compares the built-in engine with itself, to check the tool
 //! where there is no Word.
 //!
-//! The score of a page is the share of inked pixels the two renders have in common
-//! (intersection over union): 100% is the same page, and a line moved by its own height scores
-//! about 0% for that line.
+//! The score of a page is the share of inked pixels that have ink in the other render within
+//! [`TOLERANCE`] pixels (both ways): 100% is the same page, a sub-point difference in anti-aliasing
+//! still scores 100%, and a line moved by its own height scores about 0% for that line.
+//!
+//! On Windows (not in the self-check), it first checks the connection to Microsoft Word in the
+//! situations users meet ([`checks`]), and exits 1 if one fails.
+
+mod checks;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,19 +62,59 @@ fn render(pdf: &[u8]) -> Result<Vec<Ink>, String> {
     Ok(pages)
 }
 
-/// Inked pixels in common over inked pixels in either (1.0 when both pages are blank).
-fn score(a: &Ink, b: &Ink) -> f64 {
-    let (w, h) = (a.width.max(b.width), a.height.max(b.height));
-    let at = |p: &Ink, x: usize, y: usize| x < p.width && y < p.height && p.ink.get(y * p.width + x).copied().unwrap_or(false);
-    let (mut both, mut either) = (0u64, 0u64);
-    for y in 0..h {
-        for x in 0..w {
-            let (i, j) = (at(a, x, y), at(b, x, y));
-            both += u64::from(i && j);
-            either += u64::from(i || j);
+/// Pixels (at [`SCALE`]) by which ink may be off and still count as matching: about 1.3 pt.
+const TOLERANCE: usize = 2;
+
+/// `p`'s ink grown by [`TOLERANCE`] pixels each way, on a `w`×`h` canvas.
+fn grown(p: &Ink, w: usize, h: usize) -> Vec<bool> {
+    let mut rows = vec![false; w * h];
+    for y in 0..p.height.min(h) {
+        for x in 0..p.width.min(w) {
+            if p.ink.get(y * p.width + x).copied().unwrap_or(false) {
+                for xx in x.saturating_sub(TOLERANCE)..(x + TOLERANCE + 1).min(w) {
+                    if let Some(c) = rows.get_mut(y * w + xx) {
+                        *c = true;
+                    }
+                }
+            }
         }
     }
-    if either == 0 { 1.0 } else { both as f64 / either as f64 }
+    let mut out = vec![false; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            if rows.get(y * w + x).copied().unwrap_or(false) {
+                for yy in y.saturating_sub(TOLERANCE)..(y + TOLERANCE + 1).min(h) {
+                    if let Some(c) = out.get_mut(yy * w + x) {
+                        *c = true;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Inked pixels of each page with ink of the other within [`TOLERANCE`], over all inked pixels
+/// (1.0 when both pages are blank).
+fn score(a: &Ink, b: &Ink) -> f64 {
+    let (w, h) = (a.width.max(b.width), a.height.max(b.height));
+    let (near_a, near_b) = (grown(a, w, h), grown(b, w, h));
+    let at = |p: &Ink, x: usize, y: usize| x < p.width && y < p.height && p.ink.get(y * p.width + x).copied().unwrap_or(false);
+    let (mut matched, mut inked) = (0u64, 0u64);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if at(a, x, y) {
+                inked += 1;
+                matched += u64::from(near_b.get(i).copied().unwrap_or(false));
+            }
+            if at(b, x, y) {
+                inked += 1;
+                matched += u64::from(near_a.get(i).copied().unwrap_or(false));
+            }
+        }
+    }
+    if inked == 0 { 1.0 } else { matched as f64 / inked as f64 }
 }
 
 /// Word | built-in | difference, side by side, as PNG.
@@ -161,6 +206,9 @@ fn compare(name: &str, bytes: &[u8], out: Option<&Path>) -> Row {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some(checks::CONVERT_ONE) {
+        checks::convert_one();
+    }
     let mut args = std::env::args().skip(1);
     let Some(out) = args.next().map(PathBuf::from) else {
         eprintln!("usage: word_fidelity OUT_DIR [--private DIR]");
@@ -174,6 +222,8 @@ fn main() {
         eprintln!("{}: {e}", out.display());
         std::process::exit(2);
     }
+    let self_check = reference() == WordEngine::BuiltIn;
+    let connection = if cfg!(windows) && !self_check { checks::run(&out) } else { Vec::new() };
     let mut rows: Vec<Row> =
         pdfcraft_word_import::testkit::fidelity_corpus().into_iter().map(|(name, bytes)| compare(name, &bytes, Some(&out.join(name)))).collect();
     if let Some(dir) = private.filter(|d| d.is_dir()) {
@@ -217,6 +267,9 @@ fn main() {
             pages.join(" ")
         ));
     }
+    if !connection.is_empty() {
+        md.push_str(&checks::table(&connection));
+    }
     print!("{md}");
     if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
         eprintln!("summary.md: {e}");
@@ -228,6 +281,10 @@ fn main() {
         if let Err(e) = appended {
             eprintln!("step summary: {e}");
         }
+    }
+    if connection.iter().any(|c| !c.passed) {
+        eprintln!("A Word connection check failed: see the table above");
+        std::process::exit(1);
     }
     if word_failed {
         eprintln!("Microsoft Word could not convert: see the errors above");
