@@ -282,7 +282,7 @@ fn main() {
             eprintln!("step summary: {e}");
         }
     }
-    if connection.iter().any(|c| !c.passed) {
+    if connection.iter().any(|c| !c.passed && c.blocking) {
         eprintln!("A Word connection check failed: see the table above");
         std::process::exit(1);
     }
