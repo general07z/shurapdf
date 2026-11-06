@@ -607,7 +607,15 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
                                 .text_left
                                 .checked_sub(t.len())
                                 .ok_or_else(|| EditError::Invalid("the page's text is too large to read".into()))?;
-                            text.push_str(&t);
+                            // One glyph for several right-to-left letters (a lam-alef ligature,
+                            // which Word maps to لأ) gives them in typing order. The run is read
+                            // in drawing order and turned to typing order as a whole later, so
+                            // put them in drawing order too, or they come out reversed (األمانة).
+                            if t.chars().nth(1).is_some() && t.chars().all(crate::bidi::is_rtl) {
+                                text.push_str(&crate::bidi::to_visual(&t));
+                            } else {
+                                text.push_str(&t);
+                            }
                         }
                         None => decodable = false,
                     }

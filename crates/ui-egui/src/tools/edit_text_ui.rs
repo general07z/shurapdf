@@ -26,7 +26,7 @@ pub(crate) use image::{ImageAction, ImageCx, image_input, image_owns_pointer};
 use image::{rotate_knob, turn_degrees};
 #[cfg(test)]
 use layout::{DARK_EDITOR_FILL, contrast};
-pub(crate) use layout::{caret_color_on, editor_fill, editor_font, install_source_fonts};
+pub(crate) use layout::{SourceFonts, caret_color_on, editor_fill, editor_font, install_source_fonts};
 use layout::{color32, editor_galley, editor_job, look_of, luminance, unseen};
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
@@ -58,7 +58,7 @@ pub struct LineEditor {
     source_rect: [f32; 4],
     multiline: bool,
     source: Option<(pdfcraft_engine::TextBlock, Vec<pdfcraft_engine::TextLine>)>,
-    pub(crate) fonts: BTreeMap<String, String>,
+    pub(crate) fonts: SourceFonts,
     /// The draft extends outside the source container; its frame follows the live draft bounds.
     pub overflow: bool,
     /// The initial source container width in screen pixels.
@@ -334,6 +334,8 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
 /// Lines and their screen boxes for a page; hover outlines, click opens the editor. Returns
 /// `true` when the pointer was used.
 pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], view: &mut DocView, allow_interaction: bool) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::files::start_installed_font_scan(cx.ui.ctx());
     let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
     let info = &doc.info;
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
@@ -504,7 +506,7 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
     // while the format panel was open.
     // A font definition becomes active at the start of the next egui pass. Keep the source
     // raster visible until then instead of flashing an unrelated interface face.
-    if !ctx.fonts(|f| ed.fonts.values().all(|name| f.definitions().families.contains_key(&FontFamily::Name(name.clone().into())))) {
+    if !ctx.fonts(|f| ed.fonts.families().all(|name| f.definitions().families.contains_key(&FontFamily::Name(name.clone().into())))) {
         ctx.request_repaint();
         return None;
     }
@@ -718,7 +720,7 @@ mod tests {
             source_rect: block.rect.map(|v| v as f32),
             multiline: block.rows.len() > 1,
             source: None,
-            fonts: BTreeMap::new(),
+            fonts: SourceFonts::default(),
             overflow: false,
             max_width: 400.0,
             size: block.size as f32,

@@ -770,7 +770,7 @@
 	Installed fonts…	الخطوط المثبتة…
 	Keep source fonts	الاحتفاظ بالخطوط الأصلية
 	Load font…	تحميل خط…
-	No openly licensed document fonts found. Load a font file.	لم يُعثر على خطوط ذات ترخيص مفتوح. حمّل ملف خط.
+	No installed fonts can be embedded. Load a font file.	لا توجد خطوط مثبتة يمكن تضمينها. حمّل ملف خط.
 
 	Format text	تنسيق النص
 	Bold	غامق

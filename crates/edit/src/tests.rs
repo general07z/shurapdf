@@ -4713,6 +4713,77 @@ fn multi_glyph_rtl_actual_text_keeps_its_own_reading_order() {
     }
 }
 
+/// A page shaped as Microsoft Word's Save as PDF writes Arabic: a subset whose ToUnicode gives a
+/// ligature glyph its letters in typing order (code `Y` is لأ), and, in `content`, each run of a
+/// line in its own text object, placed further left than the one before.
+/// Codes: space, A س, B م, C ل, D ا, E ن, Y لأ, 1 and 2.
+fn word_arabic_page(content: &str) -> Document {
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
+                1 begincodespacerange <00> <FF> endcodespacerange 9 beginbfchar \
+                <20> <0020> <31> <0031> <32> <0032> <41> <0633> <42> <0645> <43> <0644> <44> <0627> <45> <0646> <59> <06440623> \
+                endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    let widths: Vec<_> = (32..=89).map(|c| if c == 32 { "250" } else { "500" }).collect();
+    build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        &stream("", content),
+        &format!(
+            "<< /Type /Font /Subtype /Type1 /BaseFont /BCDEEE+ArialMT /FirstChar 32 /LastChar 89 /Widths [{}] /ToUnicode 6 0 R >>",
+            widths.join(" ")
+        ),
+        &stream("", cmap),
+    ])
+}
+
+/// The report: "الأمانة" opened for editing as "األمانة". Word maps its lam-alef glyph to the two
+/// letters in typing order; read into a line drawn in visual order, they were reversed with it.
+#[test]
+fn a_ligature_glyph_keeps_its_letters_in_typing_order() {
+    // Drawn left to right: م, لأ, س; read right to left: سلأم.
+    let doc = word_arabic_page("BT /F1 12 Tf 300 700 Td (BYA) Tj ET");
+    for doc in [&doc, &reopen(&doc)] {
+        let lines: Vec<String> = text::text_lines(doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+        assert_eq!(lines, ["سلأم"]);
+        assert_eq!(text::text_blocks(doc, 0).unwrap()[0].editor_text, "سلأم");
+    }
+}
+
+/// The report: clicking an Arabic word in a Word-made PDF opened only that word for editing.
+/// Word draws each run of a line (a word, the spaces, a number) in its own text object, each one
+/// to the left of the one before; they are one row and one paragraph, in typing order, with the
+/// spaces between them.
+#[test]
+fn word_runs_drawn_leftwards_make_one_arabic_row() {
+    // سم at 300–312, a space, نا at 285–297, a space, 12 at 270–282.
+    let doc = word_arabic_page(
+        "BT /F1 12 Tf 300 700 Td (BA) Tj ET BT /F1 12 Tf 297 700 Td ( ) Tj ET BT /F1 12 Tf 285 700 Td (DE) Tj ET \
+         BT /F1 12 Tf 282 700 Td ( ) Tj ET BT /F1 12 Tf 270 700 Td (12) Tj ET \
+         BT /F1 12 Tf 300 650 Td (BA) Tj ET",
+    );
+    for doc in [&doc, &reopen(&doc)] {
+        let blocks = text::text_blocks(doc, 0).unwrap();
+        let texts: Vec<&str> = blocks.iter().map(|b| b.editor_text.as_str()).collect();
+        assert_eq!(texts.first().copied(), Some("سم نا 12"), "{texts:?}");
+        assert_eq!(blocks[0].rows.len(), 1);
+        let rect = blocks[0].rect;
+        assert!(rect[0] < 271.0 && rect[2] > 311.0, "the row spans all its runs: {rect:?}");
+        // A line well below stays its own paragraph, or a row of the same one: never this row.
+        assert!(blocks.iter().all(|b| b.rows.iter().all(|r| r.len() <= 3)));
+    }
+    // Runs placed end to end, as Word places a bracketed English phrase in an Arabic line.
+    let touching = word_arabic_page("BT /F1 12 Tf 300 700 Td (BA) Tj ET BT /F1 12 Tf 288 700 Td (12) Tj ET BT /F1 12 Tf 276 700 Td (DE) Tj ET");
+    assert_eq!(text::text_blocks(&touching, 0).unwrap().iter().map(|b| b.editor_text.as_str()).collect::<Vec<_>>(), ["سم12نا"]);
+    // A Latin line whose next run sits to its left is not read backwards: two paragraphs.
+    let latin = fixture_lines("BT /F1 12 Tf 300 700 Td (12) Tj ET BT /F1 12 Tf 270 700 Td (12) Tj ET");
+    assert_eq!(latin, 2);
+}
+
+/// How many paragraphs `content` makes on [`word_arabic_page`].
+fn fixture_lines(content: &str) -> usize {
+    text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
+}
+
 #[test]
 fn replacing_word_with_actual_text_ligature_removes_all_its_source_operators() {
     let mut doc = arabic_ligature_page(
