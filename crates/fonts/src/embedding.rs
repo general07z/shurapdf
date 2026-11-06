@@ -44,8 +44,13 @@ pub fn names(bytes: &[u8]) -> Result<(String, String), String> {
     Ok((family, postscript))
 }
 
-/// A selected external font is document input. Require its own open-licence declaration;
-/// never turn a proprietary system-interface fallback into an exported PDF font.
+/// A font the user explicitly selects (Load font…, Installed fonts…) is document input. It is
+/// accepted when its name table declares an open licence, or when its maker's embedding
+/// permission (`OS/2` `fsType`) allows editable embedding: Installable or Editable, as Word reads
+/// it when it embeds fonts in a PDF (this fork: the Council's documents use Windows fonts such as
+/// Arial, Simplified Arabic and Sakkal Majalla). Restricted, preview-and-print and bitmap-only
+/// faces stay refused ([`validate`]), as do the families the asset policy excludes. Nothing here
+/// turns a font the user did not choose into an exported PDF font.
 pub fn validate_document_input(bytes: &[u8]) -> Result<(), String> {
     use skrifa::string::StringId;
     let (family, _) = names(bytes)?;
@@ -60,11 +65,13 @@ pub fn validate_document_input(bytes: &[u8]) -> Result<(), String> {
         return Err("Adobe-authored font assets are excluded by the project's asset policy".into());
     }
     let license: String = f.localized_strings(StringId::LICENSE_DESCRIPTION).map(|s| s.to_string()).collect();
-    if !["SIL OPEN FONT", "SIL Open Font", "Apache License", "Ubuntu Font Licence", "Bitstream Vera", "MIT License"]
+    let open = ["SIL OPEN FONT", "SIL Open Font", "Apache License", "Ubuntu Font Licence", "Bitstream Vera", "MIT License"]
         .iter()
-        .any(|l| license.contains(l))
-    {
-        return Err("select an openly licensed font whose name table declares its licence (OFL, Apache, Ubuntu, Bitstream Vera or MIT)".into());
+        .any(|l| license.contains(l));
+    // `names` above ran `validate`, which already refused restricted, preview-and-print and
+    // bitmap-only embedding; what is left with an OS/2 table is Installable or Editable.
+    if !open && f.os2().is_err() {
+        return Err("this font declares neither an open licence nor its embedding permissions".into());
     }
     Ok(())
 }
@@ -341,6 +348,46 @@ fn same_resource(doc: &Document, fonts: &Dict, name: &str, programs: &mut Progra
 mod tests {
     use super::*;
     use crate::pdf::Metrics;
+
+    /// Inter with its licence text no longer naming an open licence and its `OS/2` `fsType` set
+    /// to `fs_type`, or the `OS/2` table renamed away when `None`: a stand-in for an installed
+    /// Windows font (Arial declares no open licence and is Editable, `fsType` 8).
+    fn inter_as_installed(fs_type: Option<u16>) -> Vec<u8> {
+        let mut bytes = include_bytes!("../../../assets/fonts/Inter-Regular.ttf").to_vec();
+        for (from, to) in [(&b"\0S\0I\0L"[..], &b"\0X\0Y\0Z"[..]), (b"SIL", b"XYZ")] {
+            let mut i = 0;
+            while let Some(at) = bytes.get(i..).and_then(|rest| rest.windows(from.len()).position(|w| w == from)) {
+                bytes[i + at..i + at + to.len()].copy_from_slice(to);
+                i += at + to.len();
+            }
+        }
+        let tables = usize::from(u16::from_be_bytes([bytes[4], bytes[5]]));
+        let os2 = (0..tables).map(|t| 12 + 16 * t).find(|&r| &bytes[r..r + 4] == b"OS/2").unwrap();
+        match fs_type {
+            Some(v) => {
+                let at = u32::from_be_bytes(bytes[os2 + 8..os2 + 12].try_into().unwrap()) as usize + 8;
+                bytes[at..at + 2].copy_from_slice(&v.to_be_bytes());
+            }
+            None => bytes[os2..os2 + 4].copy_from_slice(b"OS/3"),
+        }
+        bytes
+    }
+
+    /// A font the user chooses is accepted when it is openly licensed, or when its maker lets it
+    /// be embedded for editing (Installable 0, Editable 8): installed Windows fonts such as Arial.
+    /// Restricted (2), preview-and-print (4) and bitmap-only (0x200) faces are refused, and so is
+    /// a face that declares neither a licence nor its permissions.
+    #[test]
+    fn chosen_fonts_need_an_open_licence_or_embedding_permission() {
+        assert!(validate_document_input(include_bytes!("../../../assets/fonts/Inter-Regular.ttf")).is_ok());
+        for allowed in [0x0000, 0x0008] {
+            assert_eq!(validate_document_input(&inter_as_installed(Some(allowed))), Ok(()), "fsType {allowed:#x}");
+        }
+        for refused in [0x0002, 0x0004, 0x0208] {
+            assert!(validate_document_input(&inter_as_installed(Some(refused))).is_err(), "fsType {refused:#x}");
+        }
+        assert!(validate_document_input(&inter_as_installed(None)).is_err(), "no licence, no permissions");
+    }
 
     #[test]
     fn full_unicode_embedding_keeps_outlines_advances_and_roundtrip_codes() {

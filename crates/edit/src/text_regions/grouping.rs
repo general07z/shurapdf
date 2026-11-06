@@ -186,11 +186,28 @@ fn starts_list_item(row: &[usize], lines: &[TextLine]) -> bool {
     row.iter().filter_map(|i| lines.get(*i)).map(|l| l.text.trim_start()).find(|t| !t.is_empty()).is_some_and(opens_with_marker)
 }
 
+/// Whether any line of `row` holds right-to-left letters.
+fn reads_rtl(row: &[usize], lines: &[TextLine]) -> bool {
+    row.iter().filter_map(|i| lines.get(*i)).any(|l| l.text.chars().any(crate::bidi::is_rtl))
+}
+
+/// The gap along the baseline from `prev` to `line`, the next run in content order. Usually
+/// `line` starts after `prev` ends. In a right-to-left row (`rtl`), Microsoft Word's Save as PDF
+/// draws each run of a line (a word, its spaces, a number) in its own text object, each one to
+/// the left of the one before: then the gap is from `line`'s end to where `prev` starts, and the
+/// second value says so.
+fn run_gap(prev: &TextLine, line: &TextLine, rtl: bool) -> (f64, bool) {
+    let (p, l) = (prev.frame_rect(), line.frame_rect());
+    let forward = l[0] - p[2];
+    if rtl && forward < -prev.size.min(line.size) * 0.2 { (p[0] - l[2], true) } else { (forward, false) }
+}
+
 fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
     let mut rows: Vec<Vec<usize>> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
+        let rtl = rows.last().is_some_and(|r| reads_rtl(r, lines));
         let joins = rows.last().and_then(|r| r.last()).and_then(|i| lines.get(*i)).is_some_and(|prev| {
-            let gap = line.frame_rect()[0] - prev.frame_rect()[2];
+            let (gap, leftward) = run_gap(prev, line, rtl);
             // OCR words (invisible text over a scan) join only across a word space: a wider gap
             // is a table cell or a tab stop, which a rewrite would close up.
             let scanned = !mixed || (invisible(prev) == invisible(line) && (!invisible(line) || gap < prev.size.max(line.size) * 0.6));
@@ -215,6 +232,8 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 // between them, are separate labels (for example a paragraph dragged against
                 // another, #594). Style runs and words separated by a space or gap still join.
                 && (prev.origin.bt_op == line.origin.bt_op
+                    // Word places the runs of a right-to-left line end to end.
+                    || leftward
                     || gap > prev.size.min(line.size) * 0.01
                     || !same_style(prev, line)
                     || prev.text.ends_with(char::is_whitespace)
@@ -286,13 +305,14 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
         if !block.rows.is_empty() {
             block.editor_text.push('\n');
         }
+        let rtl = reads_rtl(&row, lines);
         for &index in &row {
             let Some(line) = lines.get(index) else { continue };
             // Some producers position separate words without encoding a space.
             if let Some(prev) = block.lines.last().filter(|i| row.contains(i)).and_then(|i| lines.get(*i))
                 && !row_text.ends_with(char::is_whitespace)
                 && !line.text.starts_with(char::is_whitespace)
-                && line.frame_rect()[0] - prev.frame_rect()[2] > line.size * 0.12
+                && run_gap(prev, line, rtl).0 > line.size * 0.12
             {
                 row_text.push(' ');
                 block.editor_text.push(' ');
