@@ -4856,6 +4856,45 @@ fn retyped_arabic_paragraphs_are_shaped_in_place() {
     assert_eq!((t.text.as_str(), t.size), (block.text.as_str(), 16.0));
 }
 
+/// The report: after editing, Arabic text came out in another font. Given the full face of the
+/// paragraph's own font (`BlockStyle::face`, the installed copy of a Word subset), the retyped
+/// paragraph is shaped and embedded in that face, not redrawn in the fallback, and reads back as
+/// typed; the draft is measured the same way, without touching the document.
+#[test]
+fn retyped_arabic_keeps_the_face_it_is_given() {
+    // A static face with Arabic and its joining rules: PDFCRAFT_TEST_ARABIC_FONT, else the
+    // system's DejaVu Sans (craft-fonts' Noto Sans Arabic is a variable font, refused for embedding).
+    let path = std::env::var_os("PDFCRAFT_TEST_ARABIC_FONT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+    let Ok(face) = std::fs::read(&path) else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let (_, postscript) = pdfcraft_fonts::embedding::names(&face).unwrap();
+    // At the right, as an Arabic line sits (one at the page's centre reads as a centred title).
+    let original = "BT /F1 12 Tf 450 700 Td (BA) Tj ET";
+    let typed = "مجلس الشورى ٣ Law 2026";
+    let style = text::BlockStyle { face: Some(Arc::new(face)), ..Default::default() };
+
+    let doc = arabic_ligature_page(original, false);
+    let before = page_content_bytes(&doc, 0);
+    let layout = text::text_edit_layout(&doc, 0, 0, typed, &style).unwrap();
+    assert!(layout.draft_rect.is_some(), "measured with the face");
+    assert_eq!(page_content_bytes(&doc, 0), before, "measuring leaves the document as it was");
+
+    let block_right = text::text_blocks(&doc, 0).unwrap()[0].rect[2];
+    let mut doc = doc;
+    let edit = text::rewrite_block(&mut doc, 0, 0, Some(typed), &style).unwrap();
+    assert_ne!(edit.substituted.as_deref(), Some("Noto Sans Arabic"), "not the fallback path");
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let line = lines.iter().find(|l| l.text == typed).unwrap_or_else(|| panic!("reads as typed: {lines:?}"));
+    assert!(line.base_font.contains(&postscript), "drawn in the given face: {} vs {postscript}", line.base_font);
+    assert!((line.rect[2] - block_right).abs() < 1.0, "keeps the paragraph's right edge: {:?} vs {block_right}", line.rect);
+    assert!(list_added(&doc).is_empty(), "rewritten in place, not redrawn as added text");
+}
+
 #[test]
 fn replacing_arabic_actual_text_removes_the_whole_original_drawing() {
     let logical = "مرحبا بالعالم";

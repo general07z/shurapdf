@@ -192,9 +192,22 @@ fn on_same_baseline(line: &TextLine, target: &TextLine) -> bool {
 
 /// Rewrite paragraph `block` with new text (or its own) and formatting, rewrapped to its width.
 pub fn rewrite_block(doc: &mut Document, page: usize, block: usize, text: Option<&str>, style: &BlockStyle) -> Result<LineEdit, EditError> {
-    let edit = rewrite_block_with_limit(doc, page, block, text, style, MAX_TYPE3_GLYPHS)?;
+    let style = with_registered_face(doc, page, style)?;
+    let edit = rewrite_block_with_limit(doc, page, block, text, &style, MAX_TYPE3_GLYPHS)?;
     drop_unused_fallback_fonts(doc, page);
     Ok(edit)
+}
+
+/// `style` with its [`BlockStyle::face`] registered on `page` and named as its `resource` (a
+/// resource chosen explicitly wins, and the face is then left out).
+pub(crate) fn with_registered_face(doc: &mut Document, page: usize, style: &BlockStyle) -> Result<BlockStyle, EditError> {
+    let mut style = style.clone();
+    if let Some(face) = style.face.take()
+        && style.resource.is_none()
+    {
+        style.resource = Some(super::register_text_font(doc, page, &face)?);
+    }
+    Ok(style)
 }
 
 /// [`rewrite_block`] with the most unique characters one generated font may hold (tests lower it).

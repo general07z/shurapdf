@@ -409,6 +409,11 @@ pub struct BlockStyle {
     /// For an invisible paragraph ([`TextBlock::invisible`]): fill its old area with this colour
     /// (RGB 0–1) before the new text, hiding the scanned word beneath it.
     pub cover: Option<[f64; 3]>,
+    /// A complete font program to register on the page and draw with when no `resource` is given:
+    /// the installed copy of the paragraph's own face (Arial for Word's `ArialMT` subset), so
+    /// retyped Arabic keeps the document's font instead of a fallback face. The program is
+    /// validated as [`super::register_text_font`] does.
+    pub face: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
