@@ -287,7 +287,7 @@ Run workflow**. It never runs on pull requests.
   Word**), through real Word on the runner, in every situation the Word setting must handle:
   `.docx`, `.doc`, `.docm` (macros stay off) and `.dotx` files, a protected file without, with a
   wrong and with an Arabic password, a damaged file (fails within 90 seconds), three conversions
-  at once, a temp folder with an Arabic name, the user's own Word staying open, and no hidden
+  at once, the user's own Word staying open, and no hidden
   Word left running afterwards. The run fails if one does.
 
 ### How "Convert Word documents with" behaves

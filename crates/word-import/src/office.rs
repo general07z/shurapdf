@@ -13,7 +13,8 @@
 //! - Word stuck (a dialog nobody sees, a huge document): stopped after a time that grows with the
 //!   file size, and the hidden Word it started is ended too, never left running.
 //! - Password-protected files, files with macros (`.docm`), templates, Word 97-2003 `.doc`.
-//! - User and temp folders with Arabic names.
+//! - Temp folders whose path isn't ASCII get an ASCII working folder (not checked against real
+//!   Word: the Council has no accounts with Arabic names).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -107,10 +108,12 @@ try {
     $code = 2
   }
 } finally {
-  if ($doc) { try { $doc.Close(0) } catch {} }
+  # Close and Quit take their arguments by reference: PowerShell refuses a plain 0
+  # ("should be a System.Management.Automation.PSReference").
+  if ($doc) { try { $doc.Close([ref]0) } catch { try { $doc.Close() } catch {} } }
   if ($word) {
     # Only this script's own Word, and only once it holds nothing else.
-    try { if ($word.Documents.Count -eq 0) { $word.Quit(0) } } catch {}
+    try { if ($word.Documents.Count -eq 0) { $word.Quit([ref]0) } } catch {}
     try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
   }
 }
@@ -253,7 +256,12 @@ fn run(script: &str, paths: &Paths, password: Option<&str>, limit: Duration) -> 
     let started = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(status.code().unwrap_or(-1)),
+            Ok(Some(status)) => {
+                // The script quits its Word; one that is still running a few seconds later
+                // (a failed open can leave it holding a dialog nobody sees) is ended.
+                linger_then_end(paths.pid);
+                return Ok(status.code().unwrap_or(-1));
+            }
             Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(100)),
             Ok(None) => {
                 let _ = child.kill();
@@ -264,6 +272,36 @@ fn run(script: &str, paths: &Paths, password: Option<&str>, limit: Duration) -> 
             Err(e) => return Err(OfficeError::Failed(e.to_string())),
         }
     }
+}
+
+/// Waits up to five seconds for the Word processes the script noted as its own to exit, then ends
+/// those still running.
+fn linger_then_end(pid_file: &Path) {
+    let Ok(text) = std::fs::read_to_string(pid_file) else { return };
+    let pids: Vec<u32> = text.split_whitespace().filter_map(|p| p.parse().ok()).collect();
+    if pids.is_empty() {
+        return;
+    }
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        if !pids.iter().any(|pid| running(*pid)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    end_word(pid_file);
+}
+
+/// Whether a process with this id runs (`tasklist`, numbers only).
+fn running(pid: u32) -> bool {
+    let mut list = Command::new("tasklist.exe");
+    list.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]).stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        list.creation_flags(0x0800_0000);
+    }
+    list.output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
 }
 
 /// Ends the Word processes the script noted as its own (process ids, space-separated). Only
@@ -282,7 +320,50 @@ fn end_word(pid_file: &Path) {
     }
 }
 
-/// A folder of its own under the system temp folder, removed when dropped.
+/// Where the working folder goes: the temp folder, unless its path has characters outside ASCII
+/// (a Windows account with a non-Latin name: `C:\Users\<name>\AppData\Local\Temp`): then its
+/// short (8.3) path when Windows keeps one, else `%ProgramData%\ShuraPDF`, so the paths handed to
+/// Word stay plain. A precaution: Word itself opens files from Arabic-named folders, and the
+/// Council has no such accounts.
+fn word_safe_base() -> PathBuf {
+    let temp = std::env::temp_dir();
+    if temp.to_string_lossy().is_ascii() || !cfg!(windows) {
+        return temp;
+    }
+    // `cmd` writes a name it can't show in its code page as `?`: no short name, then.
+    if let Some(short) = short_path(&temp).filter(|p| p.to_string_lossy().is_ascii() && !p.to_string_lossy().contains('?')) {
+        return short;
+    }
+    std::env::var_os("ProgramData")
+        .map(|p| PathBuf::from(p).join("ShuraPDF"))
+        .filter(|p| p.to_string_lossy().is_ascii() && std::fs::create_dir_all(p).is_ok())
+        .unwrap_or(temp)
+}
+
+/// The 8.3 short form of an existing folder, from `cmd`'s `%~s` expansion (no API call needed).
+fn short_path(path: &Path) -> Option<PathBuf> {
+    let mut command = Command::new("cmd.exe");
+    command.current_dir(path).stdin(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Raw, so no quotes are added around the loop; `%~sI` is the short form of `.`.
+        command.raw_arg("/D /C for %I in (.) do @echo %~sI").creation_flags(0x0800_0000);
+    }
+    #[cfg(not(windows))]
+    let _ = &mut command;
+    let out = command.output().ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let line = text.lines().next()?.trim();
+    (out.status.success() && !line.is_empty()).then(|| PathBuf::from(line))
+}
+
+/// The folder conversions through Word work in (diagnostics: `word_fidelity --checks`).
+pub fn working_folder() -> PathBuf {
+    word_safe_base()
+}
+
+/// A folder of its own for one conversion ([`word_safe_base`]), removed when dropped.
 struct TempDir {
     path: PathBuf,
 }
@@ -292,7 +373,7 @@ impl TempDir {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
-        let path = std::env::temp_dir().join(format!("shurapdf-word-{}-{}-{nanos}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let path = word_safe_base().join(format!("shurapdf-word-{}-{}-{nanos}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir(&path)?;
         Ok(Self { path })
     }

@@ -206,9 +206,6 @@ fn compare(name: &str, bytes: &[u8], out: Option<&Path>) -> Row {
 }
 
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some(checks::CONVERT_ONE) {
-        checks::convert_one();
-    }
     let mut args = std::env::args().skip(1);
     let Some(out) = args.next().map(PathBuf::from) else {
         eprintln!("usage: word_fidelity OUT_DIR [--private DIR]");

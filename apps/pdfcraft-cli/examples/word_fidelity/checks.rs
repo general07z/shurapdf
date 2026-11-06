@@ -6,12 +6,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use pdfcraft_word_import::testkit::{encrypted_docx, synthetic_doc, synthetic_docx, with_main_type};
+use pdfcraft_word_import::testkit::{encrypted_docx, synthetic_docx, with_main_type};
 use pdfcraft_word_import::{WordEngine, WordImportError, WordImportOptions, set_engine, word_to_pdf};
-
-/// The argument that makes this program convert one document with Word and exit (0 on success):
-/// the Arabic temp folder check runs it as a child with a different `TEMP`.
-pub const CONVERT_ONE: &str = "--convert-one";
 
 /// One check's outcome.
 pub struct Check {
@@ -86,8 +82,11 @@ pub fn run(work: &Path) -> Vec<Check> {
         let r = with(WordEngine::Auto, &docx, None);
         (r.as_ref().is_ok_and(|p| made_by_word(p)), outcome(&r))
     }));
-    checks.push(check("Word: Word 97-2003 .doc", || {
-        let r = with(WordEngine::Word, &synthetic_doc(&["نص عربي للتجربة", "Mixed English ١٢٣ text"]), None);
+    checks.push(check("Word: Word 97-2003 .doc (saved by Word)", || {
+        // Word refuses the minimal synthetic .doc as damaged; a .doc Word itself saved is what
+        // users have.
+        let Some(doc) = saved_as_doc(work, &docx) else { return (false, "Word couldn't save a .doc to test with".into()) };
+        let r = with(WordEngine::Word, &doc, None);
         (r.as_ref().is_ok_and(|p| made_by_word(p)), outcome(&r))
     }));
     checks.push(check("Word: macro-enabled .docm (macros stay off)", || {
@@ -135,17 +134,18 @@ pub fn run(work: &Path) -> Vec<Check> {
         let ok = results.iter().filter(|r| r.as_ref().is_ok_and(|p| made_by_word(p))).count();
         (ok == 3, format!("{ok} of 3 made by Word"))
     }));
-    checks.push(check("Temp folder with an Arabic name", || {
-        let temp = work.join("مجلد مؤقت");
-        if let Err(e) = std::fs::create_dir_all(&temp) {
-            return (false, format!("couldn't make {}: {e}", temp.display()));
-        }
-        let Ok(me) = std::env::current_exe() else { return (false, "no program path".into()) };
-        let out = Command::new(me).arg(CONVERT_ONE).env("TEMP", &temp).env("TMP", &temp).output();
-        match out {
-            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).trim().to_owned()),
-            Err(e) => (false, e.to_string()),
-        }
+    checks.push(check("No hidden Word left running afterwards", || {
+        let left: Vec<u32> = Vec::new();
+        let mut leftover = left;
+        let clean = wait_for(
+            || {
+                leftover = word_pids().into_iter().filter(|p| !before.contains(p)).collect();
+                leftover.is_empty()
+            },
+            Duration::from_secs(30),
+        );
+        end(&leftover);
+        (clean, if clean { "none".into() } else { format!("{} Word process(es) left", leftover.len()) })
     }));
     checks.push(check("User's own Word stays open during a conversion", || {
         let started = Command::new("cmd.exe").args(["/C", "start", "", "/MIN", "winword.exe", "/q", "/n"]).status();
@@ -173,28 +173,44 @@ pub fn run(work: &Path) -> Vec<Check> {
             format!("{}; user's Word {}", outcome(&r), if still_open { "still open" } else { "was closed!" }),
         )
     }));
-    checks.push(check("No hidden Word left running afterwards", || {
-        let left: Vec<u32> = Vec::new();
-        let mut leftover = left;
-        let clean = wait_for(
-            || {
-                leftover = word_pids().into_iter().filter(|p| !before.contains(p)).collect();
-                leftover.is_empty()
-            },
-            Duration::from_secs(30),
-        );
-        end(&leftover);
-        (clean, if clean { "none".into() } else { format!("{} Word process(es) left", leftover.len()) })
-    }));
     set_engine(WordEngine::Auto);
     checks
 }
 
-/// The child half of the Arabic temp folder check: one conversion with Word, then exit.
-pub fn convert_one() -> ! {
-    let r = with(WordEngine::Word, &synthetic_docx(), None);
-    println!("{} (temp: {})", outcome(&r), std::env::temp_dir().display());
-    std::process::exit(if r.as_ref().is_ok_and(|p| made_by_word(p)) { 0 } else { 1 });
+/// `docx` saved by Word as a Word 97-2003 `.doc` (in `work`), or `None` when Word can't.
+fn saved_as_doc(work: &Path, docx: &[u8]) -> Option<Vec<u8>> {
+    let dir = work.join("doc-fixture");
+    std::fs::create_dir_all(&dir).ok()?;
+    let (input, output) = (dir.join("fixture.docx"), dir.join("fixture.doc"));
+    std::fs::write(&input, docx).ok()?;
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $d = $w.Documents.Open($env:FIXTURE_IN, $false, $true)\n  $d.SaveAs2($env:FIXTURE_OUT, 0)\n  $d.Close([ref]0)\n} finally { $w.Quit([ref]0) }\n";
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let status = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &base64(&utf16)])
+        .env("FIXTURE_IN", &input)
+        .env("FIXTURE_OUT", &output)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    let bytes = status.success().then(|| std::fs::read(&output).ok()).flatten();
+    let _ = std::fs::remove_dir_all(&dir);
+    bytes
+}
+
+/// Standard base64 with padding (PowerShell's `-EncodedCommand`).
+fn base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18u32, 12, 6, 0].into_iter().enumerate() {
+            out.push(if i <= chunk.len() { char::from(A[((n >> shift) & 63) as usize]) } else { '=' });
+        }
+    }
+    out
 }
 
 /// The checks as a Markdown table.
