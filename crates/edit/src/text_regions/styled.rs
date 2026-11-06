@@ -383,7 +383,15 @@ fn page_font_metrics(
     (fonts, metrics)
 }
 
-fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextBlock, style: &BlockStyle) -> Result<(f64, f64, f64), EditError> {
+/// The paragraph's offset and the width its rows wrap to. A single row may grow to the page's
+/// margin: rightwards, or leftwards when it reads right to left (`rtl`), keeping its right edge.
+fn paragraph_geometry(
+    doc: &Document,
+    page: &pdfcraft_model::Page,
+    block: &TextBlock,
+    style: &BlockStyle,
+    rtl: bool,
+) -> Result<(f64, f64, f64), EditError> {
     if [style.size, style.line_spacing, style.char_spacing, style.scale, style.width].iter().flatten().any(|value| !value.is_finite())
         || style.color.is_some_and(|color| color.iter().any(|value| !value.is_finite()))
     {
@@ -393,7 +401,9 @@ fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextB
     if !dx.is_finite() || !dy.is_finite() || style.width.is_some_and(|width| !width.is_finite()) {
         return Err(EditError::Invalid("the paragraph's position and width must be finite".into()));
     }
-    let natural = if block.invisible || block.rows.len() == 1 {
+    let natural = if (block.invisible || block.rows.len() == 1) && rtl {
+        (block.rect[2] + dx - (page.crop(doc)[0] + 36.0)).max(block.rect[2] - block.rect[0])
+    } else if block.invisible || block.rows.len() == 1 {
         (page.crop(doc)[2] - 36.0 - (block.rect[0] + dx)).max(block.rect[2] - block.rect[0])
     } else {
         block.rect[2] - block.rect[0]
@@ -677,7 +687,9 @@ pub(crate) fn rewrite_styled_block(
     let p = page_dict(doc, page)?;
     let mut res = p.dict.get(b"Resources").and_then(|resource| doc.resolve(resource).as_dict().cloned()).unwrap_or_default();
     let (mut fonts, mut metrics) = page_font_metrics(doc, &res, block, lines);
-    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style)?;
+    // A right-to-left paragraph is aligned right and grows leftwards, as on the other paths.
+    let rtl = pdfcraft_fonts::visual_line::paragraph_rtl(draft);
+    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style, rtl)?;
     let prepared = CharacterPreparation {
         doc,
         first,
@@ -824,7 +836,13 @@ pub(crate) fn rewrite_styled_block(
             continue;
         }
         let w = measured.get(row_index).copied().unwrap_or(0.0);
-        let align = style.align.unwrap_or(if centered { crate::added::Align::Center } else { crate::added::Align::Left });
+        let align = style.align.unwrap_or(if centered {
+            crate::added::Align::Center
+        } else if rtl {
+            crate::added::Align::Right
+        } else {
+            crate::added::Align::Left
+        });
         let original_rect = block.rows.get(row_index).and_then(|row| row_rect(row, lines)).unwrap_or(block.rect);
         let left = if style.width.is_none() && style.align.is_none() { original_rect[0] } else { block.rect[0] };
         let available = if style.width.is_none() && style.align.is_none() { original_rect[2] - original_rect[0] } else { width };

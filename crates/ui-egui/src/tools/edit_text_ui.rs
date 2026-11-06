@@ -166,6 +166,18 @@ impl LineEditor {
             scale: (self.extras.scale != self.extras0.scale).then_some(self.extras.scale),
             ..Default::default()
         };
+        // Retyped Arabic in a font Word subset without its joining rules: draw it with the
+        // installed copy of that font, so it keeps the document's look, unless another font was
+        // chosen. Only for a change: an untouched paragraph stays no edit at all.
+        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default())
+            && style.resource.is_none()
+            && style.family.is_none()
+            && self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic)
+            && let Some((block, lines)) = &self.source
+            && let Some(line) = block.lines.first().and_then(|i| lines.get(*i))
+        {
+            style.face = self.fonts.faces.get(&line.font).cloned();
+        }
         if let Some(range) = &self.selection
             && (style.family.is_some()
                 || style.resource.is_some()
@@ -733,6 +745,30 @@ mod tests {
             extras0: Extras::default(),
         };
         (app, ed)
+    }
+
+    /// Retyped Arabic carries the installed copy of the paragraph's font, so the rewrite keeps the
+    /// document's look; an untouched paragraph, Latin text or another chosen font don't.
+    #[test]
+    fn retyped_arabic_carries_the_installed_copy_of_its_font() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        let face = Arc::new(b"stand-in for an installed face".to_vec());
+        ed.fonts.faces.insert(font, face.clone());
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        assert_eq!(ed.style().face, None, "untouched: no edit");
+        assert!(finished_edit(ed.clone()).is_none());
+        ed.text = "الموضوع: طلب استبدال".into();
+        assert!(ed.style().face.is_some_and(|f| Arc::ptr_eq(&f, &face)), "retyped Arabic keeps its font");
+        ed.text = "Subject: request".into();
+        assert_eq!(ed.style().face, None, "Latin text keeps the ordinary path");
+        ed.text = "الموضوع".into();
+        ed.choose_family(pdfcraft_engine::FontFamily::Times);
+        assert_eq!(ed.style().face, None, "a chosen font wins");
     }
 
     #[test]

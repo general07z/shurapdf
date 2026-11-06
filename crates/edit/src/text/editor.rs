@@ -72,6 +72,12 @@ pub struct TextEditLayout {
 }
 
 pub fn text_edit_layout(doc: &Document, page: usize, block: usize, text: &str, style: &BlockStyle) -> Result<TextEditLayout, EditError> {
+    if style.face.is_some() && style.resource.is_none() {
+        // Measured as Apply will draw it: with the face registered, on a copy.
+        let mut copy = doc.clone();
+        let style = super::rewrite::with_registered_face(&mut copy, page, style)?;
+        return TextSession::open(&copy, page, block)?.layout(text, &style);
+    }
     TextSession::open(doc, page, block)?.layout(text, style)
 }
 

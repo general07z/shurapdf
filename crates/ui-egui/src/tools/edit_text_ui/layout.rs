@@ -76,6 +76,9 @@ pub(crate) fn editor_fill(text: Color32) -> Color32 {
 pub(crate) struct SourceFonts {
     pub(crate) fonts: BTreeMap<String, String>,
     pub(crate) joining: BTreeMap<String, String>,
+    /// The installed copy of a resource's face, when it can be embedded: a retyped Arabic
+    /// paragraph is drawn with it (`BlockStyle::face`) and keeps the document's font.
+    pub(crate) faces: BTreeMap<String, Arc<Vec<u8>>>,
 }
 
 impl SourceFonts {
@@ -146,6 +149,9 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
             stack
         } else if let Some(bytes) = installed_face(ctx, &program.face) {
             let installed = format!("pdf-source-{index}-installed");
+            if pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok() {
+                out.faces.insert(program.resource.clone(), Arc::new(bytes.clone()));
+            }
             definitions.font_data.insert(installed.clone(), Arc::new(egui::FontData::from_owned(bytes)));
             std::iter::once(installed).chain(interface.iter().cloned()).collect()
         } else {
