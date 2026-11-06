@@ -104,6 +104,32 @@ pub struct AddedText {
     pub align: Align,
     /// Extra space after every character, in points: the PDF's character spacing (`Tc`).
     pub char_spacing: f64,
+    /// A full font chosen for the item (Add text ▸ Installed fonts…): drawn shaped and embedded in
+    /// it, any script, instead of the standard `family`.
+    pub face: Option<Face>,
+}
+
+/// A complete font program an added text is drawn in, and its PostScript name.
+#[derive(Clone, PartialEq)]
+pub struct Face {
+    pub name: String,
+    pub program: std::sync::Arc<Vec<u8>>,
+}
+
+impl Face {
+    /// The face of `program`, when it may be embedded
+    /// ([`pdfcraft_fonts::embedding::validate_document_input`]).
+    pub fn new(program: Vec<u8>) -> Result<Face, String> {
+        pdfcraft_fonts::embedding::validate_document_input(&program)?;
+        let (_, name) = pdfcraft_fonts::embedding::names(&program)?;
+        Ok(Face { name, program: std::sync::Arc::new(program) })
+    }
+}
+
+impl std::fmt::Debug for Face {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Face({}, {} bytes)", self.name, self.program.len())
+    }
 }
 
 impl Default for AddedText {
@@ -118,6 +144,7 @@ impl Default for AddedText {
             color: [0.0; 3],
             align: Align::Left,
             char_spacing: 0.0,
+            face: None,
         }
     }
 }

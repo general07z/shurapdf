@@ -351,13 +351,34 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// Format text for added text: the standard families, size, colour, style and alignment.
+/// Format text for added text: a standard family or an installed font, size, colour, style and
+/// alignment.
 fn added_text_format(ui: &mut egui::Ui, t: &Tokens, style: &mut pdfcraft_engine::AddedText) {
-    let shown = style.family.label().to_string();
+    let shown = style.face.as_ref().map_or_else(|| style.family.label().to_string(), |face| face.name.clone());
     let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown });
-    if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
-        style.family = family;
+    match out.font {
+        Some(crate::format_text_ui::FontChoice::Family(family)) => {
+            style.family = family;
+            style.face = None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(crate::format_text_ui::FontChoice::Installed(path)) => {
+            // The list holds only fonts that may be embedded; one that can't be read is left out.
+            if let Some(face) = installed_face_file(&path) {
+                style.face = Some(face);
+            }
+        }
+        _ => {}
     }
+}
+
+/// The face in an installed font file (at most 16 MiB), when it may be embedded.
+#[cfg(not(target_arch = "wasm32"))]
+fn installed_face_file(path: &std::path::Path) -> Option<pdfcraft_engine::TextFace> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
+    pdfcraft_engine::TextFace::new(bytes).ok()
 }
 
 impl PdfCraftApp {

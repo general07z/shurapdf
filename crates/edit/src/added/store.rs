@@ -1,7 +1,7 @@
 use super::draw::{draw, params};
 use super::layout::{first_undrawable, is_thai, nums, shaped_arabic, thai_error};
-use super::types::{Added, AddedImage, AddedText, Align, CHAR_SPACING_LIMIT, Family, MarkerScan, TAG};
-use super::{Content, Dict, Document, EditError, GlyphError, MarkKind, ObjRef, Object, Stream, check, contents, page_list, place_tagged};
+use super::types::{Added, AddedImage, AddedText, Align, CHAR_SPACING_LIMIT, Face, Family, MarkerScan, TAG};
+use super::{Content, Dict, Document, EditError, GlyphError, MarkKind, ObjRef, Object, PdfString, Stream, check, contents, page_list, place_tagged};
 
 fn parse(doc: &Document, d: &Dict) -> Option<Content> {
     let r = nums(doc, d.get(b"Rect"));
@@ -26,6 +26,9 @@ fn parse(doc: &Document, d: &Dict) -> Option<Content> {
                 },
                 // Items written before character spacing have none.
                 char_spacing: d.get(b"CharSpacing").and_then(Object::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0),
+                // The chosen face's program, as embedded (at most 16 MiB, and only one that may
+                // be embedded); an item without one, or whose program is unreadable, uses `Font`.
+                face: d.get(b"FaceProgram").and_then(|o| face_program(doc, o)),
             }))
         }
         b"Image" => {
@@ -41,6 +44,26 @@ fn parse(doc: &Document, d: &Dict) -> Option<Content> {
         }
         _ => None,
     }
+}
+
+/// The [`Face`] of a stored program stream.
+fn face_program(doc: &Document, o: &Object) -> Option<Face> {
+    with_resolved(doc, o, |resolved| match resolved {
+        Object::Stream(s) => s.decoded_within(16 << 20).ok().and_then(|bytes| Face::new(bytes).ok()),
+        _ => None,
+    })
+}
+
+/// The font program stream an item's chosen face was embedded as: the one font in `res` with a
+/// descendant whose descriptor holds a `FontFile2`/`FontFile3`.
+fn embedded_program(doc: &Document, res: &Dict) -> Option<ObjRef> {
+    let fonts = res.get(b"Font").and_then(|f| doc.dict(f))?;
+    fonts.iter().find_map(|(_, font)| {
+        let font = doc.dict(font)?;
+        let descendant = font.get(b"DescendantFonts").map(|d| doc.resolve(d)).and_then(|d| d.as_array().and_then(|a| a.first().cloned()))?;
+        let descriptor = doc.dict(&descendant)?.get(b"FontDescriptor").and_then(|d| doc.dict(d))?;
+        descriptor.get(b"FontFile2").or_else(|| descriptor.get(b"FontFile3")).and_then(Object::as_ref)
+    })
 }
 
 fn with_resolved<T>(doc: &Document, object: &Object, f: impl FnOnce(&Object) -> T) -> T {
@@ -191,6 +214,12 @@ fn write(doc: &mut Document, page: usize, c: &Content, obj: Option<ObjRef>) -> R
     let mut sd = Dict::new();
     sd.set(b"PCMark".to_vec(), Object::name(TAG));
     let mut added = params(c);
+    if let Content::Text(AddedText { face: Some(face), .. }) = c
+        && let Some(program) = embedded_program(doc, &res)
+    {
+        added.set(b"FaceName".to_vec(), PdfString::text(&face.name));
+        added.set(b"FaceProgram".to_vec(), Object::Ref(program));
+    }
     if user_unit != 1.0 {
         added.set(b"UserUnit".to_vec(), Object::Real(user_unit));
     }

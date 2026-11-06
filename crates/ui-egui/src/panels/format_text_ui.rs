@@ -94,15 +94,16 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, look: &mut AddedText, extras:
                 ui.separator();
             }
             for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                if ui.selectable_label(fonts.sources.is_none() && look.family == f, f.label()).clicked() {
+                if ui.selectable_label(fonts.sources.is_none() && look.face.is_none() && look.family == f, f.label()).clicked() {
                     out.font = Some(FontChoice::Family(f));
                 }
             }
-            if fonts.sources.is_some() {
-                ui.separator();
-                if ui.selectable_label(false, tl!("Load font…")).clicked() {
-                    out.font = Some(FontChoice::Load);
-                }
+            ui.separator();
+            if fonts.sources.is_some() && ui.selectable_label(false, tl!("Load font…")).clicked() {
+                out.font = Some(FontChoice::Load);
+            }
+            // Installed fonts, for existing text and for added text alike.
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 ui.menu_button(tl!("Installed fonts…"), |ui| match crate::files::installed_font_files(ui.ctx()) {
                     Some(list) if list.is_empty() => {

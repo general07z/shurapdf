@@ -1159,6 +1159,57 @@ fn added_arabic_text_is_shaped_in_display_order_and_stays_searchable() {
     }
 }
 
+/// A static Arabic face for tests: PDFCRAFT_TEST_ARABIC_FONT, else the system's DejaVu Sans
+/// (craft-fonts' Noto Sans Arabic is a variable font, refused for embedding). `None` skips.
+fn static_arabic_face() -> Option<Vec<u8>> {
+    let path = std::env::var_os("PDFCRAFT_TEST_ARABIC_FONT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+    std::fs::read(path).ok()
+}
+
+/// The report: Add text didn't offer the PC's fonts. An item in a chosen installed face is shaped
+/// and embedded in it (Arabic joined, Latin and digits too), reads back as typed for copy and
+/// search, keeps its face through save, reopen and an update, and reports a character the face
+/// lacks instead of drawing it as `?`.
+#[test]
+fn added_text_in_a_chosen_face_is_shaped_embedded_and_kept() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let face = crate::added::Face::new(program).unwrap();
+    let typed = "مجلس الشورى ٣ Law 2026";
+    let text = AddedText {
+        rect: [300.0, 600.0, 540.0, 700.0],
+        text: typed.into(),
+        size: 14.0,
+        align: Align::Right,
+        face: Some(face.clone()),
+        ..AddedText::default()
+    };
+    assert_eq!(crate::added::first_undrawable(&text), None);
+    let mut doc = fixture();
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    let doc = reopen(&doc);
+    let added = list_added(&doc);
+    let Content::Text(t) = &added[0].content else { panic!("added text: {added:?}") };
+    assert_eq!((t.text.as_str(), t.face.as_ref().map(|f| f.name.as_str())), (typed, Some(face.name.as_str())), "the face is kept");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let line = lines.iter().find(|l| l.text == typed).unwrap_or_else(|| panic!("reads as typed: {lines:?}"));
+    assert!(line.base_font.contains(&face.name), "drawn in the chosen face: {}", line.base_font);
+    assert!((line.rect[2] - 540.0).abs() < 1.0, "right-aligned in its box: {:?}", line.rect);
+    // Updated, it keeps the face and redraws in it.
+    let mut doc = doc;
+    let again = AddedText { text: "نص جديد".into(), ..t.clone() };
+    crate::added::update_content(&mut doc, 0, 0, &Content::Text(again)).unwrap();
+    let doc = reopen(&doc);
+    let Content::Text(t) = &list_added(&doc)[0].content else { panic!("added text") };
+    assert_eq!((t.text.as_str(), t.face.is_some()), ("نص جديد", true));
+    // A character the face lacks is reported, not drawn as a question mark.
+    assert_eq!(crate::added::first_undrawable(&AddedText { text: "中".into(), ..text }), Some('中'));
+}
+
 #[test]
 fn added_hebrew_text_is_drawn_right_to_left_and_stays_searchable() {
     let mut doc = fixture();
@@ -4862,12 +4913,7 @@ fn retyped_arabic_paragraphs_are_shaped_in_place() {
 /// typed; the draft is measured the same way, without touching the document.
 #[test]
 fn retyped_arabic_keeps_the_face_it_is_given() {
-    // A static face with Arabic and its joining rules: PDFCRAFT_TEST_ARABIC_FONT, else the
-    // system's DejaVu Sans (craft-fonts' Noto Sans Arabic is a variable font, refused for embedding).
-    let path = std::env::var_os("PDFCRAFT_TEST_ARABIC_FONT")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
-    let Ok(face) = std::fs::read(&path) else {
+    let Some(face) = static_arabic_face() else {
         eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
         return;
     };

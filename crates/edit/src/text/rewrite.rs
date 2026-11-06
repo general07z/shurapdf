@@ -973,6 +973,7 @@ impl ShapedRewrite {
             color: style.color.unwrap_or(b.color),
             align,
             char_spacing: 0.0,
+            face: None,
         };
         // Every line must shape before anything changes: a refusal leaves the page as it was.
         Ok(text.text.split('\n').all(|line| pdfcraft_fonts::visual_line::visual_pieces(line, rtl).is_ok()).then_some(Self { text, rect }))
