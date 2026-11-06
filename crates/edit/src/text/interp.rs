@@ -25,6 +25,24 @@ pub(super) struct TextState {
 }
 
 impl TextState {
+    /// Whether text in `other` draws as text in this state does: rendering mode, stroke, line
+    /// width, dash, cap, fill, spacing, scale and rise (not which ExtGStates were selected, which
+    /// Word restates for every run of a line).
+    pub(crate) fn draws_like(&self, other: &TextState) -> bool {
+        // The operators themselves, not where in the stream they were read.
+        let same = |a: &[Op], b: &[Op]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.op == b.op && a.operands == b.operands);
+        self.render_mode == other.render_mode
+            && same(&self.stroke, &other.stroke)
+            && self.line_width == other.line_width
+            && self.dash == other.dash
+            && self.line_cap == other.line_cap
+            && same(&self.fill, &other.fill)
+            && self.char_spacing == other.char_spacing
+            && self.word_spacing == other.word_spacing
+            && self.scale == other.scale
+            && self.rise == other.rise
+    }
+
     pub(super) fn of(ts: &Ts) -> Self {
         TextState {
             font: ts.font.as_ref().map(|(n, _)| (String::from_utf8_lossy(n).into_owned(), ts.size)),
@@ -594,6 +612,11 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
     let mut words: Vec<(f64, f64)> = Vec::new();
     let mut in_word = false;
     let mut glyph_count = 0_usize;
+    // The advance of the glyph just shown when it was a space (see the TJ adjustments below).
+    let mut space_advance: Option<f64> = None;
+    // A space was just read from a gap: a space glyph right after it is the same space (Word
+    // justifies a line by widening the gap before each space glyph).
+    let mut gap_space = false;
     for p in &pieces {
         match p {
             Object::String(s) => {
@@ -601,7 +624,10 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
                     glyph_count = glyph_count.saturating_add(1);
                     let shown = m.text_of(code);
                     let blank = m.is_space(code, len) || shown.as_deref().is_some_and(|t| !t.is_empty() && t.chars().all(char::is_whitespace));
+                    let decoded = shown.is_some();
+                    let repeated = std::mem::take(&mut gap_space) && blank;
                     match shown {
+                        Some(_) if repeated => {}
                         Some(t) => {
                             carry.text_left = carry
                                 .text_left
@@ -647,6 +673,7 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
                     in_word = !blank;
                     let w = m.width(code) * ts.size + ts.char_spacing + if m.is_space(code, len) { ts.word_spacing } else { 0.0 };
                     x_text += w * ts.scale;
+                    space_advance = (blank && decoded).then_some(w * ts.scale);
                 }
             }
             other => {
@@ -664,9 +691,19 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
                         continue;
                     }
                     let dx = -n / 1000.0 * ts.size * ts.scale;
+                    // A space taken straight back (Word opens a right-to-left run with a space glyph
+                    // and backs over it: `[<space> 250 …]`) takes no room on the line: it isn't text.
+                    if let Some(advance) = space_advance.take()
+                        && advance.abs() > 1e-9
+                        && dx * advance.signum() <= -advance.abs() * 0.75
+                        && text.ends_with(' ')
+                    {
+                        text.pop();
+                    }
                     // A large gap inside TJ reads as a space.
                     if dx - tracking > (ts.size * ts.scale).abs() * 0.2 && !text.ends_with(' ') {
                         text.push(' ');
+                        gap_space = true;
                     }
                     // Tracking and kerning keep a word together; a larger jump
                     // ends it (whatever the sign of the size or `Tz`).
