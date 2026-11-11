@@ -761,6 +761,10 @@ fn source_font(doc: &Document, fonts_res: &Dict, font_name: &str, first: &TextLi
 }
 
 /// [`rewrite_block_with_limit`] with the page's [`text_lines`], read from `doc` as it is now.
+///
+/// A paragraph already drawn in a complete face of its own (an earlier edit embedded the
+/// installed font) is rewritten in that face. If that can't draw the new text, the paragraph is
+/// rewritten as it would be without it.
 pub(crate) fn rewrite_block_from(
     doc: &mut Document,
     page: usize,
@@ -769,6 +773,27 @@ pub(crate) fn rewrite_block_from(
     text: Option<&str>,
     style: &BlockStyle,
     max_glyphs: usize,
+) -> Result<LineEdit, EditError> {
+    if lines.iter().any(|l| l.font.starts_with("PCFull")) {
+        let mut trial = doc.clone();
+        if let Ok(edit) = rewrite_block_from_with(&mut trial, page, lines.clone(), block, text, style, max_glyphs, true) {
+            *doc = trial;
+            return Ok(edit);
+        }
+    }
+    rewrite_block_from_with(doc, page, lines, block, text, style, max_glyphs, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rewrite_block_from_with(
+    doc: &mut Document,
+    page: usize,
+    lines: Vec<TextLine>,
+    block: usize,
+    text: Option<&str>,
+    style: &BlockStyle,
+    max_glyphs: usize,
+    keep_own_face: bool,
 ) -> Result<LineEdit, EditError> {
     let blocks = group_blocks(&lines);
     let b = blocks.get(block).cloned().ok_or_else(|| EditError::Invalid(format!("page {} has no paragraph {}", page + 1, block + 1)))?;
@@ -781,7 +806,11 @@ pub(crate) fn rewrite_block_from(
     members.iter().try_for_each(|line| line.ensure_editable())?;
     let p = page_dict(doc, page)?;
     // One row, however many runs draw it (Word draws a line as several): it grows, never wraps.
-    if let Some(shaped) = ShapedRewrite::wanted(&b, first, b.rows.len() == 1, p.crop(doc), text, style)? {
+    // (Unless the paragraph is in a complete face of its own and `keep_own_face`: then the face's
+    // own font draws it, as it did the first time.)
+    if !(keep_own_face && first.font.starts_with("PCFull"))
+        && let Some(shaped) = ShapedRewrite::wanted(&b, first, b.rows.len() == 1, p.crop(doc), text, style)?
+    {
         return shaped.apply(doc, page, &members, &dropped);
     }
     let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();

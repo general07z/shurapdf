@@ -5093,6 +5093,33 @@ fn retyped_arabic_keeps_the_face_it_is_given() {
 }
 
 #[test]
+fn a_second_edit_of_retyped_arabic_keeps_the_face_of_the_first() {
+    let Some(face) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let (_, postscript) = pdfcraft_fonts::embedding::names(&face).unwrap();
+    let mut doc = arabic_ligature_page("BT /F1 12 Tf 450 700 Td (BA) Tj ET", false);
+    let first = text::BlockStyle { face: Some(Arc::new(face)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some("مجلس الشورى"), &first).unwrap();
+    let mut doc = reopen(&doc);
+    // The app opens the paragraph again: its font now has the joining rules, so the edit
+    // carries no face of its own (the paragraph's font is the one to keep), and the new
+    // text has digits, Latin and Arabic letters the first edit never drew.
+    for typed in ["مجلس الشورى", "مجلس الشورى جديد", "مجلس الشورى 3", "مجلس الشورى ٣", "مجلس الشورى ٣ Law 2026"]
+    {
+        text::rewrite_block(&mut doc, 0, 0, Some(typed), &text::BlockStyle::default()).unwrap();
+        doc = reopen(&doc);
+        let lines = text::text_lines(&doc, 0).unwrap();
+        let line = lines
+            .iter()
+            .find(|l| l.text == typed)
+            .unwrap_or_else(|| panic!("reads as typed: {:?}", lines.iter().map(|l| (&l.text, &l.font)).collect::<Vec<_>>()));
+        assert!(line.base_font.contains(&postscript), "{typed}: drawn in {} not {postscript}", line.base_font);
+    }
+}
+
+#[test]
 fn replacing_arabic_actual_text_removes_the_whole_original_drawing() {
     let logical = "مرحبا بالعالم";
     let hex: String = logical.encode_utf16().map(|u| format!("{u:04X}")).collect();

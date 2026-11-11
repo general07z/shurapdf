@@ -4227,6 +4227,35 @@ fn dragging_a_paragraph_moves_it_and_its_edge_rewraps_it() {
     assert!(h.state().views[0].line_editor.is_none());
 }
 
+#[test]
+fn the_frame_of_a_paragraph_open_for_typing_moves_it_with_its_typed_text() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let block = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].clone()
+    };
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = r.width() / 200.0;
+    let screen = |x: f64, y: f64| egui::pos2(r.left() + x as f32 * k, r.top() + (300.0 - y as f32) * k);
+    let before = block(&h);
+    // Click opens it for typing; type a character.
+    let mid = screen((before.rect[0] + before.rect[2]) / 2.0, (before.rect[1] + before.rect[3]) / 2.0);
+    click_at(&mut h, mid);
+    assert!(h.state().views[0].line_editor.is_some(), "a click opens it");
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text.push('!');
+    h.run_steps(3);
+    // Drag its frame (just above the top-left corner), 30 pt right and 50 pt up.
+    let grab = screen(before.rect[0], before.rect[3]) + egui::vec2(4.0, -4.0);
+    drag(&mut h, grab, grab + egui::vec2(30.0 * k, -50.0 * k));
+    assert!(h.state().views[0].line_editor.is_none(), "the drag applied the typed text");
+    let moved = block(&h);
+    assert_eq!(moved.text, "Page 1!");
+    let near = |a: f64, b: f64| (a - b).abs() < 2.0;
+    assert!(near(moved.rect[0], before.rect[0] + 30.0) && near(moved.rect[3], before.rect[3] + 50.0), "{:?} → {:?}", before.rect, moved.rect);
+}
+
 /// Press and release at `at` without moving.
 fn click_at(h: &mut Harness<'static, PdfCraftApp>, at: egui::Pos2) {
     h.hover_at(at);
