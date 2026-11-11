@@ -1303,7 +1303,10 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
         }
         patches.insert(s.op, replacement);
     }
-    if patches.len() != selected.len() {
+    // A line drawn as shaped Arabic lists its marked-content and text-object operators with its
+    // glyph runs; only the operators that show text are moved.
+    let shows = selected.iter().filter(|i| ops.get(**i).is_some_and(|o| ["Tj", "TJ", "'", "\""].iter().any(|name| o.is(name)))).count();
+    if patches.len() != shows {
         return Err(EditError::Invalid("a selected text operation cannot be moved".into()));
     }
     let data = splice(&pieces, &ops, |i| patches.remove(&i).map_or((Vec::new(), true), |v| (v, false)));

@@ -5093,6 +5093,28 @@ fn retyped_arabic_keeps_the_face_it_is_given() {
 }
 
 #[test]
+fn a_paragraph_retyped_in_a_face_can_be_moved() {
+    let Some(face) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = arabic_ligature_page("BT /F1 12 Tf 450 700 Td (BA) Tj ET", false);
+    let style = text::BlockStyle { face: Some(Arc::new(face)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some("مجلس الشورى"), &style).unwrap();
+    let mut doc = reopen(&doc);
+    let before = text::text_blocks(&doc, 0).unwrap()[0].rect;
+    text::translate_blocks(&mut doc, 0, &[0], [20.0, -30.0]).expect("moves");
+    let doc = reopen(&doc);
+    let after = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(after[0].text, "مجلس الشورى");
+    assert!(
+        (after[0].rect[0] - before[0] - 20.0).abs() < 1.0 && (after[0].rect[1] - before[1] + 30.0).abs() < 1.0,
+        "{before:?} → {:?}",
+        after[0].rect
+    );
+}
+
+#[test]
 fn a_second_edit_of_retyped_arabic_keeps_the_face_of_the_first() {
     let Some(face) = static_arabic_face() else {
         eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
