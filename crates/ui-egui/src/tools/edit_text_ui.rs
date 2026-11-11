@@ -846,7 +846,7 @@ mod tests {
     }
 
     /// Retyped Arabic carries the installed copy of the paragraph's font, so the rewrite keeps the
-    /// document's look; an untouched paragraph, Latin text or another chosen font don't.
+    /// document's look, as does text with characters its font never drew; an untouched paragraph, text it can already draw or another chosen font don't.
     #[test]
     fn retyped_arabic_carries_the_installed_copy_of_its_font() {
         let (app, mut ed) = preview_app();
@@ -862,8 +862,12 @@ mod tests {
         assert!(finished_edit(ed.clone()).is_none());
         ed.text = "الموضوع: طلب استبدال".into();
         assert!(ed.style().face.is_some_and(|f| Arc::ptr_eq(&f, &face)), "retyped Arabic keeps its font");
+        // Letters the paragraph never drew are not in its subset font, Latin or not: the
+        // installed copy draws them, so the paragraph keeps its font.
         ed.text = "Subject: request".into();
-        assert_eq!(ed.style().face, None, "Latin text keeps the ordinary path");
+        assert!(ed.style().face.is_some(), "new characters keep the font too");
+        ed.text = ":".into();
+        assert_eq!(ed.style().face, None, "only characters it already had, no Arabic: the ordinary path");
         ed.text = "الموضوع".into();
         ed.choose_family(pdfcraft_engine::FontFamily::Times);
         assert_eq!(ed.style().face, None, "a chosen font wins");
