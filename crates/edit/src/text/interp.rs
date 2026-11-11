@@ -31,14 +31,17 @@ impl TextState {
     pub(crate) fn draws_like(&self, other: &TextState) -> bool {
         // The operators themselves, not where in the stream they were read.
         let same = |a: &[Op], b: &[Op]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.op == b.op && a.operands == b.operands);
+        let unseen = self.font.as_ref().map_or(0.0, |(_, size)| size.abs() * 0.005);
         self.render_mode == other.render_mode
             && same(&self.stroke, &other.stroke)
             && self.line_width == other.line_width
             && self.dash == other.dash
             && self.line_cap == other.line_cap
             && same(&self.fill, &other.fill)
-            && self.char_spacing == other.char_spacing
-            && self.word_spacing == other.word_spacing
+            // Spacing within half a percent of the size can't be seen (Word gives the digits of
+            // an Arabic line a `Tc` of a few hundredths of a point).
+            && (self.char_spacing - other.char_spacing).abs() <= unseen
+            && (self.word_spacing - other.word_spacing).abs() <= unseen
             && self.scale == other.scale
             && self.rise == other.rise
     }
