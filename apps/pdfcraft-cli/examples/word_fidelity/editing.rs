@@ -47,6 +47,55 @@ pub fn faces() -> Vec<Face> {
         .collect()
 }
 
+/// The Council's usual Windows fonts and what happens to each when a paragraph is edited:
+/// embeddable (the edited text keeps the font) or not installed / refused with the reason (it
+/// changes to a stand-in). System fonts only, so it names them. Collections (`.ttc`) can't be
+/// embedded and are counted.
+pub fn font_report() -> String {
+    const KNOWN: [(&str, &[&str]); 9] = [
+        ("Arial", &["arial.ttf", "arialbd.ttf"]),
+        ("Tahoma", &["tahoma.ttf", "tahomabd.ttf"]),
+        ("Times New Roman", &["times.ttf", "timesbd.ttf"]),
+        ("Sakkal Majalla", &["majalla.ttf", "majallab.ttf"]),
+        ("Simplified Arabic", &["simpo.ttf", "simpbdo.ttf", "simpfxo.ttf"]),
+        ("Traditional Arabic", &["trado.ttf", "tradbdo.ttf"]),
+        ("Arabic Typesetting", &["arabtype.ttf"]),
+        ("Segoe UI", &["segoeui.ttf", "segoeuib.ttf"]),
+        ("Calibri", &["calibri.ttf", "calibrib.ttf"]),
+    ];
+    let dirs = pdfcraft_engine::text_fonts::installed_directories();
+    let (mut files, mut collections) = (0usize, 0usize);
+    for dir in &dirs {
+        for path in std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()) {
+            match path.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).as_deref() {
+                Some("ttf" | "otf") => files += 1,
+                Some("ttc" | "otc") => collections += 1,
+                _ => {}
+            }
+        }
+    }
+    let mut md = format!(
+        "\n### Installed fonts\n\n{files} font files, {collections} collections (not embeddable). Per face: kept when a paragraph is edited, or why it is not.\n\n"
+    );
+    for (family, names) in KNOWN {
+        let mut verdicts = Vec::new();
+        for name in names {
+            let found = dirs.iter().map(|d| d.join(name)).find(|p| p.is_file());
+            let verdict = match found.map(|p| std::fs::read(p).map_err(|e| e.to_string())) {
+                None => "not installed".to_owned(),
+                Some(Err(e)) => format!("unreadable: {e}"),
+                Some(Ok(bytes)) => match pdfcraft_engine::text_fonts::embeddable(&bytes) {
+                    Ok(()) => "kept".to_owned(),
+                    Err(why) => format!("refused: {why}"),
+                },
+            };
+            verdicts.push(format!("{name} {verdict}"));
+        }
+        md.push_str(&format!("- {family}: {}\n", verdicts.join("; ")));
+    }
+    md
+}
+
 /// One document's result.
 pub struct Outcome {
     pub name: String,

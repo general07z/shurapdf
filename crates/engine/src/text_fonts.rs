@@ -76,6 +76,12 @@ pub fn discover(roots: &[PathBuf]) -> Vec<FontFile> {
     files.sort_by(|a, b| a.face.cmp(&b.face).then(a.path.cmp(&b.path)));
     files
 }
+/// Whether a font file may be embedded when a paragraph is edited (the scan's own test), or why
+/// not.
+pub fn embeddable(bytes: &[u8]) -> Result<(), String> {
+    pdfcraft_fonts::embedding::validate_document_input(bytes)
+}
+
 /// Files and folders the scan looks at, at most.
 const MAX_ENTRIES: usize = 8192;
 

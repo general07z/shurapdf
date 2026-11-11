@@ -93,15 +93,36 @@ fn joins_arabic(bytes: &[u8]) -> bool {
     skrifa::FontRef::new(bytes).ok().and_then(|f| f.table_data(skrifa::raw::types::Tag::new(b"GSUB"))).is_some()
 }
 
+/// The keys to look a PDF font name up by in the installed fonts: the name itself, then (Word
+/// names a synthetic bold or italic `TraditionalArabic,Bold`) the name without its style or
+/// `MT` ending, which is the installed regular face.
+fn style_names(name: &str) -> impl Iterator<Item = String> {
+    let key = pdfcraft_fonts::embedding::face_key(name);
+    let mut keys = vec![key.clone()];
+    let mut base = key.as_str();
+    loop {
+        let shorter = ["bolditalic", "italic", "bold", "oblique", "regular", "mt"]
+            .iter()
+            .find_map(|suffix| base.strip_suffix(suffix).filter(|b| !b.is_empty()));
+        match shorter {
+            Some(b) => {
+                base = b;
+                keys.push(b.to_owned());
+            }
+            None => break,
+        }
+    }
+    keys.into_iter()
+}
+
 /// The installed font file of the face `name` (a PDF font name, subset tag and all), read whole,
 /// when the installed-font scan has finished and found it.
 fn installed_face(ctx: &egui::Context, name: &str) -> Option<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
-        let key = pdfcraft_fonts::embedding::face_key(name);
         let files = crate::files::installed_font_files(ctx)?;
-        let file = files.iter().find(|f| pdfcraft_fonts::embedding::face_key(&f.face) == key)?;
+        let file = style_names(name).find_map(|key| files.iter().find(|f| pdfcraft_fonts::embedding::face_key(&f.face) == key))?;
         let mut bytes = Vec::new();
         std::fs::File::open(&file.path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
         joins_arabic(&bytes).then_some(bytes)

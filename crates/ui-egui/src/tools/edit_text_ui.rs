@@ -81,6 +81,13 @@ pub struct LineEditor {
     /// horizontal scale (%), and what they were.
     pub extras: Extras,
     extras0: Extras,
+    /// The frame drawn around the open paragraph on the last frame (screen), grown with its
+    /// draft. Its border moves the paragraph and its side handles resize it, as in Acrobat.
+    frame: Option<Rect>,
+    /// The installed-font scan had finished when the paragraph's fonts were set up. Until it has,
+    /// the installed copy of a font can't draw the paragraph, and a paragraph opened first
+    /// would keep the stand-in font for good.
+    installed_fonts_ready: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,6 +142,13 @@ impl LineEditor {
         self.changes_with(&self.text)
     }
 
+    /// Whether the text has a character the paragraph did not have. A Word PDF embeds only the
+    /// glyphs it used, so a new one is not in the paragraph's own font: the installed copy of
+    /// the font draws it, and the paragraph keeps its font.
+    fn has_new_characters(&self) -> bool {
+        self.text.chars().any(|c| !c.is_whitespace() && !self.original.contains(c))
+    }
+
     /// Whether the paragraph with `text` in it differs from what was opened.
     fn changes_with(&self, text: &str) -> bool {
         text != self.original || self.look != self.look0 || self.extras != self.extras0 || self.family_chosen
@@ -172,7 +186,7 @@ impl LineEditor {
         if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default())
             && style.resource.is_none()
             && style.family.is_none()
-            && self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic)
+            && (self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
             && let Some((block, lines)) = &self.source
             && let Some(line) = block.lines.first().and_then(|i| lines.get(*i))
         {
@@ -222,6 +236,19 @@ impl LineEditor {
     }
 }
 
+/// Whether the installed-font scan has finished (always, where there is none).
+fn installed_fonts_ready(ctx: &egui::Context) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::files::installed_font_files(ctx).is_some()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        true
+    }
+}
+
 /// What a drag on a paragraph box takes hold of.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Grip {
@@ -241,12 +268,33 @@ pub struct BlockDrag {
     /// Where the drag started (screen).
     start: Pos2,
     grip: Grip,
+    /// Dragged from the frame of the paragraph open for typing: its typed text goes with it.
+    editing: bool,
 }
 
 /// How far an edge grip reaches either side of a box's edge (screen pixels).
 const EDGE_REACH: f32 = 6.0;
 /// How far outside an open paragraph's frame the pointer still means the frame (screen pixels).
 const FRAME_REACH: f32 = 4.0;
+
+/// The grips of the frame `f` of the paragraph open for typing. The editor's own text covers the
+/// inside, so the width handles stand just outside the sides and the border strip around the
+/// frame (not its inside) moves the paragraph.
+fn frame_handles(f: Rect) -> [Rect; 2] {
+    let h = (f.height() * 0.5).clamp(14.0, 28.0);
+    [f.left() - 5.0, f.right() + 5.0].map(|x| Rect::from_center_size(Pos2::new(x, f.center().y), egui::vec2(8.0, h)))
+}
+
+fn frame_grip_at(f: Rect, p: Pos2) -> Option<Grip> {
+    let [left, right] = frame_handles(f);
+    if left.expand(2.0).contains(p) {
+        Some(Grip::Left)
+    } else if right.expand(2.0).contains(p) {
+        Some(Grip::Right)
+    } else {
+        (f.expand(FRAME_REACH).contains(p) && !f.contains(p)).then_some(Grip::Move)
+    }
+}
 
 /// The rewrap handles drawn on a paragraph box's left and right edges (screen).
 fn width_handles(b: Rect) -> [Rect; 2] {
@@ -340,6 +388,8 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
         family_chosen: false,
         extras: Extras::default(),
         extras0: Extras::default(),
+        frame: None,
+        installed_fonts_ready: installed_fonts_ready(ui.ctx()),
     });
 }
 
@@ -353,6 +403,13 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
         view.block_drag = None;
         return true;
+    }
+    // A paragraph opened before the installed-font scan finished gets its fonts again now.
+    if let Some(ed) = view.line_editor.as_mut().filter(|e| e.page == page && !e.installed_fonts_ready)
+        && installed_fonts_ready(ui.ctx())
+    {
+        ed.fonts = install_source_fonts(ui.ctx(), doc, page);
+        ed.installed_fonts_ready = true;
     }
     let boxes: Vec<Rect> = lines.iter().map(|l| paragraph_box(xf, info, page, l.rect)).collect();
     // Outlines stay on their page, like its text (#3061).
@@ -387,8 +444,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         }
     };
     // A drag in progress: the box follows the pointer (or the grabbed edge does); releasing applies it.
+    // The box being dragged: the open paragraph's frame while it is typed in, else its box.
+    let dragged_box = |d: &BlockDrag| if d.editing { view.line_editor.as_ref().and_then(|e| e.frame) } else { boxes.get(d.block).copied() };
     if let Some(d) = view.block_drag.filter(|d| d.page == page)
-        && let (Some(b), Some(l)) = (boxes.get(d.block).copied(), lines.get(d.block))
+        && let (Some(b), Some(l)) = (dragged_box(&d), lines.get(d.block))
     {
         let p = ptr.pos.unwrap_or(d.start);
         let dx = p.x - d.start.x;
@@ -406,7 +465,25 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         if resp.drag_stopped() || !ptr.any_down {
             view.block_drag = None;
             let (from, to) = (user_box(xf, info, page, b), user_box(xf, info, page, preview));
-            let edit = if resizing {
+            // The open paragraph closes with its typed text, moved or resized in the same edit;
+            // one left as it was is moved like a closed one.
+            let typed = d.editing.then(|| view.line_editor.take()).flatten().filter(LineEditor::has_changes);
+            if d.editing && typed.is_none() {
+                view.line_editor = None;
+            }
+            let edit = if let Some(ed) = typed {
+                let mut style = ed.style();
+                if resizing {
+                    style.width = Some((l.rect[2] - l.rect[0]) + (to[2] - to[0]) - (from[2] - from[0]));
+                    let shift = to[0] - from[0];
+                    style.offset = (shift != 0.0).then_some([shift, 0.0]);
+                } else {
+                    style.offset = Some([to[0] - from[0], to[1] - from[1]]);
+                }
+                let (page, block, text) = (ed.page, ed.block, ed.text.clone());
+                view.applied_editor = Some(ed);
+                Edit::EditTextBlock { page, block, text, style }
+            } else if resizing {
                 // The new width in user space: the box's change, added to the paragraph's own. A
                 // moved left side (in user space; on an upside-down page that's the screen's right
                 // edge) moves the paragraph with it.
@@ -438,7 +515,18 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         && let Some(o) = ptr.origin
         && let Some((block, grip)) = grab_at(&boxes, o, upright)
     {
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip });
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: false });
+        return true;
+    }
+    // The same on the frame of the paragraph open for typing: its border moves it, its side
+    // handles resize it (the text inside is the editor's).
+    if resp.drag_started()
+        && let Some(block) = active
+        && let Some(o) = ptr.origin
+        && let Some(frame) = view.line_editor.as_ref().and_then(|e| e.frame)
+        && let Some(grip) = frame_grip_at(frame, o).filter(|g| upright || *g == Grip::Move)
+    {
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: true });
         return true;
     }
     let Some(p) = ptr.within(xf.rect) else { return false };
@@ -569,14 +657,22 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
             // can differ from the PDF's. Keep every visible row inside the growing frame.
             let live = draft_rect.map_or(visible, |bounds| bounds.union(visible));
             ui.painter().rect_stroke(live.expand(2.0), CornerRadius::ZERO, Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
+            // Handles outside the sides resize the paragraph (an upright page only).
+            let frame = live.expand(2.0);
+            ed.frame = Some(frame);
+            let upright = has_edges(info, ed.page);
+            if upright {
+                for h in frame_handles(frame) {
+                    ui.painter().rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, ACCENT), egui::StrokeKind::Middle);
+                }
+            }
             // On the frame, a press takes hold of the box (a click selects it, a drag moves it):
             // the pointer says so there, and reads as text inside.
             if let Some(p) = ui.input(|i| i.pointer.hover_pos())
                 && ui.clip_rect().contains(p)
-                && live.expand(2.0 + FRAME_REACH).contains(p)
-                && !live.expand(2.0).contains(p)
+                && let Some(grip) = frame_grip_at(frame, p).filter(|g| upright || *g == Grip::Move)
             {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                ui.ctx().set_cursor_icon(if grip == Grip::Move { egui::CursorIcon::Move } else { egui::CursorIcon::ResizeHorizontal });
             }
             // White, unless the text is too pale to read on white (white text from a coloured
             // banner, #913): then a dark box, with a caret that shows on it.
@@ -722,6 +818,8 @@ mod tests {
         let doc = app.session.get(app.views[0].id).unwrap();
         let block = doc.text_blocks(0).remove(0);
         let ed = LineEditor {
+            frame: None,
+            installed_fonts_ready: true,
             selection: None,
             font_resource: None,
             page: 0,

@@ -306,6 +306,7 @@ fn main() {
     if !edited.is_empty() {
         md.push_str(&editing::table(&edited, &faces, |name| !name.starts_with("private-")));
     }
+    md.push_str(&editing::font_report());
     print!("{md}");
     if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
         eprintln!("summary.md: {e}");

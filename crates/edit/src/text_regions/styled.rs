@@ -380,20 +380,30 @@ fn one_look_one_source(mut row: Vec<StyledChar>, lines: &[TextLine]) -> Vec<Styl
     if !pdfcraft_fonts::source_shaping::required(&text) {
         return row;
     }
-    let alike = row.iter().all(|(_, line, font)| {
+    // A complete face an earlier edit embedded encodes only the letters it drew then: a new
+    // letter is resolved to a fresh copy of the same face (another resource). Both are the one
+    // face, and the row shapes in it as one, or a word would break between them.
+    let one_face = |font: &String, line: &TextLine| {
         *font == first_font
-            && lines.get(*line).is_some_and(|l| {
-                (l.size - first.size).abs() < 0.01
-                    && l.color == first.color
-                    && l.bold == first.bold
-                    && l.italic == first.italic
-                    && l.paint == first.paint
-                    && l.origin.state.draws_like(&first.origin.state)
-            })
+            || (font.starts_with("PCFull")
+                && first_font.starts_with("PCFull")
+                && pdfcraft_fonts::embedding::face_key(&line.base_font) == pdfcraft_fonts::embedding::face_key(&first.base_font))
+    };
+    let alike = row.iter().all(|(_, line, font)| {
+        lines.get(*line).is_some_and(|l| {
+            one_face(font, l)
+                && (l.size - first.size).abs() < 0.01
+                && l.color == first.color
+                && l.bold == first.bold
+                && l.italic == first.italic
+                && l.paint == first.paint
+                && l.origin.state.draws_like(&first.origin.state)
+        })
     });
     if alike {
         for c in &mut row {
             c.1 = first_line;
+            c.2 = first_font.clone();
         }
     }
     row

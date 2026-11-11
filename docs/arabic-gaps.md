@@ -1,6 +1,6 @@
 # Arabic PDF tool: gap tracker
 
-> **Status:** live · **Last updated:** 2026-11-11 (W6: Arabic editing matrix, mixed bold lines, justification; earlier: editing Arabic in Word-made PDFs; earlier: W3–W5, W7, W8 done; W2 synthetic part; Arabic form fields and Fill & Sign) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
+> **Status:** live · **Last updated:** 2026-11-11 (W6: move/resize while editing, font kept on later edits; W6: Arabic editing matrix, mixed bold lines, justification; earlier: editing Arabic in Word-made PDFs; earlier: W3–W5, W7, W8 done; W2 synthetic part; Arabic form fields and Fill & Sign) · **Baseline:** storytold/pdfcraft@f76dbb9 (2026-10-30) · **Source of truth for features:** `parity/acrobat-features.toml`
 > Commit this file as `docs/arabic-gaps.md` in your fork. Update a row whenever its parity entry changes.
 
 ## Goals vs. what PdfCraft already has
@@ -28,6 +28,7 @@
 | **Typing** right-to-left inside the text box (caret moves RTL) | ✅ right-aligned box in the Arabic interface, caret moves on screen, Backspace one letter (kittest) | `misc.rtl-ui` |
 | Bold/italic for added Arabic text | ✅ synthetic bold (fill + stroke) and italic (slant), as Word draws a one-weight face | `edit.add-text` |
 | **Edit existing** Arabic text in a PDF (retype a paragraph) | ✅ shaped: the paragraph is redrawn as added text in its box (Noto Sans Arabic, right-aligned, /ActualText); turned and OCR paragraphs not yet | `edit.rtl-cjk-editing` |
+| Move and resize an open paragraph, as in Acrobat; keep the font on a second edit | ✅ the frame of the paragraph open for typing moves it (border) and resizes it (side handles) with its typed text; a paragraph already in an embedded full face is rewritten in it (it fell to Noto Sans Arabic before); a word typed after it stays in one piece; the installed-font scan finishing after the paragraph opened no longer leaves the stand-in font (kittest, edit tests) | `edit.rtl-cjk-editing` |
 | Arabic caret and selection while editing | ❌ | `edit.rtl-cjk-editing` |
 | Arabic fallback font when the PDF's font lacks a letter | ✅ the craft-fonts Arabic face for the whole retyped paragraph (the document's own font is not kept) | `edit.rtl-cjk-editing` |
 | Fully mirrored RTL interface, qualified with real IME input | 🟡 menus, panes, rail, tool strip and tool rows mirrored; tab strip, some dialogs and real IME not yet | `misc.rtl-ui` |

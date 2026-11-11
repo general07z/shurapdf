@@ -296,6 +296,10 @@ Run workflow**. It never runs on pull requests.
   saved, reopened and checked: it reads as typed, the other paragraphs are unchanged, search finds
   it and the page renders (table **Arabic text editing**). Real PDFs are `private-pdf-1`…, counts
   only. The run fails if an edit fails.
+- The run also lists the Council's usual Windows fonts (Arial, Sakkal Majalla, Simplified Arabic…)
+  and, for each, whether a paragraph edited in it keeps it, or why not (table **Installed
+  fonts**): a font whose maker forbids embedding, or that is not installed, is drawn in a
+  stand-in.
 
 ### How "Convert Word documents with" behaves
 
