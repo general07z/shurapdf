@@ -20,8 +20,13 @@
 //!
 //! On Windows (not in the self-check), it first checks the connection to Microsoft Word in the
 //! situations users meet ([`checks`]), and exits 1 if one fails.
+//!
+//! Last, it edits the Arabic text of every PDF it has (Word's PDF of each document, and the PDFs
+//! in `--private DIR`) the ways people do, and checks each result after save and reopen
+//! ([`editing`]). Real documents are again reported as counts only.
 
 mod checks;
+mod editing;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -178,12 +183,21 @@ struct Row {
     builtin_pages: usize,
     scores: Vec<f64>,
     error: Option<String>,
+    /// The reference engine's PDF, for the editing checks.
+    word: Option<Vec<u8>>,
+}
+
+impl Row {
+    fn failed(name: String, error: String) -> Self {
+        Row { name, word_pages: 0, builtin_pages: 0, scores: Vec::new(), error: Some(error), word: None }
+    }
 }
 
 fn compare(name: &str, bytes: &[u8], out: Option<&Path>) -> Row {
-    let mut row = Row { name: name.to_owned(), word_pages: 0, builtin_pages: 0, scores: Vec::new(), error: None };
+    let mut row = Row { name: name.to_owned(), word_pages: 0, builtin_pages: 0, scores: Vec::new(), error: None, word: None };
     let result = (|| -> Result<(), String> {
         let word = convert(bytes, reference()).map_err(|e| format!("Microsoft Word: {e}"))?;
+        row.word = Some(word.clone());
         let builtin = convert(bytes, WordEngine::BuiltIn).map_err(|e| format!("built-in engine: {e}"))?;
         let (wp, bp) = (render(&word)?, render(&builtin)?);
         row.word_pages = wp.len();
@@ -221,6 +235,7 @@ fn main() {
     }
     let self_check = reference() == WordEngine::BuiltIn;
     let connection = if cfg!(windows) && !self_check { checks::run(&out) } else { Vec::new() };
+    let mut private_pdfs: Vec<PathBuf> = Vec::new();
     let mut rows: Vec<Row> =
         pdfcraft_word_import::testkit::fidelity_corpus().into_iter().map(|(name, bytes)| compare(name, &bytes, Some(&out.join(name)))).collect();
     if let Some(dir) = private.filter(|d| d.is_dir()) {
@@ -233,13 +248,34 @@ fn main() {
             })
             .unwrap_or_default();
         files.sort();
+        private_pdfs = std::fs::read_dir(&dir)
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("pdf"))).collect())
+            .unwrap_or_default();
+        private_pdfs.sort();
         for (i, path) in files.iter().enumerate() {
             // Scores only, under a number: nothing of a real document leaves the machine.
             let name = format!("private-{}", i + 1);
             match std::fs::read(path) {
                 Ok(bytes) => rows.push(compare(&name, &bytes, None)),
-                Err(e) => rows.push(Row { name, word_pages: 0, builtin_pages: 0, scores: Vec::new(), error: Some(e.kind().to_string()) }),
+                Err(e) => rows.push(Row::failed(name, e.kind().to_string())),
             }
+        }
+    }
+    // The editing checks: Word's PDF of every document, then the real PDFs kept on the machine.
+    let faces = editing::faces();
+    let work = out.join("editing-work");
+    let mut edited: Vec<editing::Outcome> = rows
+        .iter()
+        .filter_map(|r| {
+            let keep = out.join(&r.name);
+            Some(editing::run(&r.name, r.word.as_deref()?, &work, &faces, keep.is_dir().then_some(keep.as_path())))
+        })
+        .collect();
+    for (i, path) in private_pdfs.iter().enumerate() {
+        let name = format!("private-pdf-{}", i + 1);
+        match std::fs::read(path) {
+            Ok(bytes) => edited.push(editing::run(&name, &bytes, &work, &faces, None)),
+            Err(e) => edited.push(editing::Outcome { name, edits: 0, failures: Vec::new(), error: Some(e.kind().to_string()) }),
         }
     }
     let mut md = String::from("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
@@ -267,6 +303,9 @@ fn main() {
     if !connection.is_empty() {
         md.push_str(&checks::table(&connection));
     }
+    if !edited.is_empty() {
+        md.push_str(&editing::table(&edited, &faces, |name| !name.starts_with("private-")));
+    }
     print!("{md}");
     if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
         eprintln!("summary.md: {e}");
@@ -281,6 +320,10 @@ fn main() {
     }
     if connection.iter().any(|c| !c.passed) {
         eprintln!("A Word connection check failed: see the table above");
+        std::process::exit(1);
+    }
+    if edited.iter().any(|o| o.error.is_some() || !o.failures.is_empty()) {
+        eprintln!("An Arabic editing check failed: see the table above");
         std::process::exit(1);
     }
     if word_failed {
