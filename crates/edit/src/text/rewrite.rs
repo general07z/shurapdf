@@ -780,7 +780,8 @@ pub(crate) fn rewrite_block_from(
     let first = members.first().copied().ok_or_else(|| EditError::Invalid("the paragraph has no source runs".into()))?;
     members.iter().try_for_each(|line| line.ensure_editable())?;
     let p = page_dict(doc, page)?;
-    if let Some(shaped) = ShapedRewrite::wanted(&b, first, members.len() == 1, p.crop(doc), text, style)? {
+    // One row, however many runs draw it (Word draws a line as several): it grows, never wraps.
+    if let Some(shaped) = ShapedRewrite::wanted(&b, first, b.rows.len() == 1, p.crop(doc), text, style)? {
         return shaped.apply(doc, page, &members, &dropped);
     }
     let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();

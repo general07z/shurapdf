@@ -23,6 +23,17 @@ pub fn required(text: &str) -> bool {
 }
 
 pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {
+    shape_in(bytes, text, None)
+}
+
+/// [`shape`] for a piece of a longer line: `rtl` is the one direction the piece runs in (its bidi
+/// level in the line, which the caller resolved), so it is shaped as a single run: brackets are
+/// mirrored in a right-to-left piece, and digits are not reordered again.
+pub fn shape_piece(bytes: &[u8], text: &str, rtl: bool) -> Result<ShapedRun, String> {
+    shape_in(bytes, text, Some(rtl))
+}
+
+fn shape_in(bytes: &[u8], text: &str, piece: Option<bool>) -> Result<ShapedRun, String> {
     if text.len() > 262_144 || text.contains(['\n', '\r']) {
         return Err("shape one bounded text row at a time".into());
     }
@@ -39,11 +50,13 @@ pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {
     let base = if unicode_bidi::get_base_direction(text) == unicode_bidi::Direction::Rtl { Level::rtl() } else { Level::ltr() };
     let bidi = ParagraphBidiInfo::new(text, Some(base));
     let (levels, runs) = bidi.visual_runs(0..text.len());
+    // A piece is one run in the direction given.
+    let runs = if piece.is_some() { vec![std::ops::Range { start: 0, end: text.len() }] } else { runs };
     let mut glyphs = Vec::new();
     let mut x = 0.0;
     for run in runs {
         let Some(input) = text.get(run.clone()) else { continue };
-        let rtl = levels.get(run.start).is_some_and(Level::is_rtl);
+        let rtl = piece.unwrap_or_else(|| levels.get(run.start).is_some_and(Level::is_rtl));
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(input);
         buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);

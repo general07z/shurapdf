@@ -4903,6 +4903,84 @@ fn a_face_that_cannot_draw_the_paragraph_falls_back_rather_than_fails() {
     assert_eq!(texts.join(" "), "سم نا مس");
 }
 
+/// Found by the Arabic editing matrix on a Council letter: a date line Word drew as four runs wrapped
+/// onto a second line when a word was added. One row, however many runs draw it, grows leftwards.
+#[test]
+fn a_single_row_of_many_runs_grows_instead_of_wrapping() {
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping: built without a craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let mut doc = word_arabic_page(
+        "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET BT /F1 12 Tf 485 700 Td (DE) Tj ET \
+         BT /F1 12 Tf 482 700 Td ( ) Tj ET BT /F1 12 Tf 470 700 Td (12) Tj ET",
+    );
+    text::rewrite_block(&mut doc, 0, 0, Some("سم نا 12 سم نا سم نا"), &text::BlockStyle::default()).unwrap();
+    let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+    let baselines: std::collections::BTreeSet<i64> = lines.iter().map(|l| l.baseline()[1].round() as i64).collect();
+    assert_eq!(baselines.len(), 1, "one row: {:?}", lines.iter().map(|l| (&l.text, l.rect)).collect::<Vec<_>>());
+    let right = lines.iter().map(|l| l.rect[2]).fold(f64::MIN, f64::max);
+    assert!((right - 512.0).abs() < 1.5, "keeps its right edge: {right}");
+}
+
+/// Found by the matrix: "عدد (2) من الشاشات" (bold inside a regular line, as Word draws bold for a
+/// face with one weight: filled and stroked) couldn't be edited in a full face. Each piece is shaped
+/// in its own direction and drawn in its own style where the line's direction puts it; the pieces
+/// are written in reading order, so the line reads back as typed, and the bold stays bold.
+#[test]
+fn a_row_mixing_bold_and_regular_arabic_is_edited_in_its_face() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // سم (regular) · نا 12 (outlined: bold) · مس (regular), right to left.
+    let mut doc = word_arabic_page(
+        "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET \
+         q BT /F1 12 Tf 485 700 Td 2 Tr 0.3 w (DE) Tj ET Q q BT /F1 12 Tf 482 700 Td 2 Tr 0.3 w ( ) Tj ET Q \
+         q BT /F1 12 Tf 470 700 Td 2 Tr 0.3 w (12) Tj ET Q \
+         BT /F1 12 Tf 467 700 Td ( ) Tj ET BT /F1 12 Tf 455 700 Td (AB) Tj ET",
+    );
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, "سم نا 12 مس");
+    let typed = "سم نا 12 مس سم";
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(typed), &style).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text, typed);
+    assert!(list_added(&doc).is_empty(), "rewritten in its face, not redrawn in the fallback");
+    let lines = text::text_lines(&doc, 0).unwrap();
+    // Bold stays bold and regular regular: the outlined run's rendering mode is restated for its
+    // piece only (the two regular pieces around it don't have it).
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    let rewritten = content.rsplit("1 0 0 1 0 0 cm").next().unwrap_or_default();
+    let (bold, pieces) = (rewritten.matches("2 Tr").count(), rewritten.matches("BT").count());
+    assert!(bold >= 1 && bold < pieces, "{bold} of {pieces} pieces outlined: {rewritten}");
+    // The number sits between the words as it reads: left of نا, right of مس.
+    let x = |word: &str| lines.iter().find(|l| l.text.contains(word)).map_or(f64::NAN, |l| l.rect[0]);
+    assert!(x("مس") < x("12") && x("12") < x("نا"), "{:?}", lines.iter().map(|l| (&l.text, l.rect[0])).collect::<Vec<_>>());
+}
+
+/// Found by the matrix: a justified paragraph (Word stretches the gaps so each line but the last
+/// fills the width) came back ragged when one line was edited. A row that filled the width fills
+/// it again.
+#[test]
+fn a_justified_arabic_row_fills_its_width_again() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // Row 1 is justified as Word does it, a widened gap before each space, and fills 446–512;
+    // row 2 is the paragraph's short last row, at the same right edge.
+    let mut doc = word_arabic_page("BT /F1 12 Tf 446 700 Td [(BA) -1000 ( DE) -1000 ( BA)] TJ ET BT /F1 12 Tf 485 680 Td (BA DE) Tj ET");
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    assert_eq!(block.rows.len(), 2);
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&format!("{} مس", block.editor_text)), &style).unwrap();
+    let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+    let first: Vec<_> = lines.iter().filter(|l| (l.baseline()[1] - lines[0].baseline()[1]).abs() < 1.0).collect();
+    let (left, right) = (first.iter().map(|l| l.rect[0]).fold(f64::MAX, f64::min), first.iter().map(|l| l.rect[2]).fold(f64::MIN, f64::max));
+    assert!((left - 446.0).abs() < 1.0 && (right - 512.0).abs() < 1.0, "the first row fills 446–512 again: {left}–{right}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
