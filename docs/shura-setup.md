@@ -289,6 +289,13 @@ Run workflow**. It never runs on pull requests.
   wrong and with an Arabic password, a damaged file (fails within 90 seconds), three conversions
   at once, the user's own Word staying open, and no hidden
   Word left running afterwards. The run fails if one does.
+- Last, the run edits the Arabic text of Word's PDF of each test document, and of every `.pdf` in
+  `C:\shura-fidelity\docs`, the ways people edit (a word at either end, digits and brackets,
+  Arabic-Indic digits, English words, a deleted word, punctuation), each with the paragraph's own
+  font and in the installed Arabic fonts (Arial, Sakkal Majalla, Simplified Arabic…). Each result is
+  saved, reopened and checked: it reads as typed, the other paragraphs are unchanged, search finds
+  it and the page renders (table **Arabic text editing**). Real PDFs are `private-pdf-1`…, counts
+  only. The run fails if an edit fails.
 
 ### How "Convert Word documents with" behaves
 
