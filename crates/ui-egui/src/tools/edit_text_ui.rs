@@ -88,6 +88,10 @@ pub struct LineEditor {
     /// the installed copy of a font can't draw the paragraph, and a paragraph opened first
     /// would keep the stand-in font for good.
     installed_fonts_ready: bool,
+    /// The box dragged wider or narrower while the paragraph is open (user-space points): its
+    /// change of width and the shift of its left edge. The typing box follows, and Apply
+    /// rewraps the paragraph at the new width.
+    box_change: [f64; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -157,7 +161,7 @@ impl LineEditor {
 
     /// Whether the paragraph with `text` in it differs from what was opened.
     fn changes_with(&self, text: &str) -> bool {
-        text != self.original || self.look != self.look0 || self.extras != self.extras0 || self.family_chosen
+        text != self.original || self.look != self.look0 || self.extras != self.extras0 || self.family_chosen || self.box_change != [0.0, 0.0]
     }
 
     /// Extra width permitted by the editor. Source containers now remain fixed.
@@ -190,6 +194,8 @@ impl LineEditor {
                 .then_some(self.extras.line_spacing),
             char_spacing: (self.extras.char_spacing != self.extras0.char_spacing).then_some(self.extras.char_spacing),
             scale: (self.extras.scale != self.extras0.scale).then_some(self.extras.scale),
+            width: (self.box_change[0] != 0.0).then(|| f64::from((self.source_rect[2] - self.source_rect[0]).abs()) + self.box_change[0]),
+            offset: (self.box_change[1] != 0.0).then_some([self.box_change[1], 0.0]),
             ..Default::default()
         };
         // Retyped Arabic in a font Word subset without its joining rules: draw it with the
@@ -232,6 +238,7 @@ impl LineEditor {
         self.family_chosen = false;
         self.look0 = self.look.clone();
         self.extras0 = self.extras;
+        self.box_change = [0.0, 0.0];
         self.original = self.text.clone();
         self.focus = true;
     }
@@ -409,6 +416,7 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
         extras0: Extras::default(),
         frame: None,
         installed_fonts_ready: installed_fonts_ready(ui.ctx()),
+        box_change: [0.0, 0.0],
     });
 }
 
@@ -486,6 +494,17 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             let (from, to) = (user_box(xf, info, page, b), user_box(xf, info, page, preview));
             // The open paragraph closes with its typed text, moved or resized in the same edit;
             // one left as it was is moved like a closed one.
+            // Resizing it only changes the typing box (upright pages): the paragraph is rewrapped
+            // when the edit is applied.
+            if d.editing
+                && resizing
+                && info.pages.get(page).is_some_and(|p| p.rotation == 0)
+                && let Some(ed) = view.line_editor.as_mut()
+            {
+                ed.box_change[0] += (to[2] - to[0]) - (from[2] - from[0]);
+                ed.box_change[1] += to[0] - from[0];
+                return true;
+            }
             let typed = d.editing.then(|| view.line_editor.take()).flatten().filter(LineEditor::has_changes);
             if d.editing && typed.is_none() {
                 view.line_editor = None;
@@ -630,8 +649,13 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
         return None;
     }
     ed.rect = xf.user_rect(info, ed.page, ed.source_rect);
-    ed.max_width = ed.rect.width();
     let scale = (ed.rect.width() / (ed.source_rect[2] - ed.source_rect[0]).abs().max(0.01)).max(0.01);
+    // The box dragged wider or narrower: the typing box follows it.
+    if ed.box_change != [0.0, 0.0] {
+        let (wider, shift) = (ed.box_change[0] as f32 * scale, ed.box_change[1] as f32 * scale);
+        ed.rect = Rect::from_min_size(ed.rect.min + egui::vec2(shift, 0.0), egui::vec2((ed.rect.width() + wider).max(12.0), ed.rect.height()));
+    }
+    ed.max_width = ed.rect.width();
     ed.size = (ed.look.size as f32 * scale).clamp(1.0, 300.0);
     // egui draws the caret at least one row of this font tall. Each row already has its source
     // row's height, so the font stays below every row (half the region's smallest size): on a
@@ -839,6 +863,7 @@ mod tests {
         let ed = LineEditor {
             frame: None,
             installed_fonts_ready: true,
+            box_change: [0.0, 0.0],
             selection: None,
             font_resource: None,
             page: 0,
