@@ -4177,6 +4177,44 @@ fn selected_text_formatting_keeps_the_rest_of_the_paragraph_and_reopens() {
     assert_eq!(reopen.get(rid).unwrap().text_lines(0), lines);
 }
 
+#[test]
+fn pressing_bold_again_toggles_only_the_selected_words() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    h.drag_at(at);
+    h.run_steps(1);
+    h.drop_at(at);
+    h.run_steps(4);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::ArrowRight);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowLeft);
+    h.run_steps(2);
+    let fonts = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_lines(0).iter().map(|l| (l.text.trim_end().to_owned(), l.base_font.clone())).collect::<Vec<_>>()
+    };
+    let bold = |fonts: &[(String, String)], text: &str| fonts.iter().any(|(t, f)| t == text && f == "Helvetica-Bold");
+    // First press: only the selected "1" is bold.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    assert!(bold(&fonts(&h), "1") && !bold(&fonts(&h), "Page"), "{:?}", fonts(&h));
+    // Second press: the same "1" goes back to regular, and nothing else changes.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    let second = fonts(&h);
+    assert!(!bold(&second, "1") && !bold(&second, "Page"), "{second:?}");
+    // Third: bold again.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    let third = fonts(&h);
+    assert!(bold(&third, "1") && !bold(&third, "Page"), "{third:?}");
+}
+
 /// Drag with the pointer from `from` to `to` in a few steps.
 fn drag(h: &mut Harness<'static, PdfCraftApp>, from: egui::Pos2, to: egui::Pos2) {
     h.hover_at(from);

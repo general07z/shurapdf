@@ -146,6 +146,21 @@ impl LineEditor {
         self.changes_with(&self.text)
     }
 
+    /// Whether every run under `range` of the text is bold (`None` before the source is known).
+    fn selection_is_bold(&self, range: &std::ops::Range<usize>) -> Option<bool> {
+        let (block, lines) = self.source.as_ref()?;
+        let mut any = false;
+        for (span, index) in block.edited_spans(&self.text) {
+            if span.start < range.end && range.start < span.end {
+                any = true;
+                if !lines.get(index).is_some_and(|l| l.bold) {
+                    return Some(false);
+                }
+            }
+        }
+        any.then_some(true)
+    }
+
     /// The font resource of the paragraph's first run.
     fn source_font(&self) -> Option<String> {
         let (block, lines) = self.source.as_ref()?;
@@ -233,7 +248,8 @@ impl LineEditor {
 
     /// After applying formatting: the paragraph now has it.
     pub fn applied(&mut self) {
-        self.selection = None;
+        // The selection stays: the applied style didn't move the text, and the next press of Bold
+        // or Italic is for the same words.
         self.font_resource = None;
         self.family_chosen = false;
         self.look0 = self.look.clone();
@@ -810,7 +826,21 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
                 if let Some(cursor) = output.cursor_range {
                     let selected = cursor.as_sorted_char_range();
                     let byte = |index| ed.text.char_indices().nth(index).map_or(ed.text.len(), |(at, _)| at);
+                    let before = ed.selection.clone();
                     ed.selection = (!selected.is_empty()).then(|| byte(selected.start.into())..byte(selected.end.into()));
+                    // The Bold button shows the new selection's own weight (not the paragraph's), so
+                    // pressing it again takes bold off that selection and nothing else.
+                    if ed.selection != before {
+                        let bold = match ed.selection.clone() {
+                            Some(range) => ed.selection_is_bold(&range),
+                            // No selection: the paragraph's own weight again.
+                            None => ed.source.as_ref().map(|(block, _)| block.bold),
+                        };
+                        if let Some(bold) = bold {
+                            ed.look.bold = bold;
+                            ed.look0.bold = bold;
+                        }
+                    }
                 }
                 let r = output.response;
                 if r.changed() {
@@ -1004,6 +1034,23 @@ mod tests {
         assert_eq!(target.kind, ObjectKind::Added, "{target:?}");
         let moved = app.session.apply(id, pdfcraft_engine::Edit::MoveObjects { page: 0, objects: vec![target], offset: [10.0, -5.0] });
         assert!(moved.is_ok(), "{moved:?}");
+    }
+
+    /// Pressing Bold on selected words and again: the selection survives the first apply, so the
+    /// second press is for the same words (it used to lose them and restyle the whole paragraph).
+    #[test]
+    fn the_selection_survives_an_applied_style_and_shows_its_own_weight() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        ed.source = Some((block, lines));
+        ed.selection = Some(0..4);
+        ed.look.bold = true;
+        ed.applied();
+        assert_eq!(ed.selection, Some(0..4), "kept for the next press");
+        assert!(ed.look0.bold, "what was applied is the new baseline");
+        // The source has no bold run: the selection's own weight is regular.
+        assert_eq!(ed.selection_is_bold(&(0..4)), Some(false));
     }
 
     #[test]
