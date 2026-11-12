@@ -101,21 +101,26 @@ fn joins_arabic(bytes: &[u8]) -> bool {
 /// `MT` ending, which is the installed regular face.
 fn style_names(name: &str) -> impl Iterator<Item = String> {
     let key = pdfcraft_fonts::embedding::face_key(name);
+    let base = family_key(name);
     let mut keys = vec![key.clone()];
-    let mut base = key.as_str();
-    loop {
-        let shorter = ["bolditalic", "italic", "bold", "oblique", "regular", "mt"]
-            .iter()
-            .find_map(|suffix| base.strip_suffix(suffix).filter(|b| !b.is_empty()));
-        match shorter {
-            Some(b) => {
-                base = b;
-                keys.push(b.to_owned());
-            }
-            None => break,
-        }
+    // `Tajawal` is `Tajawal-Regular` installed.
+    keys.push(format!("{key}regular"));
+    if base != key {
+        keys.push(base);
     }
     keys.into_iter()
+}
+
+/// The font name's key without any style or `MT` ending: `Arial-BoldMT` → `arial`.
+fn family_key(name: &str) -> String {
+    let key = pdfcraft_fonts::embedding::face_key(name);
+    let mut base = key.as_str();
+    while let Some(shorter) =
+        ["bolditalic", "italic", "bold", "oblique", "regular", "mt"].iter().find_map(|suffix| base.strip_suffix(suffix).filter(|b| !b.is_empty()))
+    {
+        base = shorter;
+    }
+    base.to_owned()
 }
 
 /// The installed bold face of the font `name` (`ArialMT` → `Arial-BoldMT`, `Tajawal-Regular` →
@@ -124,10 +129,24 @@ fn style_names(name: &str) -> impl Iterator<Item = String> {
 fn installed_bold_face(ctx: &egui::Context, name: &str) -> Option<Vec<u8>> {
     use std::io::Read;
     let files = crate::files::installed_font_files(ctx)?;
+    let key = |f: &pdfcraft_engine::text_fonts::FontFile| pdfcraft_fonts::embedding::face_key(&f.face);
     // The family part of the name, without a style or `MT` ending.
-    let base = style_names(name).last()?;
-    let wanted = [format!("{base}bold"), format!("{base}boldmt"), format!("{base}bd")];
-    let file = files.iter().find(|f| wanted.contains(&pdfcraft_fonts::embedding::face_key(&f.face)))?;
+    let base = family_key(name);
+    let exact = [format!("{base}bold"), format!("{base}boldmt"), format!("{base}bd")];
+    let regular = style_names(name).find_map(|k| files.iter().find(|f| key(f) == k));
+    // The file named for it, else the family's plain Bold (not Semi/Extra/Black, Italic, …).
+    let plain_bold = |f: &&pdfcraft_engine::text_fonts::FontFile| {
+        let k = key(f);
+        k.contains("bold")
+            && !["semi", "demi", "extra", "ultra", "black", "heavy", "italic", "oblique", "light", "condensed", "narrow"]
+                .iter()
+                .any(|w| k.contains(w))
+    };
+    let file = files
+        .iter()
+        .find(|f| exact.contains(&key(f)))
+        .or_else(|| regular.and_then(|r| files.iter().filter(|f| f.family == r.family).find(plain_bold)))
+        .or_else(|| files.iter().filter(|f| key(f).starts_with(&base)).find(plain_bold))?;
     let mut bytes = Vec::new();
     std::fs::File::open(&file.path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
     pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok().then_some(bytes)
@@ -426,5 +445,22 @@ mod tests {
         subset[gsub..gsub + 4].copy_from_slice(b"XSUB");
         assert!(!joins_arabic(&subset));
         assert!(!joins_arabic(b"not a font"));
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn a_pdf_font_name_finds_its_installed_family_and_styles() {
+        assert_eq!(family_key("ABCDEF+Arial-BoldMT"), "arial");
+        assert_eq!(family_key("Tajawal-Regular"), "tajawal");
+        assert_eq!(family_key("TraditionalArabic,Bold"), "traditionalarabic");
+        assert_eq!(family_key("Bold"), "bold", "a name that is only a style is kept");
+        let keys: Vec<String> = style_names("ArialMT").collect();
+        assert_eq!(keys, ["arialmt", "arialmtregular", "arial"]);
+        // Word's `Tajawal` (no style) is the installed `Tajawal-Regular`.
+        assert!(style_names("Tajawal").any(|k| k == "tajawalregular"));
     }
 }

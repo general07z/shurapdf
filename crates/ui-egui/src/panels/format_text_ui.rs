@@ -102,29 +102,27 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, look: &mut AddedText, extras:
             if fonts.sources.is_some() && ui.selectable_label(false, tl!("Load font…")).clicked() {
                 out.font = Some(FontChoice::Load);
             }
-            // Installed fonts, for existing text and for added text alike.
-            {
-                #[cfg(not(target_arch = "wasm32"))]
-                ui.menu_button(tl!("Installed fonts…"), |ui| match crate::files::installed_font_files(ui.ctx()) {
-                    Some(list) if list.is_empty() => {
-                        ui.label(tl!("No installed fonts can be embedded. Load a font file."));
-                    }
-                    Some(list) => {
-                        // Hundreds of fonts: scroll inside the window rather than run off it.
-                        let height = (ui.ctx().content_rect().height() - 80.0).max(160.0);
-                        egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-                            for font in list {
-                                if ui.button(&font.face).clicked() {
-                                    out.font = Some(FontChoice::Installed(font.path));
-                                    ui.close();
-                                }
+            // Every installed font in this one list, for existing text and added text alike.
+            #[cfg(not(target_arch = "wasm32"))]
+            match crate::files::installed_font_files(ui.ctx()) {
+                Some(list) if list.is_empty() => {
+                    ui.label(tl!("No installed fonts can be embedded. Load a font file."));
+                }
+                Some(list) => {
+                    ui.separator();
+                    // Hundreds of fonts: scroll inside the window rather than run off it.
+                    let height = (ui.ctx().content_rect().height() - 160.0).max(160.0);
+                    egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+                        for font in list {
+                            if ui.selectable_label(false, &font.face).clicked() {
+                                out.font = Some(FontChoice::Installed(font.path));
                             }
-                        });
-                    }
-                    None => {
-                        ui.label(tl!("Finding document fonts…"));
-                    }
-                });
+                        }
+                    });
+                }
+                None => {
+                    ui.label(tl!("Finding document fonts…"));
+                }
             }
         })
         .response

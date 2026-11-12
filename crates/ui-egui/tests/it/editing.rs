@@ -4276,10 +4276,27 @@ fn the_side_handle_of_a_paragraph_open_for_typing_resizes_it() {
     // The handle stands outside the frame's right side; drag it narrower so the text rewraps.
     let handle = screen(right, cy) + egui::vec2(2.0 + 5.0 + 2.0, 0.0);
     drag(&mut h, handle, handle - egui::vec2((before.rect[2] - before.rect[0] - 40.0) as f32 * k, 0.0));
-    let s = h.state();
-    let doc = s.session.get(s.views[0].id).unwrap();
-    assert_eq!(doc.can_undo(), Some("Edit text"), "the handle rewrapped the paragraph");
+    // The paragraph stays open: its typing box follows the handle, and Apply rewraps it.
+    assert!(h.state().views[0].line_editor.is_some(), "still open for typing");
+    assert!(h.state().session.get(h.state().views[0].id).unwrap().can_undo().is_none(), "nothing applied yet");
+    let id = h.state().views[0].id;
+    let edit = pdfcraft_engine::Edit::EditTextBlock {
+        page: 0,
+        block: 0,
+        text: "Page 1".into(),
+        style: h.state().views[0].line_editor.as_ref().unwrap().style(),
+    };
+    assert!(edit_width(&edit) < before.rect[2] - before.rect[0], "Apply uses the narrower width");
+    h.state_mut().session.apply(id, edit).unwrap();
+    let doc = h.state().session.get(id).unwrap();
     assert!(doc.text_lines(0).len() > 1, "narrower: two lines");
+}
+
+fn edit_width(edit: &pdfcraft_engine::Edit) -> f64 {
+    match edit {
+        pdfcraft_engine::Edit::EditTextBlock { style, .. } => style.width.unwrap_or(f64::INFINITY),
+        _ => f64::INFINITY,
+    }
 }
 
 /// Press and release at `at` without moving.
