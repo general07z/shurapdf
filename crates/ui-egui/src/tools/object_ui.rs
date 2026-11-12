@@ -303,6 +303,11 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
             return true;
         }
     }
+    // A width handle of the paragraph open for typing resizes it (`edit_text_ui`), not an area
+    // selection or a move.
+    if crate::edit_text_ui::grabs_open_handle(view, page, p) {
+        return false;
+    }
     // The frame of the paragraph open for typing takes hold of the box, as in Acrobat: a click
     // selects it (for the arrow keys), a drag moves it. Its text keeps the caret.
     if let Some(block) = view.line_editor.as_ref().filter(|e| e.page == page && !e.has_changes()).map(|e| e.block)
