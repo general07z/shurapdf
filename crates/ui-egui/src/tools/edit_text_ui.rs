@@ -253,6 +253,34 @@ impl LineEditor {
     }
 }
 
+/// What moves paragraph `block` (box `rect`, user space): its text object, or, for a paragraph an
+/// edit redrew as added text (shaped Arabic), that added item. The object lists number them
+/// apart, so the paragraph's number alone names the wrong object (or none) for it.
+fn move_target(doc: &pdfcraft_engine::Document, page: usize, block: usize, rect: [f64; 4]) -> ObjectTarget {
+    let area = |b: [f64; 4]| ((b[2] - b[0]) * (b[3] - b[1])).max(0.0);
+    // The share of the paragraph's box an object covers (an added item's box is wider than its
+    // text), and the object's own area: the tightest box that covers the paragraph is its object.
+    let covers = |r: [f64; 4]| {
+        let (w, h) = ((r[2].min(rect[2]) - r[0].max(rect[0])).max(0.0), (r[3].min(rect[3]) - r[1].max(rect[1])).max(0.0));
+        if area(rect) > 0.0 { w * h / area(rect) } else { 0.0 }
+    };
+    let own = ObjectTarget { kind: ObjectKind::Text, index: block };
+    doc.editable_objects(page)
+        .ok()
+        .and_then(|objects| {
+            // The paragraph's own number names it when that object is its box (identical labels
+            // drawn on top of one another stay apart that way).
+            if objects.iter().any(|o| o.target == own && covers(o.rect) >= 0.8) {
+                return None;
+            }
+            objects
+                .into_iter()
+                .filter(|o| matches!(o.target.kind, ObjectKind::Text | ObjectKind::Added) && covers(o.rect) >= 0.8)
+                .min_by(|a, b| area(a.rect).total_cmp(&area(b.rect)))
+        })
+        .map_or(own, |o| o.target)
+}
+
 /// Whether the installed-font scan has finished (always, where there is none).
 fn installed_fonts_ready(ctx: &egui::Context) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
@@ -532,11 +560,7 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             } else {
                 // Translation must keep the selected source operators. Rewriting unchanged text
                 // would also remove unrelated paragraphs that now overlap this one (#594).
-                Edit::MoveObjects {
-                    page,
-                    objects: vec![ObjectTarget { kind: ObjectKind::Text, index: d.block }],
-                    offset: [to[0] - from[0], to[1] - from[1]],
-                }
+                Edit::MoveObjects { page, objects: vec![move_target(doc, page, d.block, l.rect)], offset: [to[0] - from[0], to[1] - from[1]] }
             };
             if preview != b {
                 view.pending_edit = Some(edit);
@@ -938,6 +962,26 @@ mod tests {
         // No installed bold face: the standard bold, as before.
         ed.fonts.bold_faces.clear();
         assert!(ed.style().family.is_some());
+    }
+
+    /// A paragraph an edit redrew as added text (shaped Arabic) is moved as that added item.
+    #[test]
+    fn a_paragraph_redrawn_as_added_text_moves_as_the_added_item() {
+        let (mut app, _) = preview_app();
+        let id = app.views[0].id;
+        let _rewritten =
+            app.session.apply(id, pdfcraft_engine::Edit::EditTextBlock { page: 0, block: 0, text: "الموضوع: طلب".into(), style: Default::default() });
+        let doc = app.session.get(id).unwrap();
+        let block = doc.text_blocks(0).remove(0);
+        let target = move_target(doc, 0, 0, block.rect);
+        if !doc.editable_objects(0).unwrap_or_default().iter().any(|o| o.target.kind == ObjectKind::Added) {
+            // No Arabic fallback face in this build ; the paragraph stays a text object.
+            assert_eq!(target.kind, ObjectKind::Text);
+            return;
+        }
+        assert_eq!(target.kind, ObjectKind::Added, "{target:?}");
+        let moved = app.session.apply(id, pdfcraft_engine::Edit::MoveObjects { page: 0, objects: vec![target], offset: [10.0, -5.0] });
+        assert!(moved.is_ok(), "{moved:?}");
     }
 
     #[test]

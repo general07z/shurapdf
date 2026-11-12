@@ -296,6 +296,10 @@ Run workflow**. It never runs on pull requests.
   saved, reopened and checked: it reads as typed, the other paragraphs are unchanged, search finds
   it and the page renders (table **Arabic text editing**). Real PDFs are `private-pdf-1`…, counts
   only. The run fails if an edit fails.
+- Each of the first sentences of every document also gets the chain people do in a row: type at
+  its end, type again (the second edit of a paragraph), move it, widen its box from the left (the
+  right edge of Arabic text stays), and make it bold in the installed Bold face; then it is saved,
+  reopened and checked (a paragraph an edit redrew as added text is moved as that item).
 - The run also lists the Council's usual Windows fonts (Arial, Sakkal Majalla, Simplified Arabic…)
   and, for each, whether a paragraph edited in it keeps it, or why not (table **Installed
   fonts**): a font whose maker forbids embedding, or that is not installed, is drawn in a
