@@ -417,8 +417,12 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
             o.failures.len(),
             if by_kind.is_empty() { "–".to_owned() } else { by_kind.join("; ") }
         ));
-        if public(&o.name) {
-            for (kind, _) in &kinds {
+        // A real document's failure is described only when it is numbers (where a paragraph went,
+        // where its edge went) with its page, paragraph number and font: no text of it.
+        const NUMBERS_ONLY: [&str; 2] = ["moved to the wrong place", "widening changed the text or moved it"];
+        let open = public(&o.name);
+        {
+            for (kind, _) in kinds.iter().filter(|(k, _)| open || NUMBERS_ONLY.contains(k)) {
                 for (_, detail) in o.failures.iter().filter(|(k, _)| k == kind).take(SHOWN) {
                     details.push_str(&format!("- {}: {kind}: {}\n", o.name, detail.replace('\n', " ⏎ ")));
                 }
