@@ -79,6 +79,9 @@ pub(crate) struct SourceFonts {
     /// The installed copy of a resource's face, when it can be embedded: a retyped Arabic
     /// paragraph is drawn with it (`BlockStyle::face`) and keeps the document's font.
     pub(crate) faces: BTreeMap<String, Arc<Vec<u8>>>,
+    /// The installed bold face of each paragraph font that has one (Arial → Arial Bold): Bold
+    /// draws the paragraph in it, as Word's own bold does, where a standard bold has no Arabic.
+    pub(crate) bold_faces: BTreeMap<String, Arc<Vec<u8>>>,
 }
 
 impl SourceFonts {
@@ -113,6 +116,21 @@ fn style_names(name: &str) -> impl Iterator<Item = String> {
         }
     }
     keys.into_iter()
+}
+
+/// The installed bold face of the font `name` (`ArialMT` → `Arial-BoldMT`, `Tajawal-Regular` →
+/// `Tajawal-Bold`), read whole.
+#[cfg(not(target_arch = "wasm32"))]
+fn installed_bold_face(ctx: &egui::Context, name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let files = crate::files::installed_font_files(ctx)?;
+    // The family part of the name, without a style or `MT` ending.
+    let base = style_names(name).last()?;
+    let wanted = [format!("{base}bold"), format!("{base}boldmt"), format!("{base}bd")];
+    let file = files.iter().find(|f| wanted.contains(&pdfcraft_fonts::embedding::face_key(&f.face)))?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&file.path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
+    pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok().then_some(bytes)
 }
 
 /// The installed font file of the face `name` (a PDF font name, subset tag and all), read whole,
@@ -178,6 +196,10 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         } else {
             interface.clone()
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(bold) = installed_bold_face(ctx, &program.face) {
+            out.bold_faces.insert(program.resource.clone(), Arc::new(bold));
+        }
         let joining_name = format!("pdf-source-{index}-joining");
         definitions.families.insert(FontFamily::Name(joining_name.clone().into()), joining);
         out.joining.insert(program.resource.clone(), joining_name);

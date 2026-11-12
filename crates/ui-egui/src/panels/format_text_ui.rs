@@ -110,12 +110,16 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, look: &mut AddedText, extras:
                         ui.label(tl!("No installed fonts can be embedded. Load a font file."));
                     }
                     Some(list) => {
-                        for font in list {
-                            if ui.button(&font.face).clicked() {
-                                out.font = Some(FontChoice::Installed(font.path));
-                                ui.close();
+                        // Hundreds of fonts: scroll inside the window rather than run off it.
+                        let height = (ui.ctx().content_rect().height() - 80.0).max(160.0);
+                        egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
+                            for font in list {
+                                if ui.button(&font.face).clicked() {
+                                    out.font = Some(FontChoice::Installed(font.path));
+                                    ui.close();
+                                }
                             }
-                        }
+                        });
                     }
                     None => {
                         ui.label(tl!("Finding document fonts…"));

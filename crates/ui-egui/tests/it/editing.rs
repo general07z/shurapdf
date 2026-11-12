@@ -4256,6 +4256,32 @@ fn the_frame_of_a_paragraph_open_for_typing_moves_it_with_its_typed_text() {
     assert!(near(moved.rect[0], before.rect[0] + 30.0) && near(moved.rect[3], before.rect[3] + 50.0), "{:?} → {:?}", before.rect, moved.rect);
 }
 
+#[test]
+fn the_side_handle_of_a_paragraph_open_for_typing_resizes_it() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let block = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].clone()
+    };
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = r.width() / 200.0;
+    let screen = |x: f64, y: f64| egui::pos2(r.left() + x as f32 * k, r.top() + (300.0 - y as f32) * k);
+    let before = block(&h);
+    let (cy, right) = ((before.rect[1] + before.rect[3]) / 2.0, before.rect[2]);
+    click_at(&mut h, screen((before.rect[0] + before.rect[2]) / 2.0, cy));
+    assert!(h.state().views[0].line_editor.is_some(), "a click opens it");
+    h.run_steps(3);
+    // The handle stands outside the frame's right side; drag it narrower so the text rewraps.
+    let handle = screen(right, cy) + egui::vec2(2.0 + 5.0 + 2.0, 0.0);
+    drag(&mut h, handle, handle - egui::vec2((before.rect[2] - before.rect[0] - 40.0) as f32 * k, 0.0));
+    let s = h.state();
+    let doc = s.session.get(s.views[0].id).unwrap();
+    assert_eq!(doc.can_undo(), Some("Edit text"), "the handle rewrapped the paragraph");
+    assert!(doc.text_lines(0).len() > 1, "narrower: two lines");
+}
+
 /// Press and release at `at` without moving.
 fn click_at(h: &mut Harness<'static, PdfCraftApp>, at: egui::Pos2) {
     h.hover_at(at);

@@ -142,6 +142,12 @@ impl LineEditor {
         self.changes_with(&self.text)
     }
 
+    /// The font resource of the paragraph's first run.
+    fn source_font(&self) -> Option<String> {
+        let (block, lines) = self.source.as_ref()?;
+        block.lines.first().and_then(|i| lines.get(*i)).map(|line| line.font.clone())
+    }
+
     /// Whether the text has a character the paragraph did not have. A Word PDF embeds only the
     /// glyphs it used, so a new one is not in the paragraph's own font: the installed copy of
     /// the font draws it, and the paragraph keeps its font.
@@ -167,9 +173,15 @@ impl LineEditor {
     /// The formatting the panel changed.
     pub fn style(&self) -> pdfcraft_engine::BlockStyle {
         let (l, o) = (&self.look, &self.look0);
+        // Bold alone, on a paragraph whose font has an installed bold face: that face draws it
+        // (a standard bold font has no Arabic letters, and the paragraph keeps its font).
+        let bold_face = (l.bold && !o.bold && l.family == o.family && !self.family_chosen && l.italic == o.italic && self.font_resource.is_none())
+            .then(|| self.source_font().and_then(|font| self.fonts.bold_faces.get(&font).cloned()))
+            .flatten();
         let mut style = pdfcraft_engine::BlockStyle {
             resource: self.font_resource.clone(),
-            family: (l.family != o.family || self.family_chosen || l.bold != o.bold || l.italic != o.italic).then_some((l.family, l.bold, l.italic)),
+            family: (l.family != o.family || self.family_chosen || (l.bold != o.bold && bold_face.is_none()) || l.italic != o.italic)
+                .then_some((l.family, l.bold, l.italic)),
             size: (l.size != o.size).then_some(l.size),
             color: (l.color != o.color).then_some(l.color),
             align: (l.align != o.align).then_some(l.align),
@@ -183,14 +195,12 @@ impl LineEditor {
         // Retyped Arabic in a font Word subset without its joining rules: draw it with the
         // installed copy of that font, so it keeps the document's look, unless another font was
         // chosen. Only for a change: an untouched paragraph stays no edit at all.
-        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default())
+        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default() || bold_face.is_some())
             && style.resource.is_none()
             && style.family.is_none()
-            && (self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
-            && let Some((block, lines)) = &self.source
-            && let Some(line) = block.lines.first().and_then(|i| lines.get(*i))
+            && (bold_face.is_some() || self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
         {
-            style.face = self.fonts.faces.get(&line.font).cloned();
+            style.face = bold_face.or_else(|| self.source_font().and_then(|font| self.fonts.faces.get(&font).cloned()));
         }
         if let Some(range) = &self.selection
             && (style.family.is_some()
@@ -294,6 +304,15 @@ fn frame_grip_at(f: Rect, p: Pos2) -> Option<Grip> {
     } else {
         (f.expand(FRAME_REACH).contains(p) && !f.contains(p)).then_some(Grip::Move)
     }
+}
+
+/// Whether a press at `p` takes hold of a width handle of the paragraph open for typing on
+/// `page`. The handles stand just outside its frame, where area selection would start instead.
+pub(crate) fn grabs_open_handle(view: &DocView, page: usize, p: Pos2) -> bool {
+    view.line_editor.as_ref().filter(|e| e.page == page).and_then(|e| e.frame).is_some_and(|f| {
+        let [left, right] = frame_handles(f);
+        left.expand(2.0).contains(p) || right.expand(2.0).contains(p)
+    })
 }
 
 /// The rewrap handles drawn on a paragraph box's left and right edges (screen).
@@ -871,6 +890,29 @@ mod tests {
         ed.text = "الموضوع".into();
         ed.choose_family(pdfcraft_engine::FontFamily::Times);
         assert_eq!(ed.style().face, None, "a chosen font wins");
+    }
+
+    /// Bold on a paragraph whose font has an installed bold face draws it in that face, and does
+    /// not ask for a standard bold font (which has no Arabic letters).
+    #[test]
+    fn bold_uses_the_installed_bold_face_of_the_paragraph_font() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        let bold = Arc::new(b"stand-in for an installed bold face".to_vec());
+        ed.fonts.bold_faces.insert(font, bold.clone());
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        ed.look.bold = true;
+        let style = ed.style();
+        assert!(style.family.is_none(), "no standard family is asked for");
+        assert!(style.face.is_some_and(|f| Arc::ptr_eq(&f, &bold)), "the installed bold face draws it");
+        assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
+        // No installed bold face: the standard bold, as before.
+        ed.fonts.bold_faces.clear();
+        assert!(ed.style().family.is_some());
     }
 
     #[test]
