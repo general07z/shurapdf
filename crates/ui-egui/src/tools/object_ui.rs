@@ -444,6 +444,13 @@ pub(crate) fn paint(painter: &egui::Painter, xf: &PageXform, page: usize, info: 
     let mut union = Rect::NOTHING;
     for object in &selection.selected {
         let rect = screen(xf, info, page, object).translate(delta);
+        // A text being moved goes with the pointer (its size from the box: a row is about 1.25 × it).
+        if delta != egui::Vec2::ZERO
+            && let Some(text) = object.text.as_deref()
+        {
+            let rows = text.lines().count().max(1) as f32;
+            crate::edit_text_ui::paint_move_ghost(painter, rect, text, rect.height() / (rows * 1.25), egui::Color32::BLACK);
+        }
         painter.rect_filled(rect, 0.0, BLUE.gamma_multiply(0.05));
         painter.rect_stroke(rect, 0.0, Stroke::new(1.5, BLUE), egui::StrokeKind::Outside);
         union = union.union(rect);

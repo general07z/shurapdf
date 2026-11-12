@@ -203,7 +203,10 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         definitions.families.insert(FontFamily::Name(name.clone().into()), stack.clone());
         // Arabic: the program itself when it joins letters, else the installed face, else the
         // interface's own (which does).
-        let joining = if joins_arabic(&program.bytes) {
+        // A complete face (an earlier edit embedded it) draws; a Word subset never does, even if it
+        // has joining rules: it holds only the glyphs the page used, and a letter it lacks would
+        // show as an empty box in the typing box.
+        let joining = if joins_arabic(&program.bytes) && program.resource.starts_with("PCFull") {
             stack
         } else if let Some(bytes) = installed_face(ctx, &program.face) {
             let installed = format!("pdf-source-{index}-installed");

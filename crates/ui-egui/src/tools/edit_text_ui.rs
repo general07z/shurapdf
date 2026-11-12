@@ -281,6 +281,19 @@ fn move_target(doc: &pdfcraft_engine::Document, page: usize, block: usize, rect:
         .map_or(own, |o| o.target)
 }
 
+/// A preview of text being moved: its words, in the interface font, on a pale ground at `rect`
+/// (screen), so the text is seen going where the pointer takes it (as in Acrobat). The page's
+/// own copy stays where it was until the move is applied. `rtl` text sits at the right edge.
+pub(crate) fn paint_move_ghost(painter: &egui::Painter, rect: Rect, text: &str, size: f32, color: Color32) {
+    if text.trim().is_empty() || !rect.is_finite() {
+        return;
+    }
+    painter.rect_filled(rect, CornerRadius::same(2), Color32::from_white_alpha(215));
+    let galley = painter.layout(text.to_owned(), egui::FontId::proportional(size.clamp(5.0, 200.0)), color, f32::INFINITY);
+    let x = if pdfcraft_fonts::visual_line::paragraph_rtl(text) { rect.right() - 2.0 - galley.size().x } else { rect.left() + 2.0 };
+    painter.with_clip_rect(rect.expand(2.0)).galley(Pos2::new(x, rect.top() + 2.0), galley, color);
+}
+
 /// Whether the installed-font scan has finished (always, where there is none).
 fn installed_fonts_ready(ctx: &egui::Context) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
@@ -511,6 +524,15 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             Grip::Left => Rect::from_min_max(Pos2::new((b.left() + dx).min(b.right() - 12.0), b.min.y), b.max),
             Grip::Right => Rect::from_min_max(b.min, Pos2::new((b.right() + dx).max(b.left() + 12.0), b.max.y)),
         };
+        if d.grip == Grip::Move && preview != b {
+            // The text goes with the pointer. Its size on screen: the box's width over the
+            // paragraph's own.
+            let width = (l.rect[2] - l.rect[0]).abs().max(1.0) as f32;
+            let k = ((b.width() - 4.0) / width).max(0.01);
+            let [r, g, bl] = l.color.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
+            let text = view.line_editor.as_ref().filter(|_| d.editing).map_or(l.editor_text.as_str(), |e| e.text.as_str());
+            paint_move_ghost(&painter, preview, text, l.size as f32 * k, Color32::from_rgb(r, g, bl));
+        }
         painter.rect_stroke(preview, CornerRadius::same(2), Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
         let resizing = d.grip != Grip::Move;
         if resizing {
