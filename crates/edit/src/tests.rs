@@ -5093,6 +5093,25 @@ fn retyped_arabic_keeps_the_face_it_is_given() {
 }
 
 #[test]
+fn lines_clipped_to_different_table_cells_are_different_paragraphs() {
+    // Word clips each table cell's text to the cell. Three stacked cells with one line each, 23 pt
+    // apart (under the leading that would join them), are three paragraphs; the same lines in one
+    // clip are one.
+    let cell = |y: f64, line: &str| format!("q 100 {y} 60 20 re W n BT /F1 12 Tf 100 {} Td ({line}) Tj ET Q ", y + 5.0);
+    let cells = text_page(&format!("{}{}{}", cell(700.0, "First"), cell(677.0, "Second"), cell(654.0, "Third")));
+    let blocks = text::text_blocks(&cells, 0).unwrap();
+    assert_eq!(blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["First", "Second", "Third"]);
+    // Editing one of them leaves the others alone.
+    let mut cells = cells;
+    text::rewrite_block(&mut cells, 0, 1, Some("Second cell, longer"), &text::BlockStyle::default()).unwrap();
+    let texts: Vec<String> = text::text_blocks(&reopen(&cells), 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert!(texts.iter().any(|t| t == "First") && texts.iter().any(|t| t == "Third"), "{texts:?}");
+
+    let one_clip = text_page("q 100 640 60 80 re W n BT /F1 12 Tf 100 705 Td (First) Tj ET BT /F1 12 Tf 100 682 Td (Second) Tj ET Q");
+    assert_eq!(text::text_blocks(&one_clip, 0).unwrap().len(), 1, "one clip: one paragraph");
+}
+
+#[test]
 fn a_paragraph_retyped_in_a_face_can_be_moved() {
     let Some(face) = static_arabic_face() else {
         eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");

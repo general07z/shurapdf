@@ -1,9 +1,24 @@
 use super::{HashMap, Matrix, TextBlock, TextLine, paragraph_separator, same_base_font, same_font, strip_subset_tag, union};
 
+/// Whether two lines are drawn in the same clip, or in clips that overlap rather than stack
+/// (a table's cells clip their text: the text of one cell above another is not one paragraph).
+fn same_cell(a: &TextLine, b: &TextLine) -> bool {
+    let (Some(x), Some(y)) = (a.clip, b.clip) else { return true };
+    if x.iter().zip(y).all(|(p, q)| (p - q).abs() < 0.5) {
+        return true;
+    }
+    let overlap = (x[3].min(y[3]) - x[1].max(y[1])).max(0.0);
+    let (hx, hy) = (x[3] - x[1], y[3] - y[1]);
+    // Clips side by side are cells of a row, too: no overlap across either axis.
+    let across = (x[2].min(y[2]) - x[0].max(y[0])).max(0.0);
+    overlap > hx.min(hy) * 0.2 && across > (x[2] - x[0]).min(y[2] - y[0]) * 0.2
+}
+
 fn same_plane(a: &TextLine, b: &TextLine) -> bool {
     let at = Matrix(a.origin.tm).then(&Matrix(a.origin.ctm));
     let bt = Matrix(b.origin.tm).then(&Matrix(b.origin.ctm));
-    a.scope == b.scope
+    same_cell(a, b)
+        && a.scope == b.scope
         && a.paint == b.paint
         && [0, 2].iter().all(|axis| {
             let ax = at.0.get(*axis).copied().unwrap_or(0.0);
