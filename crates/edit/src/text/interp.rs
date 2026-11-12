@@ -248,6 +248,9 @@ pub(super) struct Ts {
     pub(super) dash: Dash,
     /// The line cap a `J` or an ExtGState's `/LC` set (initially 0, butt).
     pub(super) line_cap: i64,
+    /// The innermost rectangular clip (`re W n`) in user space, as a producer sets one around
+    /// each table cell: text in different cells is not one paragraph.
+    pub(super) clip: Option<[f64; 4]>,
 }
 
 /// A dash pattern (ISO 32000-2 §8.4.3.6): the dash array and the phase.
@@ -319,6 +322,7 @@ pub(super) struct Shown {
     pub(super) visual_order: bool,
     pub(super) decodable: bool,
     pub(super) scope: Option<usize>,
+    pub(super) clip: Option<[f64; 4]>,
     pub(super) paint: Paint,
     pub(super) logical_order: bool,
     pub(super) actual_text: bool,
@@ -482,6 +486,7 @@ impl Carry {
             stroke: Vec::new(),
             line_width: None,
             ext_gstate: Vec::new(),
+            clip: None,
             dash: (Vec::new(), 0.0),
             line_cap: 0,
         };
@@ -790,6 +795,7 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
         visual_order: m.visual_order,
         decodable,
         scope: marked.regions.last().copied().flatten(),
+        clip: ts.clip,
         paint: Paint { layers: marked.layers.iter().flatten().cloned().collect(), gs: ts.gs.clone() },
         logical_order: false,
         actual_text: false,
@@ -815,6 +821,8 @@ pub(super) fn interpret(
     let mut stack: Vec<(Ts, Matrix, Matrix)> = std::mem::take(&mut carry.stack);
     let (mut tm, mut tlm) = (Matrix::IDENTITY, Matrix::IDENTITY);
     let mut bt = 0usize;
+    // The last rectangle `re` added to the current path, and a clip (`W`) waiting for the path to end.
+    let (mut last_rect, mut pending_clip): (Option<[f64; 4]>, Option<[f64; 4]>) = (None, None);
     let mut marked =
         MarkedContent { regions: std::mem::take(&mut carry.marked), layers: std::mem::take(&mut carry.layers), ..MarkedContent::default() };
     for (i, op) in ops.iter().enumerate() {
@@ -837,6 +845,22 @@ pub(super) fn interpret(
                 if let Some(m) = op.nums::<6>() {
                     ts.ctm = Matrix(m).then(&ts.ctm);
                 }
+            }
+            b"re" => {
+                last_rect = op.nums::<4>().and_then(|[x, y, w, h]| {
+                    let (a, b) = (ts.ctm.apply(x, y), ts.ctm.apply(x + w, y + h));
+                    let r = [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)];
+                    r.iter().all(|v| v.is_finite()).then_some(r)
+                });
+            }
+            b"m" | b"l" | b"c" | b"v" | b"y" | b"h" => last_rect = None,
+            b"W" | b"W*" => pending_clip = last_rect,
+            // The path ends: a clip waiting for it takes effect (nested clips narrow each other).
+            b"n" | b"f" | b"F" | b"f*" | b"S" | b"s" | b"B" | b"B*" | b"b" | b"b*" => {
+                if let Some(c) = pending_clip.take() {
+                    ts.clip = Some(ts.clip.map_or(c, |o| [o[0].max(c[0]), o[1].max(c[1]), o[2].min(c[2]), o[3].min(c[3])]));
+                }
+                last_rect = None;
             }
             b"BT" => {
                 tm = Matrix::IDENTITY;

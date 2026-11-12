@@ -99,6 +99,9 @@ pub struct TextLine {
     origin: Origin,
     /// Explicit marked-content scope (when present); distinct scopes must not be guessed into one paragraph.
     scope: Option<usize>,
+    /// The rectangular clip the line is drawn in (a table cell, for a producer that clips each
+    /// cell): lines in different clips are not one paragraph.
+    clip: Option<[f64; 4]>,
     /// The layers and graphics state parameters it is drawn in; see [`Paint`].
     paint: Paint,
     /// Right-to-left `/ActualText` already supplies typing order; glyph text still needs bidi
