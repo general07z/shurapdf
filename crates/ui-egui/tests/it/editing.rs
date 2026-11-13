@@ -4215,6 +4215,26 @@ fn pressing_bold_again_toggles_only_the_selected_words() {
     assert!(bold(&third, "1") && !bold(&third, "Page"), "{third:?}");
 }
 
+#[test]
+fn the_font_list_is_one_list_without_load_or_keep_entries() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    click_at(&mut h, at);
+    assert!(h.state().views[0].line_editor.is_some(), "the paragraph is open: the Format text panel shows");
+    // Open the font list (its button shows the current font).
+    h.get_all_by_role(egui::accesskit::Role::ComboBox).next().expect("the font list button").click();
+    h.run_steps(4);
+    for font in ["Helvetica", "Times", "Courier"] {
+        assert!(h.query_by_label(font).is_some(), "{font} is in the list");
+    }
+    assert!(h.query_by_label("Load font…").is_none(), "no Load font entry");
+    assert!(h.query_by_label("Keep source fonts").is_none(), "no Keep source fonts entry");
+    assert!(h.query_by_label("Installed fonts…").is_none(), "no second, installed-fonts menu");
+}
+
 /// Drag with the pointer from `from` to `to` in a few steps.
 fn drag(h: &mut Harness<'static, PdfCraftApp>, from: egui::Pos2, to: egui::Pos2) {
     h.hover_at(from);

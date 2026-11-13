@@ -277,10 +277,6 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let out = crate::format_text_ui::panel(ui, t, &mut ed.look, Some(&mut ed.extras), Fonts { sources: Some(&sources), shown });
         let mut changed = out.changed;
         match out.font {
-            Some(FontChoice::KeepSource) => {
-                ed.keep_source_font();
-                changed = true;
-            }
             Some(FontChoice::Resource(resource)) => {
                 ed.font_resource = Some(resource);
                 changed = true;
@@ -289,7 +285,6 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ed.choose_family(family);
                 changed = true;
             }
-            Some(FontChoice::Load) => app.pick_files(crate::files::FilePurpose::TextFont { page: ed.page }, false),
             #[cfg(not(target_arch = "wasm32"))]
             Some(FontChoice::Installed(path)) => app.use_paths(crate::files::FilePurpose::TextFont { page: ed.page }, &[path]),
             #[cfg(target_arch = "wasm32")]
