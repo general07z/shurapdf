@@ -15,18 +15,13 @@ use crate::edit_text_ui::Extras;
 use crate::theme::Tokens;
 use crate::{icons, widgets};
 
-/// A font picked from the font list. The caller applies it, since keeping the paragraph's own
-/// font also means restoring the family it started with.
+/// A font picked from the font list.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FontChoice {
-    /// The fonts the paragraph already uses.
-    KeepSource,
     /// One of the page's fonts, by resource name.
     Resource(String),
     /// A standard family.
     Family(FontFamily),
-    /// Load font…: pick a font file.
-    Load,
     /// A font file installed on this computer.
     Installed(std::path::PathBuf),
 }
@@ -82,48 +77,61 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, look: &mut AddedText, extras:
         .selected_text(fonts.shown.as_str())
         .width(width)
         .show_ui(ui, |ui| {
-            if let Some(sources) = fonts.sources {
-                if ui.selectable_label(false, tl!("Keep source fonts")).clicked() {
-                    out.font = Some(FontChoice::KeepSource);
-                }
-                for (resource, face) in sources.iter().filter(|(r, _)| !r.starts_with("PCApproved")) {
-                    if ui.selectable_label(false, face).clicked() {
-                        out.font = Some(FontChoice::Resource(resource.clone()));
-                    }
-                }
-                ui.separator();
-            }
-            for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                if ui.selectable_label(fonts.sources.is_none() && look.face.is_none() && look.family == f, f.label()).clicked() {
-                    out.font = Some(FontChoice::Family(f));
-                }
-            }
-            ui.separator();
-            if fonts.sources.is_some() && ui.selectable_label(false, tl!("Load font…")).clicked() {
-                out.font = Some(FontChoice::Load);
-            }
-            // Every installed font in this one list, for existing text and added text alike.
+            // One list: the fonts the page already uses (existing text), the three standard fonts,
+            // then every installed font, scrolled as one with its bar always showing. The current
+            // font is marked, and the list opens on it.
             #[cfg(not(target_arch = "wasm32"))]
-            match crate::files::installed_font_files(ui.ctx()) {
-                Some(list) if list.is_empty() => {
-                    ui.label(tl!("No installed fonts can be embedded. Load a font file."));
-                }
-                Some(list) => {
-                    ui.separator();
-                    // Hundreds of fonts: scroll inside the window rather than run off it.
-                    let height = (ui.ctx().content_rect().height() - 160.0).max(160.0);
-                    egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-                        for font in list {
-                            if ui.selectable_label(false, &font.face).clicked() {
-                                out.font = Some(FontChoice::Installed(font.path));
+            let installed = crate::files::installed_font_files(ui.ctx());
+            #[cfg(target_arch = "wasm32")]
+            let installed: Option<Vec<()>> = Some(Vec::new());
+            let height = (ui.ctx().content_rect().height() - 160.0).max(160.0);
+            // Opened just now (the list wasn't drawn last pass): scroll to the current font once.
+            let (id, pass) = (ui.make_persistent_id("format-font-list-pass"), ui.ctx().cumulative_pass_nr());
+            let just_opened = ui.ctx().data(|d| d.get_temp::<u64>(id)).is_none_or(|last| last.saturating_add(1) < pass);
+            ui.ctx().data_mut(|d| d.insert_temp(id, pass));
+            egui::ScrollArea::vertical().max_height(height).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(
+                ui,
+                |ui| {
+                    for (resource, face) in fonts.sources.into_iter().flatten().filter(|(r, _)| !r.starts_with("PCApproved")) {
+                        if ui.selectable_label(false, face).clicked() {
+                            out.font = Some(FontChoice::Resource(resource.clone()));
+                        }
+                    }
+                    for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
+                        let current = fonts.sources.is_none() && look.face.is_none() && look.family == f;
+                        let r = ui.selectable_label(current, f.label());
+                        if current && just_opened {
+                            r.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if r.clicked() {
+                            out.font = Some(FontChoice::Family(f));
+                        }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    match installed {
+                        Some(list) if list.is_empty() => {
+                            ui.label(tl!("No installed fonts can be embedded. Load a font file."));
+                        }
+                        Some(list) => {
+                            for font in list {
+                                let current = fonts.shown == font.face;
+                                let r = ui.selectable_label(current, &font.face);
+                                if current && just_opened {
+                                    r.scroll_to_me(Some(egui::Align::Center));
+                                }
+                                if r.clicked() {
+                                    out.font = Some(FontChoice::Installed(font.path));
+                                }
                             }
                         }
-                    });
-                }
-                None => {
-                    ui.label(tl!("Finding document fonts…"));
-                }
-            }
+                        None => {
+                            ui.label(tl!("Finding document fonts…"));
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = installed;
+                },
+            );
         })
         .response
         .on_hover_text(format!("{}\n{}", tl!("Font"), tl!("Thai and Arabic use regular fallback fonts when available.")));

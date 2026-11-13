@@ -127,13 +127,6 @@ impl LineEditor {
         if name.is_empty() { tl!("Keep source fonts").to_string() } else { name.to_string() }
     }
 
-    /// Back to the paragraph's own font: no page font chosen and the family it started with.
-    pub(crate) fn keep_source_font(&mut self) {
-        self.font_resource = None;
-        self.look.family = self.look0.family;
-        self.family_chosen = false;
-    }
-
     /// A standard family picked from the font list, replacing the paragraph's font even when it
     /// is the family the paragraph's font name reads as.
     pub(crate) fn choose_family(&mut self, family: pdfcraft_engine::FontFamily) {
@@ -1069,9 +1062,6 @@ mod tests {
         assert_eq!(ed.style().family, Some((family, ed.look.bold, ed.look.italic)));
         assert!(ed.has_changes());
         assert_eq!(ed.font_shown(&[]), family.label());
-        ed.keep_source_font();
-        assert_eq!(ed.style().family, None, "Keep source fonts withdraws the choice");
-        ed.choose_family(family);
         ed.applied();
         assert_eq!(ed.style().family, None, "an applied choice is the paragraph's font now");
     }
