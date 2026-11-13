@@ -387,6 +387,16 @@ impl PdfCraftApp {
         let edit = pdfcraft_engine::Edit::EditTextBlock { page: ed.page, block: ed.block, text: ed.text.clone(), style: ed.style() };
         if self.apply_edit(edit) {
             ed.applied();
+            if let Some(doc) = self.session.get(self.views[index].id) {
+                // The edit can move the paragraph in the page's list (an Arabic paragraph redrawn as
+                // added text goes to the end, and those below it move up one): it is the paragraph
+                // that now covers its old box, not the one at its old number.
+                let blocks = doc.text_blocks(ed.page);
+                let old_box = ed.source_rect().map(f64::from);
+                if let Some(now) = pdfcraft_engine::block_overlapping(&blocks, old_box) {
+                    ed.block = now;
+                }
+            }
             if let Some(doc) = self.session.get(self.views[index].id)
                 && let Some(block) = doc.text_blocks(ed.page).get(ed.block)
             {
