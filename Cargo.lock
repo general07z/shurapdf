@@ -4404,6 +4404,9 @@ name = "pdfcraft-cli"
 version = "0.15.0"
 dependencies = [
  "base64 0.23.1",
+ "egui",
+ "egui_kittest",
+ "image",
  "pdfcraft-audit",
  "pdfcraft-automation",
  "pdfcraft-cos",
@@ -4411,6 +4414,7 @@ dependencies = [
  "pdfcraft-platform",
  "pdfcraft-preflight",
  "pdfcraft-render",
+ "pdfcraft-ui-egui",
  "pdfcraft-word-import",
  "png 0.18.1",
  "rustix 1.1.6",

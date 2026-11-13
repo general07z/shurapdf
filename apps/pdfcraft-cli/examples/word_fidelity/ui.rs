@@ -64,8 +64,9 @@ fn targets(pdf: &[u8], work: &Path) -> Result<(Vec<Target>, [f64; 2]), String> {
     let doc = call(&mut auto, "doc_open", serde_json::json!({ "path": "ui.pdf" }))?;
     let id = doc.get("doc").and_then(serde_json::Value::as_i64).ok_or("no document")?;
     let info = call(&mut auto, "doc_info", serde_json::json!({ "doc": id }))?;
-    let page = info.get("first_page_pt").and_then(serde_json::Value::as_array).ok_or("no page size")?;
-    let size = [page.first().and_then(serde_json::Value::as_f64).unwrap_or(595.0), page.get(1).and_then(serde_json::Value::as_f64).unwrap_or(842.0)];
+    let first = info.get("pages").and_then(serde_json::Value::as_array).and_then(|p| p.first()).ok_or("no page size")?;
+    let side = |key: &str, default: f64| first.get(key).and_then(serde_json::Value::as_f64).unwrap_or(default);
+    let size = [side("width", 595.0), side("height", 842.0)];
     let listed = call(&mut auto, "text_paragraphs", serde_json::json!({ "doc": id, "page": 1 }))?;
     let found = listed
         .get("paragraphs")
