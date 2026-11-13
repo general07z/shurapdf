@@ -27,6 +27,7 @@
 
 mod checks;
 mod editing;
+mod ui;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -219,9 +220,86 @@ fn compare(name: &str, bytes: &[u8], out: Option<&Path>) -> Row {
     row
 }
 
+/// `--ui-only OUT LIST`: the interface checks ([`ui`]) on the PDFs listed in `LIST`, printing the
+/// table. Run as a child process per graphics backend, so that a driver that crashes or hangs
+/// costs one section of the report, not the run.
+fn ui_only(out: &Path, list: &Path) -> ! {
+    let backend = std::env::var("WGPU_BACKEND").unwrap_or_default();
+    let work = out.join("ui-work");
+    let outcomes: Vec<ui::Outcome> = ui::read_inputs(list)
+        .into_iter()
+        .map(|(name, path)| match std::fs::read(&path) {
+            Ok(bytes) => {
+                let keep = out.join(&name);
+                ui::run(&name, &bytes, &work, (keep.is_dir() && !name.starts_with("private-")).then_some(keep.as_path()))
+            }
+            Err(e) => ui::Outcome { name, error: Some(e.kind().to_string()), ..ui::Outcome::default() },
+        })
+        .collect();
+    let _ = std::fs::remove_dir_all(&work);
+    print!("{}", ui::table(&outcomes, if backend.is_empty() { "default" } else { &backend }, |n| !n.starts_with("private-")));
+    std::process::exit(i32::from(ui::failed(&outcomes)));
+}
+
+/// Runs [`ui_only`] as a child for each graphics backend and returns the tables, and whether any failed.
+fn ui_checks(out: &Path, inputs: &[(String, PathBuf)]) -> (String, bool) {
+    let private_dir = PathBuf::from(format!("{}.private-ui", out.display()));
+    let _ = std::fs::create_dir_all(&private_dir);
+    let list: String = inputs.iter().map(|(n, p)| format!("{n}\t{}\n", p.display())).collect();
+    let list_path = private_dir.join("inputs.txt");
+    if std::fs::write(&list_path, list).is_err() {
+        return (String::new(), false);
+    }
+    let Ok(exe) = std::env::current_exe() else { return (String::new(), false) };
+    // The machine's default first; where it is Windows, the others a driver may behave better on.
+    let backends: &[&str] = if cfg!(windows) { &["", "dx12", "vulkan", "gl"] } else { &[""] };
+    let (mut md, mut failed) = (String::new(), false);
+    for backend in backends {
+        let mut command = std::process::Command::new(&exe);
+        command.arg("--ui-only").arg(out).arg(&list_path).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+        if !backend.is_empty() {
+            command.env("WGPU_BACKEND", backend);
+        }
+        let label = if backend.is_empty() { "default" } else { backend };
+        let Ok(mut child) = command.spawn() else { continue };
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if start.elapsed() > std::time::Duration::from_secs(20 * 60) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(500)),
+                Err(_) => break None,
+            }
+        };
+        let mut text = String::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            use std::io::Read;
+            let _ = stdout.read_to_string(&mut text);
+        }
+        match status {
+            Some(status) if !text.is_empty() => {
+                failed |= !status.success();
+                md.push_str(&text);
+            }
+            Some(status) => md.push_str(&format!("\n### Interface, drawn by the machine's graphics ({label})\n\nThe run ended without a report (exit {status}): this backend does not work here.\n")),
+            None => md.push_str(&format!("\n### Interface, drawn by the machine's graphics ({label})\n\nThe run did not finish in 20 minutes and was stopped.\n")),
+        }
+    }
+    (md, failed)
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
-    let Some(out) = args.next().map(PathBuf::from) else {
+    let first = args.next();
+    if first.as_deref() == Some("--ui-only") {
+        let (Some(out), Some(list)) = (args.next(), args.next()) else { std::process::exit(2) };
+        ui_only(Path::new(&out), Path::new(&list));
+    }
+    let Some(out) = first.map(PathBuf::from) else {
         eprintln!("usage: word_fidelity OUT_DIR [--private DIR]");
         std::process::exit(2);
     };
@@ -278,6 +356,24 @@ fn main() {
             Err(e) => edited.push(editing::Outcome { name, edits: 0, failures: Vec::new(), error: Some(e.kind().to_string()) }),
         }
     }
+    // The interface checks: the first synthetic PDFs Word made, and the real documents' PDFs (kept
+    // on the machine, in a folder next to the output that is not uploaded).
+    let private_dir = PathBuf::from(format!("{}.private-ui", out.display()));
+    let _ = std::fs::create_dir_all(&private_dir);
+    let mut inputs: Vec<(String, PathBuf)> = Vec::new();
+    for r in &rows {
+        let Some(word) = &r.word else { continue };
+        if r.name.starts_with("private-") {
+            let path = private_dir.join(format!("{}.pdf", r.name));
+            if std::fs::write(&path, word).is_ok() {
+                inputs.push((r.name.clone(), path));
+            }
+        } else if out.join(&r.name).join("word.pdf").is_file() {
+            inputs.push((r.name.clone(), out.join(&r.name).join("word.pdf")));
+        }
+    }
+    inputs.extend(private_pdfs.iter().enumerate().map(|(i, p)| (format!("private-pdf-{}", i + 1), p.clone())));
+    let (ui_md, ui_failed) = if std::env::var_os("WORD_FIDELITY_NO_UI").is_some() { (String::new(), false) } else { ui_checks(&out, &inputs) };
     let mut md = String::from("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
     let mut word_failed = false;
     for r in &rows {
@@ -307,6 +403,7 @@ fn main() {
         md.push_str(&editing::table(&edited, &faces, |name| !name.starts_with("private-")));
     }
     md.push_str(&editing::font_report());
+    md.push_str(&ui_md);
     print!("{md}");
     if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
         eprintln!("summary.md: {e}");
@@ -321,6 +418,10 @@ fn main() {
     }
     if connection.iter().any(|c| !c.passed) {
         eprintln!("A Word connection check failed: see the table above");
+        std::process::exit(1);
+    }
+    if ui_failed {
+        eprintln!("An interface check failed: see the table above");
         std::process::exit(1);
     }
     if edited.iter().any(|o| o.error.is_some() || !o.failures.is_empty()) {

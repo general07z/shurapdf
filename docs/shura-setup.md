@@ -300,6 +300,15 @@ Run workflow**. It never runs on pull requests.
   its end, type again (the second edit of a paragraph), move it, widen its box from the left (the
   right edge of Arabic text stays), and make it bold in the installed Bold face; then it is saved,
   reopened and checked (a paragraph an edit redrew as added text is moved as that item).
+- Then the run drives the real interface (ShuraPDF's own window code, drawn by the machine's
+  graphics through the same renderer as the app) on the first Arabic paragraphs of each document:
+  it opens a paragraph, retypes it, presses Bold twice and drags it, and reports (table
+  **Interface, drawn by the machine's graphics**) empty boxes over the letters while editing (solid
+  square blobs against before), Bold landing on another paragraph, and the milliseconds per drawn
+  frame and until the page is drawn after a move. It runs once with the machine's default graphics
+  backend and again with `dx12`, `vulkan` and `gl`, each in its own process, so a driver that fails
+  or hangs costs only its section. Pictures are kept for the synthetic documents only. The run
+  fails on boxes or Bold on another paragraph, not on speed.
 - The run also lists the Council's usual Windows fonts (Arial, Sakkal Majalla, Simplified Arabic…)
   and, for each, whether a paragraph edited in it keeps it, or why not (table **Installed
   fonts**): a font whose maker forbids embedding, or that is not installed, is drawn in a

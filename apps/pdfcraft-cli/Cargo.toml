@@ -28,6 +28,12 @@ base64 = "0.23"
 png = "0.18"
 # A synthetic .docx for tests/it/word.rs.
 pdfcraft-word-import = { workspace = true, features = ["test-support"] }
+# The word_fidelity example drives the real interface on the machine's graphics (apps may depend on
+# the interface layer).
+pdfcraft-ui-egui = { workspace = true }
+egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 # `geteuid` for `ui`'s control-file owner check: safe, so no `unsafe` libc call here.
