@@ -161,6 +161,11 @@ impl LineEditor {
         any.then_some(true)
     }
 
+    /// The paragraph's box when it was opened or last applied (user space).
+    pub(crate) fn source_rect(&self) -> [f32; 4] {
+        self.source_rect
+    }
+
     /// The font resource of the paragraph's first run.
     fn source_font(&self) -> Option<String> {
         let (block, lines) = self.source.as_ref()?;

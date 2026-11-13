@@ -6730,3 +6730,41 @@ fn a_paragraph_selected_by_its_frame_deletes_with_one_key() {
         assert_eq!(blocks(&h).iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["Page 1"], "undo restores it");
     }
 }
+
+#[test]
+fn format_buttons_keep_the_paragraph_open_that_they_changed() {
+    let bytes = source_font_fixture_with_text(
+        "BT /F2 18 Tf 20 250 Td (First paragraph) Tj ET BT /F2 18 Tf 20 170 Td (Second paragraph) Tj ET BT /F2 18 Tf 20 90 Td (Third paragraph) Tj ET",
+    );
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("three.pdf", None, bytes.clone()).expect("opens");
+        app
+    });
+    h.run_steps(4);
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let k = r.width() / 300.0;
+    // Click the first paragraph (user y 250 → screen from the top).
+    let at = egui::pos2(r.left() + 60.0 * k, r.top() + (300.0 - 255.0) * k);
+    click_at(&mut h, at);
+    let open =
+        |h: &Harness<'static, PdfCraftApp>| h.state().views[0].line_editor.as_ref().map(|e| e.text.split_whitespace().collect::<Vec<_>>().join(" "));
+    assert_eq!(open(&h).as_deref(), Some("First paragraph"), "the first paragraph is open");
+    // Retyped in Arabic, an edit redraws the paragraph as added text at the end of the page's
+    // content: the paragraphs below it move up one place in the list.
+    let typed = "الفقرة الأولى من الرسالة";
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text = typed.into();
+    h.run_steps(3);
+    // Each press changes the paragraph that is open, and leaves it open.
+    for press in 1..=3 {
+        h.get_by_label("Bold").click();
+        h.run_steps(5);
+        assert_eq!(open(&h).as_deref(), Some(typed), "after press {press}");
+    }
+    let id = h.state().views[0].id;
+    let texts: Vec<_> = h.state().session.get(id).unwrap().text_blocks(0).into_iter().map(|b| b.text).collect();
+    assert!(texts.iter().any(|t| t == "Second paragraph") && texts.iter().any(|t| t == "Third paragraph"), "{texts:?}");
+}
