@@ -42,11 +42,17 @@ redrawn paragraph, Bold on a selection, width handles of the open paragraph. Rep
   (upstream's version taken; our Arabic reading-order test re-added, may need a port), `fonts`, `annot`/`forms`
   (OUR appearance code kept, upstream's Thai changes there dropped), `edit` except the re-port below.
   Upstream tracks clips itself (`Ts.clip`): our table-cell grouping now reads its bounds (`clip_bounds`).
+- 2026-11-17 (later): the whole workspace compiles and the tests of fonts, forms, annot, export, create,
+  word-import, engine, edit (620), automation and cli pass. Done since: `styled.rs` re-ported (RTL rows,
+  `row_segments`, `justify`, `wrap_width`, `piece` shaping), `ShapedRewrite` on upstream's `ContentStream`,
+  synthetic bold/italic for shaped text now in `pdfcraft_fonts::shaped_text::ShapedFonts::styled`, moving a
+  retyped paragraph by its `Tm` (a numeric-only `TJ` inside `/ActualText` now reads as part of the box),
+  forms/annot appearances = upstream's Thai path plus our Arabic/Hebrew `Shaper`, Word export keeps
+  right-to-left paragraphs. Word and Office kinds: `.docx`/`.doc` read by WordCraft, other Office files by LibreOffice.
   **Still to do:**
-  1. `crates/edit/src/text_regions/styled.rs`: upstream's version was taken whole; re-apply OUR changes
-     (`row_segments`, `one_look_one_source`/`merge_alike_rows`, `justify_gap`, `wrap_width`, `piece` in
-     `shape_source`, RTL in `paragraph_geometry`, visual-order drawing and written order).
-  2. `crates/edit/src/text/rewrite.rs` `ShapedRewrite::apply`: port to upstream's `ContentStream`/`paragraph_style`
-     (3 arguments)/`AddedText { aligns, ink }`.
-  3. `crates/ui-egui`: 23 files with conflict markers (edit_text_ui*, format_text_ui, panels, i18n, home, ...).
-  4. Build, then the gates above. Our matrix must give 0 failures.
+  1. ui-egui text-editing UI was taken from upstream whole: re-port the frame handles, live move preview,
+     Bold on a selection, installed bold faces, one merged font list (no `Keep source fonts`/`Load font…`).
+  2. Run our Arabic matrix (real letter, Word table PDF) and the fidelity workflow; clippy -D warnings;
+     `cargo xtask layers/assets/parity`.
+  3. Known environmental test failures here: language catalogs (craft-i18n not checked out), a root-user
+     read-only-folder test.
