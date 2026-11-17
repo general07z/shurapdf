@@ -296,9 +296,8 @@ const NOT_PAGE_DRAGS: [(&str, &str, &str); 3] = [
 const CURSOR_WRITES: [&str; 4] = ["set_cursor_icon(", ".cursor_icon = ", "on_hover_cursor(", "on_hover_and_drag_cursor("];
 
 /// Functions in the page modules that set a cursor other than the pages': (file, function, why).
-const NOT_PAGE_CURSOR: [(&str, &str, &str); 4] = [
+const NOT_PAGE_CURSOR: [(&str, &str, &str); 3] = [
     ("tools/fill_sign/scan.rs", "scan_tab", "the signature dialog's Scan tab"),
-    ("tools/edit_text_ui.rs", "overlay", "the paragraph editor is an Area of its own over the page, drawn after the pages' cursor is set"),
     ("tools/calc_order_ui.rs", "panel", "the Calculation order panel, whose rows are dragged to reorder them"),
     (
         "tools/comments/popups.rs",

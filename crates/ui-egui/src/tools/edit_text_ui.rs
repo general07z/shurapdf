@@ -403,12 +403,22 @@ impl LineEditor {
         self.frame
     }
 
-    /// After applying formatting: the paragraph now has it. The byte selection stays: the applied
-    /// style did not move the text.
+    /// After applying formatting: the paragraph now has it.
     pub fn applied(&mut self) {
+        // The selection stays after a Bold or Italic press, which didn't move the text: the next
+        // press is for the same words. Any other change (a font, size or colour) is taken to the
+        // whole paragraph again, which shows as it is now.
+        let only_weight_or_slant = (self.look.bold != self.look0.bold || self.look.italic != self.look0.italic)
+            && self.look.family == self.look0.family
+            && self.look.size == self.look0.size
+            && self.look.color == self.look0.color
+            && !self.family_chosen
+            && !self.size_chosen
+            && self.font_resource.is_none();
+        if !only_weight_or_slant {
+            self.selection = None;
+        }
         self.size_chosen = false;
-        // The selection stays: the applied style didn't move the text, and the next press of Bold
-        // or Italic is for the same words.
         self.font_resource = None;
         self.family_chosen = false;
         self.look0 = self.look.clone();
@@ -1018,8 +1028,8 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         return true;
     }
     // Once the open paragraph's text has changed, a press on its frame is nobody's in the router
-    // (`object_ui` takes only an unchanged one): a drag there still takes the box, moving it with
-    // the typing in one edit, and the pointer offers it.
+    // (`object_ui` takes only an unchanged one), so the pointer doesn't offer a move there; a drag
+    // still takes the box, moving it with the typing in one edit.
     let on_open_strip = |p: Pos2| {
         view.line_editor
             .as_ref()
@@ -1035,10 +1045,6 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
     {
         view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip: Grip::Move, editing: true });
         return true;
-    }
-    if let Some(p) = ptr.pos.filter(|p| on_open_strip(*p)) {
-        let _ = p;
-        view.cursor.claim(Layer::Handle, egui::CursorIcon::Move);
     }
     // The paragraph under the pointer, where a press would take it: outlined, with its width
     // handles when closed. Not while the objects selected together or added content being moved
