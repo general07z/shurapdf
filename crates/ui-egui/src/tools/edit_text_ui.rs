@@ -398,8 +398,13 @@ impl LineEditor {
         self.size_chosen = true;
     }
 
-    /// After applying formatting: the paragraph now has it. Its old byte selection is cleared;
-    /// the rewritten paragraph may have different text or geometry.
+    /// The frame drawn around the open paragraph on the last frame (screen), grown with its draft.
+    pub(crate) fn frame_rect(&self) -> Option<Rect> {
+        self.frame
+    }
+
+    /// After applying formatting: the paragraph now has it. The byte selection stays: the applied
+    /// style did not move the text.
     pub fn applied(&mut self) {
         self.size_chosen = false;
         // The selection stays: the applied style didn't move the text, and the next press of Bold
@@ -410,7 +415,6 @@ impl LineEditor {
         self.extras0 = self.extras;
         self.box_change = [0.0, 0.0];
         self.original = self.text.clone();
-        self.selection = None;
         // The page now has this text: the box's history restarts, even when the format left the
         // text as it was, so a Redo from before can't put undone typing back on top of it.
         self.typing_from = None;
@@ -663,32 +667,12 @@ const EDGE_REACH: f32 = 8.0;
 /// the frame's Move cursor shows, and a press there takes hold of the box (`object_ui`).
 pub(crate) const FRAME_REACH: f32 = 8.0;
 
-/// The grips of the frame `f` of the paragraph open for typing. The editor's own text covers the
-/// inside, so the width handles stand just outside the sides and the border strip around the
-/// frame (not its inside) moves the paragraph.
+/// The width handles of the frame `f` of the paragraph open for typing. The editor's own text
+/// covers the inside, so they stand a little outside the sides, past the strip where a press takes
+/// hold of the box ([`FRAME_REACH`], `object_ui`).
 fn frame_handles(f: Rect) -> [Rect; 2] {
     let h = (f.height() * 0.5).clamp(14.0, 28.0);
-    [f.left() - 5.0, f.right() + 5.0].map(|x| Rect::from_center_size(Pos2::new(x, f.center().y), egui::vec2(8.0, h)))
-}
-
-fn frame_grip_at(f: Rect, p: Pos2) -> Option<Grip> {
-    let [left, right] = frame_handles(f);
-    if left.expand(2.0).contains(p) {
-        Some(Grip::Left)
-    } else if right.expand(2.0).contains(p) {
-        Some(Grip::Right)
-    } else {
-        (f.expand(FRAME_REACH).contains(p) && !f.contains(p)).then_some(Grip::Move)
-    }
-}
-
-/// Whether a press at `p` takes hold of a width handle of the paragraph open for typing on
-/// `page`. The handles stand just outside its frame, where area selection would start instead.
-pub(crate) fn grabs_open_handle(view: &DocView, page: usize, p: Pos2) -> bool {
-    view.line_editor.as_ref().filter(|e| e.page == page).and_then(|e| e.frame).is_some_and(|f| {
-        let [left, right] = frame_handles(f);
-        left.expand(2.0).contains(p) || right.expand(2.0).contains(p)
-    })
+    [f.left() - 9.0, f.right() + 9.0].map(|x| Rect::from_center_size(Pos2::new(x, f.center().y), egui::vec2(8.0, h)))
 }
 
 /// The rewrap handles drawn on a paragraph box's left and right edges (screen).
@@ -756,10 +740,34 @@ fn has_edges(info: &DocInfo, page: usize) -> bool {
 /// arrow says so; a click still opens it for typing) and its edge rewraps it, from a little way
 /// outside the box (the handle is drawn half outside it, #2276); the open one takes the text
 /// cursor. `active` is the paragraph open for typing on this page.
-pub(crate) fn hit(xf: &PageXform, info: &DocInfo, page: usize, lines: &[pdfcraft_engine::TextBlock], active: Option<usize>, p: Pos2) -> Option<Hit> {
+pub(crate) fn hit(
+    xf: &PageXform,
+    info: &DocInfo,
+    page: usize,
+    lines: &[pdfcraft_engine::TextBlock],
+    active: Option<(usize, Option<Rect>)>,
+    p: Pos2,
+) -> Option<Hit> {
     if !xf.rect.contains(p) {
         return None;
     }
+    // The width handles of the open paragraph's frame, just outside its sides (an upright page).
+    if let Some((block, Some(frame))) = active
+        && has_edges(info, page)
+    {
+        let [left, right] = frame_handles(frame);
+        let part = if left.contains(p) {
+            Some(ParagraphPart::Left)
+        } else if right.contains(p) {
+            Some(ParagraphPart::Right)
+        } else {
+            None
+        };
+        if let Some(part) = part {
+            return Some(Hit::new(Owner::Paragraph { block, part }, Layer::Handle, egui::CursorIcon::ResizeHorizontal));
+        }
+    }
+    let active = active.map(|(block, _)| block);
     let boxes: Vec<Rect> = lines.iter().map(|l| paragraph_box(xf, info, page, l.rect)).collect();
     // Edges rewrap closed paragraphs only: around the open one lies its frame (`object_ui`).
     let (block, grip) = grab_at(&boxes, p, has_edges(info, page) && active.is_none())?;
@@ -993,30 +1001,44 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
     };
     // Add text holds text that can't be drawn where it is being typed (#125).
     let held_draft = adding.is_some() && view.content.blocked().is_some();
+    // The open paragraph's width handles resize it (its typing box follows); the rest of its frame
+    // is the objects' (`object_ui`), which moves the box.
     if ptr.drag_started
-        && active.is_none()
         && !held_draft
         && let Some(o) = ptr.origin
         && let Some((block, part)) = owner
+        && (active.is_none() || (active == Some(block) && part != ParagraphPart::Body))
     {
         let grip = match part {
             ParagraphPart::Body => Grip::Move,
             ParagraphPart::Left => Grip::Left,
             ParagraphPart::Right => Grip::Right,
         };
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: false });
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: active.is_some() });
         return true;
     }
-    // The same on the frame of the paragraph open for typing: its border moves it, its side
-    // handles resize it (the text inside is the editor's).
-    if resp.drag_started()
+    // Once the open paragraph's text has changed, a press on its frame is nobody's in the router
+    // (`object_ui` takes only an unchanged one): a drag there still takes the box, moving it with
+    // the typing in one edit, and the pointer offers it.
+    let on_open_strip = |p: Pos2| {
+        view.line_editor
+            .as_ref()
+            .filter(|e| e.page == page && e.has_changes())
+            .and_then(|e| e.frame)
+            .is_some_and(|f| f.expand(FRAME_REACH).contains(p) && !f.contains(p) && !frame_handles(f).iter().any(|h| h.expand(1.0).contains(p)))
+    };
+    if ptr.drag_started
+        && !held_draft
         && let Some(block) = active
         && let Some(o) = ptr.origin
-        && let Some(frame) = view.line_editor.as_ref().and_then(|e| e.frame)
-        && let Some(grip) = frame_grip_at(frame, o).filter(|g| upright || *g == Grip::Move)
+        && on_open_strip(o)
     {
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: true });
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip: Grip::Move, editing: true });
         return true;
+    }
+    if let Some(p) = ptr.pos.filter(|p| on_open_strip(*p)) {
+        let _ = p;
+        view.cursor.claim(Layer::Handle, egui::CursorIcon::Move);
     }
     // The paragraph under the pointer, where a press would take it: outlined, with its width
     // handles when closed. Not while the objects selected together or added content being moved
@@ -1176,18 +1198,6 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
                     ui.painter().rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, ACCENT), egui::StrokeKind::Middle);
                 }
             }
-            // On the frame, a press takes hold of the box (a click selects it, a drag moves it):
-            // the pointer says so there, and reads as text inside. Once the text is changed, a
-            // press there applies the typing like any click off the text instead of taking the
-            // box (`object_ui` would drop the typing), so the pointer doesn't offer it then
-            // (review on #4624).
-            if !ed.has_changes()
-                && let Some(p) = ui.input(|i| i.pointer.hover_pos())
-                && ui.clip_rect().contains(p)
-                && let Some(grip) = frame_grip_at(frame, p).filter(|g| upright || *g == Grip::Move)
-            {
-                ui.ctx().set_cursor_icon(if grip == Grip::Move { egui::CursorIcon::Move } else { egui::CursorIcon::ResizeHorizontal });
-            }
             // White, unless the text is too pale to read on white (white text from a coloured
             // banner, #913): then a dark box, with a caret that shows on it.
             let fill = if background_ready { Color32::TRANSPARENT } else { editor_fill(text_color) };
@@ -1244,7 +1254,10 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
                     }
                 }
                 look = Some((Arc::clone(&output.galley), output.galley_pos));
-                if let Some(cursor) = output.cursor_range {
+                // (Not on the frame the selection is given back, below: egui's own is gone then.)
+                if !ed.focus
+                    && let Some(cursor) = output.cursor_range
+                {
                     let selected = cursor.as_sorted_char_range();
                     let byte = |index| ed.text.char_indices().nth(index).map_or(ed.text.len(), |(at, _)| at);
                     let before = ed.selection.clone();

@@ -16071,3 +16071,25 @@ fn thai_paragraphs_break_the_row_on_unicode_row_breaks() {
         assert_eq!(rows(&doc), ["กข", "ค"], "matching U+{:04X}", u32::from(separator));
     }
 }
+
+#[test]
+fn bolding_one_word_keeps_the_line_one_row() {
+    let mut doc = text_page("BT /F1 24 Tf 20 150 Td (Page 1) Tj ET");
+    let style = text::BlockStyle {
+        ranges: vec![text::RangeStyle {
+            range: 5..6,
+            family: Some((crate::added::Family::Helvetica, true, false)),
+            resource: None,
+            size: None,
+            color: None,
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        }],
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 0, Some("Page 1"), &style).unwrap();
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.len(), 1, "{blocks:?}");
+    assert_eq!(blocks[0].editor_text, "Page 1", "{:?}", blocks[0].rows);
+}

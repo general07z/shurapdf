@@ -635,13 +635,18 @@ impl PageHits<'_> {
             let on_paragraphs = edit_text || crate::edit_text_ui::over_paragraph(xf, info, page, lines, p);
             (
                 edit_text.then(|| crate::edit_text_ui::picture_hit(xf, page, info, images, view, p)).flatten(),
-                on_paragraphs.then(|| crate::edit_text_ui::hit(xf, info, page, lines, open.map(|e| e.block), p)).flatten(),
+                on_paragraphs.then(|| crate::edit_text_ui::hit(xf, info, page, lines, open.map(|e| (e.block, e.frame_rect())), p)).flatten(),
                 edit_text.then(|| crate::object_ui::hit(view, xf, info, page, frame, p)).flatten(),
                 edit_text.then(|| crate::edit_text_ui::picture_handle_hit(clip, xf, page, info, images, view, p)).flatten(),
             )
         } else {
             (None, None, None, None)
         };
+        // A width handle of the open paragraph stands over the strip of its frame that takes the box.
+        let objects = objects.filter(|o| {
+            !(matches!(o.owner, Owner::Objects { part: crate::page_router::ObjectsPart::Frame })
+                && paragraphs.as_ref().is_some_and(|h| h.layer == Layer::Handle))
+        });
         // Added text and pictures, over the page's own paragraphs and under the objects selected
         // together.
         let picks_up = matches!(tool, QuickTool::Select | QuickTool::AddText | QuickTool::EditText);
