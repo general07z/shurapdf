@@ -1556,7 +1556,41 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     // Keep full precision: a tiny rounded text-space change can be magnified by a CTM,
     // and restoring rise/spacing must not alter following unselected text.
     let n = Object::Real;
-    for s in shown.into_iter().filter(|s| selected.contains(&s.op)) {
+    // A text object whose shows are all selected and which starts at an absolute `Tm` is moved by
+    // that `Tm`: nothing is written between its glyphs, so a line drawn as an `/ActualText` span
+    // (Word's, or a retyped one) reads back as one box at its new place.
+    let mut by_tm = HashSet::new();
+    for s in shown.iter().filter(|s| selected.contains(&s.op)) {
+        if by_tm.contains(&s.op) {
+            continue;
+        }
+        let Some(start) = ops.get(..s.op).and_then(|before| before.iter().rposition(|o| o.is("BT") || o.is("ET"))).filter(|at| ops.get(*at).is_some_and(|o| o.is("BT")))
+        else {
+            continue;
+        };
+        let end = ops.get(start..).and_then(|rest| rest.iter().position(|o| o.is("ET"))).map_or(ops.len(), |at| start + at);
+        let object = ops.get(start..end).unwrap_or_default();
+        let is_show = |o: &Op| ["Tj", "TJ", "'", "\""].iter().any(|name| o.is(name));
+        let all_selected = object.iter().enumerate().filter(|(_, o)| is_show(o)).all(|(k, _)| selected.contains(&(start + k)));
+        let first = object.iter().position(|o| ["Tm", "Td", "TD", "T*", "'", "\""].iter().any(|name| o.is(name)));
+        let Some(tm_at) = first.filter(|k| object.get(*k).is_some_and(|o| o.is("Tm"))).map(|k| start + k) else { continue };
+        let Some(original) = ops.get(tm_at).filter(|_| all_selected) else { continue };
+        let values: Vec<f64> = original.operands.iter().filter_map(Object::as_f64).collect();
+        let &[a, b, c, d, e, f] = values.as_slice() else { continue };
+        let Some(inverse) = Matrix([s.state.ctm.0[0], s.state.ctm.0[1], s.state.ctm.0[2], s.state.ctm.0[3], 0.0, 0.0]).invert() else { continue };
+        let [ia, ib, ic, id, _, _] = inverse.0;
+        let (ne, nf) = (e + ia * offset[0] + ic * offset[1], f + ib * offset[0] + id * offset[1]);
+        if ![ne, nf].iter().all(|v| v.is_finite() && v.abs() <= 1e12) {
+            return Err(EditError::Invalid("the paragraph move is too large".into()));
+        }
+        patches.insert(tm_at, vec![Op::new("Tm", [a, b, c, d, ne, nf].iter().map(|v| n(*v)).collect())]);
+        for (k, o) in object.iter().enumerate() {
+            if is_show(o) {
+                by_tm.insert(start + k);
+            }
+        }
+    }
+    for s in shown.into_iter().filter(|s| selected.contains(&s.op) && !by_tm.contains(&s.op)) {
         if !(0..=3).contains(&s.state.render_mode) {
             return Err(EditError::Invalid("text used as a clipping path cannot be moved in a group".into()));
         }
@@ -1619,7 +1653,8 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     // A line drawn as shaped Arabic lists its marked-content and text-object operators with its
     // glyph runs; only the operators that show text are moved.
     let shows = selected.iter().filter(|i| ops.get(**i).is_some_and(|o| ["Tj", "TJ", "'", "\""].iter().any(|name| o.is(name)))).count();
-    if patches.len() != shows {
+    let moved_by_tm = selected.iter().filter(|i| by_tm.contains(i)).count();
+    if patches.len() - patches.keys().filter(|k| !selected.contains(k)).count() + moved_by_tm != shows {
         return Err(EditError::Invalid("a selected text operation cannot be moved".into()));
     }
     let data = splice(&pieces, &ops, |i| patches.remove(&i).map_or((Vec::new(), true), |v| (v, false)));

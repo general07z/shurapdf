@@ -16,15 +16,6 @@ fn font_name(base: &str) -> String {
 #[cfg(test)]
 pub(super) use pdfcraft_fonts::shaped_text::GLYPHS_PER_FONT;
 
-/// Synthetic bold for shaped scripts (whose faces have one weight): each glyph is filled and
-/// stroked with a line this wide, in glyph space (1000 units per em), as WordCraft and Word do
-/// (3% of the font size).
-pub(super) const SYNTHETIC_BOLD_STROKE: f64 = 30.0;
-
-/// Synthetic italic for shaped scripts: the text matrix leans glyphs right by this much per unit
-/// of height (WordCraft's and Word's slant, about 12°).
-pub(super) const SYNTHETIC_ITALIC_SKEW: f64 = 0.21;
-
 /// A line of a shaped-text item after layout: its text, whether its paragraph runs right to left,
 /// its paragraph, its pieces in drawing order and its width at the item's size.
 pub(super) type LaidLine = (String, bool, usize, Vec<Piece>, f64);
@@ -140,15 +131,30 @@ pub(super) fn draw_laid_shaped(
     let r = text_rect(t);
     let latin = font_name(t.family.base_font(t.bold, t.italic));
     let shaped =
-        ShapedFonts::new(shaped_text::clusters(laid.iter().map(|(_, _, _, pieces, _)| pieces.as_slice())), outline, taken, fonts, "PCAr", &mut |o| {
-            Object::Ref(doc.add(o))
-        })
+        ShapedFonts::styled(
+            shaped_text::clusters(laid.iter().map(|(_, _, _, pieces, _)| pieces.as_slice())),
+            outline,
+            taken,
+            fonts,
+            "PCAr",
+            &mut |o| Object::Ref(doc.add(o)),
+            t.bold,
+            t.italic,
+        )
         .map_err(|(e, c)| match c.script {
             ShapedScript::Arabic => arabic_error(e, &c.text),
             ShapedScript::Hebrew => hebrew_error(e, &c.text),
             ShapedScript::Thai => thai_error(e, &c.text),
         })?;
-    out.extend(format!("BT {}\n", t.fill_op()).bytes());
+    out.extend(format!("BT {}", t.fill_op()).bytes());
+    if t.bold {
+        // Bold shaped glyphs are filled and stroked, and an uncoloured Type 3 glyph strokes with
+        // the current stroke colour: the text colour (the fill operator, upper-cased).
+        let fill = t.fill_op();
+        let (operands, op) = fill.rsplit_once(' ').unwrap_or(("", fill.as_str()));
+        out.extend(format!(" {operands} {}", op.to_uppercase()).bytes());
+    }
+    out.push(b'\n');
     if t.char_spacing != 0.0 {
         out.extend(format!("{} Tc\n", n(t.char_spacing)).bytes());
     }

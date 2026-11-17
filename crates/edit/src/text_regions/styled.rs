@@ -359,6 +359,7 @@ struct StyledLines<'a> {
 type StyledChar = (char, usize, String);
 
 /// End of a contiguous run sharing both its style and font resource.
+#[cfg(test)]
 fn styled_run_end(items: &[StyledChar], start: usize) -> usize {
     let Some(first) = items.get(start) else { return start };
     let mut end = start + 1;
@@ -387,6 +388,93 @@ struct ShapedRows {
     char_advances: HashMap<(usize, usize), Vec<f64>>,
 }
 
+/// The space to add to each of a row's `spaces` so it fills its paragraph's width again: `slack`
+/// is the room left on the row. Only a row that filled the width in the source (`source_row`
+/// against the block's), which is how a justified line shows (Word stretches the gaps between
+/// words), and only by a gap a justified line could have (up to 1.5 times the size). The caller
+/// says whether the row is `eligible` (right to left, not centred, not the paragraph's last row
+/// or an added one); a chosen alignment or width rules it out.
+fn justify_gap(block: &TextBlock, source_row: [f64; 4], slack: f64, spaces: usize, size: f64, eligible: bool, style: &BlockStyle) -> f64 {
+    let block_width = block.rect[2] - block.rect[0];
+    if !eligible || style.align.is_some() || style.width.is_some() || spaces == 0 || (source_row[2] - source_row[0]) < block_width * 0.985 {
+        return 0.0;
+    }
+    let gap = slack / spaces as f64;
+    if gap.is_finite() && gap.abs() <= size * 1.5 { gap } else { 0.0 }
+}
+
+/// A stretch of a row drawn in one go: characters `start..end` of the row and, for a piece of a
+/// mixed line, the direction it runs in.
+type Segment = (usize, usize, Option<bool>);
+
+/// The segments of `row` in drawing order, left to right. Ordinarily the stretches of one source
+/// run and font, in reading order. A row that needs shaping and mixes runs (bold inside regular
+/// Arabic, say) is split further where the direction changes (UAX #9 levels in the row's own
+/// direction) and put in visual order (rule L2), so each piece is shaped alone in one direction
+/// and drawn in its own style where the line shows it.
+fn row_segments(row: &[StyledChar]) -> Vec<Segment> {
+    let same = |a: &StyledChar, b: &StyledChar| a.1 == b.1 && a.2 == b.2;
+    let mut plain = Vec::new();
+    let mut at = 0;
+    while let Some(item) = row.get(at) {
+        let mut end = at + 1;
+        while row.get(end).is_some_and(|next| same(next, item)) {
+            end += 1;
+        }
+        plain.push((at, end, None));
+        at = end;
+    }
+    let text: String = row.iter().map(|c| c.0).collect();
+    if plain.len() < 2 || !pdfcraft_fonts::source_shaping::required(&text) {
+        return plain;
+    }
+    let base = if pdfcraft_fonts::visual_line::paragraph_rtl(&text) { unicode_bidi::Level::rtl() } else { unicode_bidi::Level::ltr() };
+    let info = unicode_bidi::ParagraphBidiInfo::new(&text, Some(base));
+    // The level of each character (levels are per byte).
+    let mut levels = Vec::with_capacity(row.len());
+    let mut byte = 0;
+    for c in row {
+        levels.push(info.levels.get(byte).map_or(base.number(), |l| l.number()));
+        byte += c.0.len_utf8();
+    }
+    let mut pieces: Vec<(usize, usize, u8)> = Vec::new();
+    for (i, c) in row.iter().enumerate() {
+        let level = levels.get(i).copied().unwrap_or(0);
+        match pieces.last_mut() {
+            Some(last) if last.2 == level && row.get(last.0).is_some_and(|first| same(first, c)) => last.1 = i + 1,
+            _ => pieces.push((i, i + 1, level)),
+        }
+    }
+    // L2: from the highest level down to the lowest odd one, reverse each run at that level or above.
+    let Some(lowest_odd) = pieces.iter().map(|p| p.2).filter(|l| l % 2 == 1).min() else {
+        return pieces.into_iter().map(|(a, b, l)| (a, b, Some(l % 2 == 1))).collect();
+    };
+    let highest = pieces.iter().map(|p| p.2).max().unwrap_or(0);
+    let mut level = highest;
+    while level >= lowest_odd {
+        let mut i = 0;
+        while i < pieces.len() {
+            if pieces.get(i).is_some_and(|p| p.2 >= level) {
+                let mut j = i;
+                while pieces.get(j).is_some_and(|p| p.2 >= level) {
+                    j += 1;
+                }
+                if let Some(run) = pieces.get_mut(i..j) {
+                    run.reverse();
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        if level == 0 {
+            break;
+        }
+        level -= 1;
+    }
+    pieces.into_iter().map(|(a, b, l)| (a, b, Some(l % 2 == 1))).collect()
+}
+
 fn prepare_shaped_rows(
     doc: &Document,
     fonts: &Dict,
@@ -399,18 +487,15 @@ fn prepare_shaped_rows(
     let mut advances = HashMap::new();
     let mut char_advances = HashMap::new();
     for (row_index, row) in rows.iter().enumerate().filter(|(index, _)| !kept.get(*index).copied().unwrap_or(false)) {
-        let mut at = 0;
-        while let Some(item) = row.get(at) {
-            let end = styled_run_end(row, at);
-            let segment = row.get(at..end).unwrap_or_default();
+        for (at, end, piece) in row_segments(row) {
+            let (Some(item), Some(segment)) = (row.get(at), row.get(at..end)) else { continue };
             let widths: Vec<f64> = segment.iter().map(&advance).collect();
             advances.insert((row_index, at), widths.iter().copied().sum());
             char_advances.insert((row_index, at), widths);
             let text: String = segment.iter().map(|character| character.0).collect();
-            if let Some(shaped) = shape_source(doc, fonts, thai, &item.2, &text)? {
+            if let Some(shaped) = shape_source(doc, fonts, thai, &item.2, &text, piece)? {
                 runs.insert((row_index, at), shaped);
             }
-            at = end;
         }
     }
     Ok(ShapedRows { runs, advances, char_advances })
@@ -449,13 +534,15 @@ struct ShapedRunDrawing<'a> {
     text: &'a str,
     matrix: [f64; 6],
     size: f64,
+    /// Extra word spacing in text space that a justified row spreads over its spaces.
+    justify: f64,
     thai: bool,
 }
 
 impl ShapedRunDrawing<'_> {
     /// Draw and return the run's advance in text space, including cluster-safe spacing.
     fn draw(&self, block_ops: &mut Vec<Op>, state: &mut TextState) -> Result<f64, EditError> {
-        let Self { doc, fonts, shaped, resources, text, matrix: tm, size, thai } = *self;
+        let Self { doc, fonts, shaped, resources, text, matrix: tm, size, justify, thai } = *self;
         let n = pdfcraft_content::num;
         let (resource, _) = self.resources.first().ok_or_else(|| EditError::Invalid("shaped run has no glyphs".into()))?;
         let mut properties = Dict::new();
@@ -480,6 +567,8 @@ impl ShapedRunDrawing<'_> {
         }
         // Keep the original text settings. TJ compensates for the automatic PDF advance
         // after each glyph, while shaping keeps marks attached to their cluster.
+        let kept_word_spacing = state.word_spacing;
+        state.word_spacing += justify;
         let (char_spacing, word_spacing, rise) = (state.char_spacing, state.word_spacing, state.rise);
         block_ops.push(Op::new("BT", vec![]));
         block_ops.extend(state.ops());
@@ -541,26 +630,61 @@ impl ShapedRunDrawing<'_> {
             block_ops.push(Op::new("Ts", vec![n(rise)]));
         }
         block_ops.push(Op::new("ET", vec![]));
-        (state.char_spacing, state.word_spacing) = (char_spacing, word_spacing);
+        (state.char_spacing, state.word_spacing) = (char_spacing, kept_word_spacing);
         extra += cluster_spacing;
         block_ops.push(Op::new("EMC", vec![]));
         Ok(shaped.advance * size + extra)
     }
 }
 
-fn validate_contextual_rows(rows: &[Vec<StyledChar>], kept: &[bool]) -> Result<(), EditError> {
-    for (row, _) in rows.iter().zip(kept).filter(|(_, retained)| !**retained) {
-        let text: String = row.iter().map(|character| character.0).collect();
-        if pdfcraft_fonts::source_shaping::required(&text)
-            && row.first().is_some_and(|first| row.iter().any(|character| character.1 != first.1 || character.2 != first.2))
-        {
-            return Err(EditError::Invalid(
-                "contextual/bidi text across font or style boundaries needs a uniform full-face row; mixed contextual runs are not yet supported"
-                    .into(),
-            ));
+/// The width rows wrap at: a right-to-left row may run a hundredth past the paragraph's.
+fn wrap_width(width: f64, rtl: bool) -> f64 {
+    if rtl { width * 1.01 } else { width }
+}
+
+/// Each of `rows` through [`one_look_one_source`], unless per-range styles are in play.
+fn merge_alike_rows(rows: StyledRows, lines: &[TextLine], merge: bool) -> StyledRows {
+    if merge { rows.into_iter().map(|row| one_look_one_source(row, lines)).collect() } else { rows }
+}
+
+/// `row` with every character credited to its first character's source run, when all of them are
+/// in one font resource and their runs look and paint alike (size, colour, weight, slant, text
+/// state), and the row needs shaping; else as it was.
+fn one_look_one_source(mut row: Vec<StyledChar>, lines: &[TextLine]) -> Vec<StyledChar> {
+    let Some((_, first_line, first_font)) = row.first().cloned() else { return row };
+    let Some(first) = lines.get(first_line) else { return row };
+    // Only a row that must be shaped; any other keeps its runs (and their paint) as they are.
+    let text: String = row.iter().map(|c| c.0).collect();
+    if !pdfcraft_fonts::source_shaping::required(&text) {
+        return row;
+    }
+    // A complete face an earlier edit embedded encodes only the letters it drew then: a new
+    // letter is resolved to a fresh copy of the same face (another resource). Both are the one
+    // face, and the row shapes in it as one, or a word would break between them.
+    let one_face = |font: &String, line: &TextLine| {
+        *font == first_font
+            || (font.starts_with("PCFull")
+                && first_font.starts_with("PCFull")
+                && pdfcraft_fonts::embedding::face_key(&line.base_font) == pdfcraft_fonts::embedding::face_key(&first.base_font))
+    };
+    let alike = row.iter().all(|(_, line, font)| {
+        lines.get(*line).is_some_and(|l| {
+            one_face(font, l)
+                && (l.size - first.size).abs() < 0.01
+                && l.color == first.color
+                && l.bold == first.bold
+                && l.italic == first.italic
+                && l.paint == first.paint
+                && l.origin.state.draws_like(&first.origin.state)
+        })
+    });
+    if alike {
+        for c in &mut row {
+            c.1 = first_line;
+            c.2 = first_font.clone();
         }
     }
-    Ok(())
+    row
 }
 
 fn calibration_factors(
@@ -671,7 +795,15 @@ fn page_font_metrics(
     (fonts, metrics)
 }
 
-fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextBlock, style: &BlockStyle) -> Result<(f64, f64, f64), EditError> {
+/// The paragraph's offset and the width its rows wrap to. A single row may grow to the page's
+/// margin: rightwards, or leftwards when it reads right to left (`rtl`), keeping its right edge.
+fn paragraph_geometry(
+    doc: &Document,
+    page: &pdfcraft_model::Page,
+    block: &TextBlock,
+    style: &BlockStyle,
+    rtl: bool,
+) -> Result<(f64, f64, f64), EditError> {
     if [style.size, style.line_spacing, style.char_spacing, style.scale, style.width].iter().flatten().any(|value| !value.is_finite())
         || style.color.is_some_and(|color| color.iter().any(|value| !value.is_finite()))
     {
@@ -681,7 +813,9 @@ fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextB
     if !dx.is_finite() || !dy.is_finite() || style.width.is_some_and(|width| !width.is_finite()) {
         return Err(EditError::Invalid("the paragraph's position and width must be finite".into()));
     }
-    let natural = if block.invisible || block.rows.len() == 1 {
+    let natural = if (block.invisible || block.rows.len() == 1) && rtl {
+        (block.rect[2] + dx - (page.crop(doc)[0] + 36.0)).max(block.rect[2] - block.rect[0])
+    } else if block.invisible || block.rows.len() == 1 {
         (page.crop(doc)[2] - 36.0 - (block.rect[0] + dx)).max(block.rect[2] - block.rect[0])
     } else {
         block.rect[2] - block.rect[0]
@@ -958,7 +1092,7 @@ fn legacy_thai_font(
             let Some(source_font) = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)) else { return Err(error) };
             let complete = program_candidates(doc, fonts, &source.font, source_font, &source.base_font)
                 .into_iter()
-                .find(|(_, font)| rows().all(|row| shape_with_program(doc, font, row).is_some()));
+                .find(|(_, font)| rows().all(|row| shape_with_program(doc, font, row, None).is_some()));
             return match complete {
                 Some((name, _)) => Ok(Some(ThaiSpan::Program(name))),
                 None => Err(error),
@@ -1222,17 +1356,28 @@ impl FontStyle {
 
 /// `text` shaped by `font`'s embedded program with its own layout, when the program covers it and
 /// may be embedded again (`embed_mapping` refuses one that may not, so a later program is tried).
-fn shape_with_program(doc: &Document, font: &Dict, text: &str) -> Option<(Vec<u8>, pdfcraft_fonts::source_shaping::ShapedRun)> {
+fn shape_with_program(doc: &Document, font: &Dict, text: &str, piece: Option<bool>) -> Option<(Vec<u8>, pdfcraft_fonts::source_shaping::ShapedRun)> {
     let bytes = pdfcraft_fonts::pdf::embedded_sfnt(doc, font)?;
     if pdfcraft_fonts::embedding::validate(&bytes).is_err() || !pdfcraft_fonts::embedding::covers(&bytes, text) {
         return None;
     }
-    let shaped = pdfcraft_fonts::source_shaping::shape(&bytes, text).ok()?;
+    let shaped = match piece {
+        Some(rtl) => pdfcraft_fonts::source_shaping::shape_piece(&bytes, text, rtl),
+        None => pdfcraft_fonts::source_shaping::shape(&bytes, text),
+    }
+    .ok()?;
     Some((bytes, shaped))
 }
 
 /// Shape in the source or an explicitly registered matching full face. Never use interface fonts.
-fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, text: &str) -> Result<Option<ShapedText>, EditError> {
+fn shape_source(
+    doc: &Document,
+    fonts: &Dict,
+    thai: &ThaiShaping,
+    name: &str,
+    text: &str,
+    piece: Option<bool>,
+) -> Result<Option<ShapedText>, EditError> {
     if thai.outlined.contains(name) {
         let shaped = shape_thai_row(text)?;
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::ThaiOutlines }));
@@ -1243,11 +1388,13 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
             .and_then(|f| doc.dict(f))
             .ok_or_else(|| EditError::Invalid("the complete font resource is missing".into()))?;
         let family = Metrics::from_dict(doc, &font).base_font;
-        let (bytes, shaped) = shape_with_program(doc, &font, text)
+        let (bytes, shaped) = shape_with_program(doc, &font, text, piece)
             .ok_or_else(|| EditError::Invalid(format!("{family} cannot shape this text with its own layout; choose a font that covers it")))?;
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Program { bytes, family } }));
     }
-    if !pdfcraft_fonts::source_shaping::required(text) {
+    // Plain text is shown as it is, except a right-to-left piece of a mixed line: its brackets
+    // are mirrored and its characters run leftwards, which only shaping does.
+    if !pdfcraft_fonts::source_shaping::required(text) && piece != Some(true) {
         return Ok(None);
     }
     let source =
@@ -1265,7 +1412,7 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
         None => None,
     };
     for (_, font) in program_candidates(doc, fonts, name, source, &family) {
-        if let Some((bytes, shaped)) = shape_with_program(doc, &font, text) {
+        if let Some((bytes, shaped)) = shape_with_program(doc, &font, text, piece) {
             return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Program { bytes, family } }));
         }
     }
@@ -1636,7 +1783,9 @@ pub(crate) fn rewrite_styled_block(
     let p = page_dict(doc, page)?;
     let mut res = p.dict.get(b"Resources").and_then(|resource| doc.resolve(resource).as_dict().cloned()).unwrap_or_default();
     let (mut fonts, mut metrics) = page_font_metrics(doc, &res, block, lines);
-    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style)?;
+    // A right-to-left paragraph is aligned right and grows leftwards, as on the other paths.
+    let rtl = pdfcraft_fonts::visual_line::paragraph_rtl(draft);
+    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style, rtl)?;
     let prepared = CharacterPreparation {
         doc,
         first,
@@ -1695,12 +1844,11 @@ pub(crate) fn rewrite_styled_block(
     };
     let measure = |items: &[(char, usize, String)]| -> Result<f64, EditError> {
         let mut width = 0.0;
-        let mut at = 0;
-        while let Some(item) = items.get(at) {
-            let end = styled_run_end(items, at);
+        for (at, end, piece) in row_segments(items) {
+            let Some(item) = items.get(at) else { continue };
             let segment = items.get(at..end).unwrap_or_default();
             let string: String = segment.iter().map(|v| v.0).collect();
-            if let Some(shaped) = shape_source(doc, &fonts, &thai, &item.2, &string)? {
+            if let Some(shaped) = shape_source(doc, &fonts, &thai, &item.2, &string, piece)? {
                 let shaped = &shaped.run;
                 let source = lines.get(item.1).unwrap_or(first);
                 let scale =
@@ -1718,11 +1866,16 @@ pub(crate) fn rewrite_styled_block(
             } else {
                 width += segment.iter().map(&advance).sum::<f64>();
             }
-            at = end;
         }
         Ok(width)
     };
-    let (mut rows, row_ranges, row_lines, row_soft, row_gap) = wrap_styled_rows(&chars, width, measure)?;
+    // A right-to-left row may run a hundredth past the width before it wraps: shaping it again
+    // never lands on the source's width to the last fraction of a point, and a line Word fitted
+    // (and justified) must not drop its last word.
+    let (rows, row_ranges, row_lines, row_soft, row_gap) = wrap_styled_rows(&chars, wrap_width(width, rtl), measure)?;
+    // Runs of one look are one run to shape: Word draws a right-to-left line in many (a word, a
+    // bracket, a digit), and shaping each apart would neither join nor order the line.
+    let mut rows = merge_alike_rows(rows, lines, overrides.is_empty());
     let space_styles: Vec<_> = rows.iter_mut().map(|row| assign_subset_space_fonts(row, &metrics)).collect();
     let streams = content_streams(doc, &p.dict)?;
     let pieces = crate::text::joined(&streams);
@@ -1751,7 +1904,6 @@ pub(crate) fn rewrite_styled_block(
     // What is in force where the rewrite is drawn, and what the text after it expects.
     let after = if split { &o.state } else { &o.bt_state };
     let at = if split { start } else { o.bt_op };
-    validate_contextual_rows(&rows, &kept)?;
     let measured: Vec<_> = rows.iter().map(|row| measure(row)).collect::<Result<_, _>>()?;
     let shaped = prepare_shaped_rows(doc, &fonts, &thai, &rows, &kept, advance)?;
     let ShapedRows { runs: shaped_runs, advances: segment_advances, char_advances } = shaped;
@@ -1817,21 +1969,37 @@ pub(crate) fn rewrite_styled_block(
         let w = measured.get(row_index).copied().unwrap_or(0.0);
         // The row's own alignment, or the paragraph's.
         let asked = row_lines.get(row_index).and_then(|l| style.aligns.get(*l)).copied().flatten().or(style.align);
-        let align = asked.unwrap_or(if centered { crate::added::Align::Center } else { crate::added::Align::Left });
+        let align = asked.unwrap_or(if centered {
+            crate::added::Align::Center
+        } else if rtl {
+            crate::added::Align::Right
+        } else {
+            crate::added::Align::Left
+        });
         let original_rect = block.rows.get(row_index).and_then(|row| row_rect(row, lines)).unwrap_or(block.rect);
         let left = if style.width.is_none() && asked.is_none() { original_rect[0] } else { block.rect[0] };
         let available = if style.width.is_none() && asked.is_none() { original_rect[2] - original_rect[0] } else { width };
+        // A justified row fills its width again (see `justify_gap`).
+        let stretched: usize = row_segments(row)
+            .into_iter()
+            .filter(|(pos, _, _)| shaped_runs.contains_key(&(row_index, *pos)))
+            .map(|(pos, end, _)| row.get(pos..end).unwrap_or_default().iter().filter(|c| c.0 == ' ').count())
+            .sum();
+        let last = rows.len() != block.rows.len() || row_index + 1 >= rows.len();
+        let justify = justify_gap(block, original_rect, available - w, stretched, first.size, rtl && !centered && !last, style);
+        let w = w + justify * stretched as f64;
         let mut x = left
             + match align {
                 crate::added::Align::Center => (available - w) / 2.0,
                 crate::added::Align::Right => available - w,
                 _ => 0.0,
             };
-        let mut pos = 0;
-        while pos < row.len() {
+        // Each segment's operators, to be written in reading order below.
+        let mut written: Vec<(usize, Vec<Op>)> = Vec::new();
+        for (pos, end, _) in row_segments(row) {
+            let segment_start = block_ops.len();
             let Some(item) = row.get(pos) else { break };
             let source = lines.get(item.1).unwrap_or(first);
-            let end = styled_run_end(row, pos);
             let segment = row.get(pos..end).unwrap_or_default();
             let string: String = segment.iter().map(|c| c.0).collect();
             let m = metrics.get(&item.2).ok_or_else(|| EditError::Invalid("the paragraph font is missing".into()))?;
@@ -1860,6 +2028,7 @@ pub(crate) fn rewrite_styled_block(
             // drawn in: a `gs` has no inverse, so one run's ExtGState would stay for the next.
             block_ops.push(Op::new("q", vec![]));
             block_ops.extend(state.paint_ops(drawn_from, run_ctm));
+            let spread = state.scale * source.origin.k;
             if let Some(shaped) = shaped_runs.get(&(row_index, pos)) {
                 let resources = glyph_resources.get(&(row_index, pos)).ok_or_else(|| EditError::Invalid("shaped font is missing".into()))?;
                 let drawing = ShapedRunDrawing {
@@ -1870,6 +2039,7 @@ pub(crate) fn rewrite_styled_block(
                     text: &string,
                     matrix: tm,
                     size: size_of(source, item.1),
+                    justify: if spread.abs() > 1e-9 { justify / spread } else { 0.0 },
                     thai: string.chars().any(|c| matches!(u32::from(c), 0x0e00..=0x0e7f)),
                 };
                 segment_width = drawing.draw(&mut block_ops, &mut state)? * state.scale * source.origin.k;
@@ -1909,8 +2079,13 @@ pub(crate) fn rewrite_styled_block(
             }
             block_ops.push(Op::new("Q", vec![]));
             x += segment_width;
-            pos = end;
+            written.push((pos, block_ops.split_off(segment_start)));
         }
+        // Segments are placed in drawing order and written in reading order, as Word writes a
+        // right-to-left line (its first words first, each run left of the one before): the page
+        // looks the same, and reading it back finds the runs in the order they are read.
+        written.sort_by_key(|(pos, _)| *pos);
+        block_ops.extend(written.into_iter().flat_map(|(_, ops)| ops));
         baseline -= row_step(style, anchor.size, source_leading);
     }
     push_whole_paragraph_marker(&mut block_ops, marked, "EMC");

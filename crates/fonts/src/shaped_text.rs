@@ -107,7 +107,18 @@ pub struct ShapedFonts {
     index: HashMap<ClusterKey, usize>,
     /// Each font's resource name.
     names: Vec<String>,
+    /// How far each glyph leans (synthetic italic), per unit of height.
+    skew: f64,
 }
+
+/// Synthetic bold for shaped scripts (whose faces have one weight): each glyph is filled and
+/// stroked with a line this wide, in glyph space (1000 units per em), as WordCraft and Word do
+/// (3% of the font size).
+pub const SYNTHETIC_BOLD_STROKE: f64 = 30.0;
+
+/// Synthetic italic for shaped scripts: the text matrix leans glyphs right by this much per unit
+/// of height (WordCraft's and Word's slant, about 12 degrees).
+pub const SYNTHETIC_ITALIC_SKEW: f64 = 0.21;
 
 impl ShapedFonts {
     /// Build the fonts for `clusters` into `fonts`, under names starting `prefix` that neither
@@ -125,6 +136,22 @@ impl ShapedFonts {
         fonts: &mut Dict,
         prefix: &str,
         store: &mut dyn FnMut(Object) -> Object,
+    ) -> Result<Self, (GlyphError, &'a ShapedCluster)> {
+        Self::styled(clusters, outline, taken, fonts, prefix, store, false, false)
+    }
+
+    /// [`Self::new`] for text that is bold (each glyph filled and stroked with the text colour, so
+    /// the content must set the stroke colour) and/or italic (glyphs lean by the text matrix).
+    #[allow(clippy::too_many_arguments)]
+    pub fn styled<'a>(
+        clusters: impl IntoIterator<Item = &'a ShapedCluster>,
+        outline: impl Fn(ShapedScript, u32) -> Result<GlyphOutline, GlyphError>,
+        taken: &Dict,
+        fonts: &mut Dict,
+        prefix: &str,
+        store: &mut dyn FnMut(Object) -> Object,
+        bold: bool,
+        italic: bool,
     ) -> Result<Self, (GlyphError, &'a ShapedCluster)> {
         let mut keys: Vec<&ShapedCluster> = Vec::new();
         let mut index: HashMap<ClusterKey, usize> = HashMap::new();
@@ -147,7 +174,7 @@ impl ShapedFonts {
         let mut taken_names: HashSet<Vec<u8>> = taken.iter().chain(fonts.iter()).map(|(name, _)| name.clone()).collect();
         let mut names = Vec::new();
         for (i, chunk) in keys.chunks(GLYPHS_PER_FONT).enumerate() {
-            let font = type3_font(chunk, &outlines, store);
+            let font = type3_font(chunk, &outlines, store, bold);
             let font = store(Object::Dict(font));
             let number = font.as_ref().map_or(i + 1, |r| r.num as usize);
             let mut name = format!("{prefix}{number}");
@@ -160,7 +187,7 @@ impl ShapedFonts {
             fonts.set(name.clone().into_bytes(), font);
             names.push(name);
         }
-        Ok(ShapedFonts { index, names })
+        Ok(ShapedFonts { index, names, skew: if italic { SYNTHETIC_ITALIC_SKEW } else { 0.0 } })
     }
 
     /// The font resource name and code that show `c`, if it was one of the clusters.
@@ -195,7 +222,7 @@ impl ShapedFonts {
                 out.extend(format!("/{name} {} Tf ", n(size)).bytes());
                 *current = Some(k / GLYPHS_PER_FONT);
             }
-            out.extend(format!("1 0 0 1 {} {} Tm ", n(pen), n(y)).bytes());
+            out.extend(format!("1 0 {} 1 {} {} Tm ", n(self.skew), n(pen), n(y)).bytes());
             out.extend(literal(&[code]));
             out.extend_from_slice(b" Tj\n");
             pen += c.advance * size + spacing + if c.text == " " { word_spacing } else { 0.0 };
@@ -299,12 +326,19 @@ pub fn add_type3_font(
     clusters: &[&ShapedCluster],
     outlines: &HashMap<(ShapedScript, u32), GlyphOutline>,
 ) -> pdfcraft_cos::ObjRef {
-    let font = type3_font(clusters, outlines, &mut |o| Object::Ref(doc.add(o)));
+    let font = type3_font(clusters, outlines, &mut |o| Object::Ref(doc.add(o)), false);
     doc.add(Object::Dict(font))
 }
 
 /// A Type 3 font with `clusters` as codes 1…, each drawn from its script face's glyph `outlines`.
-fn type3_font(clusters: &[&ShapedCluster], outlines: &HashMap<(ShapedScript, u32), GlyphOutline>, store: &mut dyn FnMut(Object) -> Object) -> Dict {
+fn type3_font(
+    clusters: &[&ShapedCluster],
+    outlines: &HashMap<(ShapedScript, u32), GlyphOutline>,
+    store: &mut dyn FnMut(Object) -> Object,
+    bold: bool,
+) -> Dict {
+    // A bold glyph's stroke reaches half its width past the outline.
+    let grow = if bold { SYNTHETIC_BOLD_STROKE / 2.0 } else { 0.0 };
     let mut charprocs = Dict::new();
     let mut differences = vec![Object::Int(1)];
     let mut widths = Vec::with_capacity(clusters.len());
@@ -327,13 +361,18 @@ fn type3_font(clusters: &[&ShapedCluster], outlines: &HashMap<(ShapedScript, u32
             }
         }
         // Rounded outwards so no ink is clipped.
-        let [x0, y0, x1, y1] =
-            ink.map_or([0.0; 4], |b| [(b[0] * 1000.0).floor(), (b[1] * 1000.0).floor(), (b[2] * 1000.0).ceil(), (b[3] * 1000.0).ceil()]);
+        let [x0, y0, x1, y1] = ink.map_or([0.0; 4], |b| {
+            [(b[0] * 1000.0 - grow).floor(), (b[1] * 1000.0 - grow).floor(), (b[2] * 1000.0 + grow).ceil(), (b[3] * 1000.0 + grow).ceil()]
+        });
         bbox = [bbox[0].min(x0), bbox[1].min(y0), bbox[2].max(x1), bbox[3].max(y1)];
         let mut proc = format!("{} 0 {} {} {} {} d1\n", n(c.advance * 1000.0), n(x0), n(y0), n(x1), n(y1)).into_bytes();
         if !paths.is_empty() {
+            if bold {
+                proc.extend(format!("{} w 1 j\n", n(SYNTHETIC_BOLD_STROKE)).bytes());
+            }
             proc.extend(paths);
-            proc.extend_from_slice(b"f\n");
+            // Fill and stroke for bold (B), with the nonzero rule like f.
+            proc.extend_from_slice(if bold { b"B\n" } else { b"f\n" });
         }
         let glyph = format!("g{code:02X}");
         charprocs.set(glyph.clone().into_bytes(), store(Object::Stream(Stream::flate(Dict::new(), &proc))));
