@@ -56,6 +56,60 @@ Ask ICT security for a code-signing certificate from the Council's enterprise CA
 
 Domain PCs already trust the enterprise root, so nothing else needs installing on them.
 
+## Option 4: SignPath Foundation (free, public certificate)
+
+For a public build that Windows trusts without installing anything, including on PCs running Smart App
+Control (which blocks every file not signed by a certificate that chains to Microsoft's trusted roots: a
+self-signed or Council-CA certificate never passes it). The [SignPath Foundation](https://signpath.org/)
+signs open-source projects for free, **in its own name**: Windows shows "SignPath Foundation" as the publisher.
+The project must be public and under an open licence (it is: Apache-2.0 / MIT), and the build must run on
+GitHub Actions, which is how SignPath proves where a file came from.
+
+Set-up, once (the owner of the SignPath account does it; none of it is a secret except the token):
+
+1. Apply at <https://signpath.org/open-source> and accept its code of conduct. After approval SignPath
+   creates the organization and the project.
+2. In SignPath, give the project two **artifact configurations** (the slugs below are what the workflow uses)
+   and two **signing policies**: `test-signing` (builds from `main`) and `release-signing` (tags `v*`, with
+   approval by the owner), both with the project's GitHub repository as the trusted build system.
+
+   `executables` (a zip of the two program files):
+
+   ```xml
+   <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+     <zip-file>
+       <pe-file path="pdfcraft.exe"><authenticode-sign/></pe-file>
+       <pe-file path="pdfcraft-cli.exe"><authenticode-sign/></pe-file>
+     </zip-file>
+   </artifact-configuration>
+   ```
+
+   `msi`:
+
+   ```xml
+   <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+     <zip-file>
+       <msi-file path="*.msi"><authenticode-sign/></msi-file>
+     </zip-file>
+   </artifact-configuration>
+   ```
+3. In the GitHub repository (Settings ▸ Secrets and variables ▸ Actions): the **variable**
+   `SIGNPATH_ORGANIZATION_ID` (the organization's id, shown in SignPath), optionally `SIGNPATH_PROJECT_SLUG`
+   (default `shurapdf`), and the **secret** `SIGNPATH_API_TOKEN` (a SignPath API token of a submitter user).
+   With both the id and the token present, `.github/workflows/shura-windows.yml` signs through SignPath and
+   ignores `WINDOWS_CERTIFICATE`; without them it works as before.
+
+How the build signs: `package.ps1 -Phase Binaries` builds the two executables; they go to SignPath; the
+signed ones come back and `package.ps1 -Phase Package -SkipBuild` builds the MSI and the zip with them (a
+file that is not validly signed stops the build); the MSI then goes to SignPath too. The executables must be
+signed before the MSI is made: Smart App Control judges the installed `pdfcraft.exe`, not the installer. The
+SignPath action's version is pinned by commit in the workflow.
+
+Terms to keep: say on the download page that the project uses the SignPath Foundation (the README does),
+publish a privacy statement (the README says the app collects nothing), and never submit a file the
+project did not build. SmartScreen can still warn about a new, rarely downloaded file until it gains
+reputation; that is not Smart App Control.
+
 ## Checking a signed build
 
 ```powershell

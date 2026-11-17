@@ -25,11 +25,24 @@ param(
   # -SkipBuild only: the existing binaries were built without CRAFT_FONTS_DIR, so they embed no
   # craft-fonts faces. Without CRAFT_FONTS_DIR this assertion is required: package.ps1 cannot
   # otherwise know whether the binaries need the fonts' OFL notices.
-  [switch] $BuiltWithoutCraftFonts
+  [switch] $BuiltWithoutCraftFonts,
+  # Staged signing through SignPath (.github/workflows/shura-windows.yml, docs/code-signing.md), whose
+  # service signs files between two runs of this script, never on the build machine:
+  #   All       (default) build, sign with sign.ps1, package.
+  #   Binaries  build, check and copy pdfcraft.exe and pdfcraft-cli.exe, unsigned, to $env:DIST\unsigned, then stop.
+  #   Package   package the build already made (use with -SkipBuild), with the signed executables
+  #             from $env:SIGNED_BIN_DIR; the MSI is left for the service to sign.
+  [ValidateSet('All', 'Binaries', 'Package')] [string] $Phase = 'All'
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
+if ($Phase -eq 'Package' -and -not $SkipBuild) {
+  throw '-Phase Package packages the build -Phase Binaries made: use it with -SkipBuild.'
+}
+if ($Phase -eq 'Binaries' -and $SkipBuild) {
+  throw '-Phase Binaries builds the executables to be signed: it can not be used with -SkipBuild.'
+}
 if ($BuiltWithoutCraftFonts -and -not $SkipBuild) {
   throw '-BuiltWithoutCraftFonts describes an existing build made without CRAFT_FONTS_DIR; use it only with -SkipBuild.'
 }
@@ -108,7 +121,28 @@ foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE') {
 }
 Copy-Item (Join-Path $Root 'assets\app-icon\LICENSE-document.txt') $Stage
 
-& (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'pdfcraft.exe') (Join-Path $Stage 'pdfcraft-cli.exe')
+if ($Phase -eq 'Binaries') {
+  # The files the signing service takes: nothing else is built until they come back signed.
+  $Unsigned = Join-Path $Dist 'unsigned'
+  Remove-Item -Recurse -Force $Unsigned -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $Unsigned | Out-Null
+  Copy-Item (Join-Path $Stage 'pdfcraft.exe'), (Join-Path $Stage 'pdfcraft-cli.exe') $Unsigned
+  Write-Output "Unsigned executables for signing: $Unsigned"
+  exit 0
+}
+if ($Phase -eq 'Package') {
+  if (-not $env:SIGNED_BIN_DIR) { throw '-Phase Package needs SIGNED_BIN_DIR, the folder with the signed pdfcraft.exe and pdfcraft-cli.exe.' }
+  foreach ($exe in 'pdfcraft.exe', 'pdfcraft-cli.exe') {
+    $signed = Join-Path $env:SIGNED_BIN_DIR $exe
+    if (-not (Test-Path -LiteralPath $signed)) { throw "$exe is missing from SIGNED_BIN_DIR ($env:SIGNED_BIN_DIR)" }
+    # Only a file Windows accepts as signed replaces the build's own: the MSI and the zip ship these.
+    $status = (Get-AuthenticodeSignature -LiteralPath $signed).Status
+    if ($status -ne 'Valid') { throw "$exe from SIGNED_BIN_DIR is not validly signed (status $status)" }
+    Copy-Item -LiteralPath $signed -Destination (Join-Path $Stage $exe) -Force
+  }
+} else {
+  & (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'pdfcraft.exe') (Join-Path $Stage 'pdfcraft-cli.exe')
+}
 
 # OCR models (#103): the app looks in models\ beside pdfcraft.exe. `cargo xtask models` fetches every
 # ATTRIBUTION.toml `kind = "model"` file (verified by SHA-256) with its licence and ATTRIBUTION.txt;
@@ -167,7 +201,8 @@ Invoke-Native 'test-msi' {
 & (Join-Path $PSScriptRoot 'check-install-policy.ps1') -MsiPath $Msi
 # wix writes its debug symbols (.wixpdb) next to the MSI; keep them out of the release assets.
 Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Msi, '.wixpdb'))
-& (Join-Path $PSScriptRoot 'sign.ps1') $Msi
+# With -Phase Package the signing service signs the MSI next, from the workflow.
+if ($Phase -ne 'Package') { & (Join-Path $PSScriptRoot 'sign.ps1') $Msi }
 
 # ---- portable zip ------------------------------------------------------------------------------
 $Portable = Join-Path $TargetDir "windows-package\$PackageId-$Version-windows-$Arch-portable"
