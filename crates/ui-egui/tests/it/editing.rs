@@ -5258,6 +5258,64 @@ fn selected_text_formatting_keeps_the_rest_of_the_paragraph_and_reopens() {
     assert_eq!(reopen.get(rid).unwrap().text_lines(0), lines);
 }
 
+#[test]
+fn pressing_bold_again_toggles_only_the_selected_words() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    h.drag_at(at);
+    h.run_steps(1);
+    h.drop_at(at);
+    h.run_steps(4);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::ArrowRight);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowLeft);
+    h.run_steps(2);
+    let fonts = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_lines(0).iter().map(|l| (l.text.trim_end().to_owned(), l.base_font.clone())).collect::<Vec<_>>()
+    };
+    let bold = |fonts: &[(String, String)], text: &str| fonts.iter().any(|(t, f)| t == text && f == "Helvetica-Bold");
+    // First press: only the selected "1" is bold.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    assert!(bold(&fonts(&h), "1") && !bold(&fonts(&h), "Page"), "{:?}", fonts(&h));
+    // Second press: the same "1" goes back to regular, and nothing else changes.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    let second = fonts(&h);
+    assert!(!bold(&second, "1") && !bold(&second, "Page"), "{second:?}");
+    // Third: bold again.
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    let third = fonts(&h);
+    assert!(bold(&third, "1") && !bold(&third, "Page"), "{third:?}");
+}
+
+#[test]
+fn the_font_list_is_one_list_without_load_or_keep_entries() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    click_at(&mut h, at);
+    assert!(h.state().views[0].line_editor.is_some(), "the paragraph is open: the Format text panel shows");
+    // Open the font list (its button shows the current font).
+    h.get_all_by_role(egui::accesskit::Role::ComboBox).next().expect("the font list button").click();
+    h.run_steps(4);
+    for font in ["Helvetica", "Times", "Courier"] {
+        assert!(h.query_by_label(font).is_some(), "{font} is in the list");
+    }
+    assert!(h.query_by_label("Load font…").is_none(), "no Load font entry");
+    assert!(h.query_by_label("Keep source fonts").is_none(), "no Keep source fonts entry");
+    assert!(h.query_by_label("Installed fonts…").is_none(), "no second, installed-fonts menu");
+}
+
 /// Drag with the pointer from `from` to `to` in a few steps.
 fn drag(h: &mut Harness<'static, PdfCraftApp>, from: egui::Pos2, to: egui::Pos2) {
     h.hover_at(from);
@@ -5306,6 +5364,78 @@ fn dragging_a_paragraph_moves_it_and_its_edge_rewraps_it() {
     assert!(near(doc.text_lines(0)[0].rect[0], moved.rect[0]), "it keeps its place");
     assert_eq!(doc.can_undo(), Some("Edit text"), "edge drags still rewrap text");
     assert!(h.state().views[0].line_editor.is_none());
+}
+
+#[test]
+fn the_frame_of_a_paragraph_open_for_typing_moves_it_with_its_typed_text() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let block = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].clone()
+    };
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = r.width() / 200.0;
+    let screen = |x: f64, y: f64| egui::pos2(r.left() + x as f32 * k, r.top() + (300.0 - y as f32) * k);
+    let before = block(&h);
+    // Click opens it for typing; type a character.
+    let mid = screen((before.rect[0] + before.rect[2]) / 2.0, (before.rect[1] + before.rect[3]) / 2.0);
+    click_at(&mut h, mid);
+    assert!(h.state().views[0].line_editor.is_some(), "a click opens it");
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text.push('!');
+    h.run_steps(3);
+    // Drag its frame (just above the top-left corner), 30 pt right and 50 pt up.
+    let grab = screen(before.rect[0], before.rect[3]) + egui::vec2(4.0, -4.0);
+    drag(&mut h, grab, grab + egui::vec2(30.0 * k, -50.0 * k));
+    assert!(h.state().views[0].line_editor.is_none(), "the drag applied the typed text");
+    let moved = block(&h);
+    assert_eq!(moved.text, "Page 1!");
+    let near = |a: f64, b: f64| (a - b).abs() < 2.0;
+    assert!(near(moved.rect[0], before.rect[0] + 30.0) && near(moved.rect[3], before.rect[3] + 50.0), "{:?} → {:?}", before.rect, moved.rect);
+}
+
+#[test]
+fn the_side_handle_of_a_paragraph_open_for_typing_resizes_it() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let block = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].clone()
+    };
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = r.width() / 200.0;
+    let screen = |x: f64, y: f64| egui::pos2(r.left() + x as f32 * k, r.top() + (300.0 - y as f32) * k);
+    let before = block(&h);
+    let (cy, right) = ((before.rect[1] + before.rect[3]) / 2.0, before.rect[2]);
+    click_at(&mut h, screen((before.rect[0] + before.rect[2]) / 2.0, cy));
+    assert!(h.state().views[0].line_editor.is_some(), "a click opens it");
+    h.run_steps(3);
+    // The handle stands outside the frame's right side; drag it narrower so the text rewraps.
+    let handle = screen(right, cy) + egui::vec2(2.0 + 5.0 + 2.0, 0.0);
+    drag(&mut h, handle, handle - egui::vec2((before.rect[2] - before.rect[0] - 40.0) as f32 * k, 0.0));
+    // The paragraph stays open: its typing box follows the handle, and Apply rewraps it.
+    assert!(h.state().views[0].line_editor.is_some(), "still open for typing");
+    assert!(h.state().session.get(h.state().views[0].id).unwrap().can_undo().is_none(), "nothing applied yet");
+    let id = h.state().views[0].id;
+    let edit = pdfcraft_engine::Edit::EditTextBlock {
+        page: 0,
+        block: 0,
+        text: "Page 1".into(),
+        style: h.state().views[0].line_editor.as_ref().unwrap().style(),
+    };
+    assert!(edit_width(&edit) < before.rect[2] - before.rect[0], "Apply uses the narrower width");
+    h.state_mut().session.apply(id, edit).unwrap();
+    let doc = h.state().session.get(id).unwrap();
+    assert!(doc.text_lines(0).len() > 1, "narrower: two lines");
+}
+
+fn edit_width(edit: &pdfcraft_engine::Edit) -> f64 {
+    match edit {
+        pdfcraft_engine::Edit::EditTextBlock { style, .. } => style.width.unwrap_or(f64::INFINITY),
+        _ => f64::INFINITY,
+    }
 }
 
 /// Press and release at `at` without moving.
@@ -11697,4 +11827,42 @@ fn a_modified_click_away_from_a_cropped_picture_applies_its_crop() {
         let visible = h.state().session.get(doc_id).unwrap().page_images(0)[0].visible_rect.unwrap();
         assert!(keep.iter().zip(visible).all(|(a, b)| (a - b).abs() < 0.5), "{mods:?}: the crop is applied: {visible:?}");
     }
+}
+
+#[test]
+fn format_buttons_keep_the_paragraph_open_that_they_changed() {
+    let bytes = source_font_fixture_with_text(
+        "BT /F2 18 Tf 20 250 Td (First paragraph) Tj ET BT /F2 18 Tf 20 170 Td (Second paragraph) Tj ET BT /F2 18 Tf 20 90 Td (Third paragraph) Tj ET",
+    );
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("three.pdf", None, bytes.clone()).expect("opens");
+        app
+    });
+    h.run_steps(4);
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let k = r.width() / 300.0;
+    // Click the first paragraph (user y 250 → screen from the top).
+    let at = egui::pos2(r.left() + 60.0 * k, r.top() + (300.0 - 255.0) * k);
+    click_at(&mut h, at);
+    let open =
+        |h: &Harness<'static, PdfCraftApp>| h.state().views[0].line_editor.as_ref().map(|e| e.text.split_whitespace().collect::<Vec<_>>().join(" "));
+    assert_eq!(open(&h).as_deref(), Some("First paragraph"), "the first paragraph is open");
+    // Retyped in Arabic, an edit redraws the paragraph as added text at the end of the page's
+    // content: the paragraphs below it move up one place in the list.
+    let typed = "الفقرة الأولى من الرسالة";
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text = typed.into();
+    h.run_steps(3);
+    // Each press changes the paragraph that is open, and leaves it open.
+    for press in 1..=3 {
+        h.get_by_label("Bold").click();
+        h.run_steps(5);
+        assert_eq!(open(&h).as_deref(), Some(typed), "after press {press}");
+    }
+    let id = h.state().views[0].id;
+    let texts: Vec<_> = h.state().session.get(id).unwrap().text_blocks(0).into_iter().map(|b| b.text).collect();
+    assert!(texts.iter().any(|t| t == "Second paragraph") && texts.iter().any(|t| t == "Third paragraph"), "{texts:?}");
 }

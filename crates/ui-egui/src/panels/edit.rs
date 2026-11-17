@@ -290,10 +290,6 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             changed |= crate::edit_text_ui::toggle_script(&mut ed.text, &mut ed.selection, script);
         }
         match out.font {
-            Some(FontChoice::KeepSource) => {
-                ed.keep_source_font();
-                changed = true;
-            }
             Some(FontChoice::Resource(resource)) => {
                 ed.font_resource = Some(resource);
                 changed = true;
@@ -302,7 +298,6 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ed.choose_family(family);
                 changed = true;
             }
-            Some(FontChoice::Load) => app.pick_files(crate::files::FilePurpose::TextFont { page: ed.page }, false),
             #[cfg(not(target_arch = "wasm32"))]
             Some(FontChoice::Installed(path)) => app.use_paths(crate::files::FilePurpose::TextFont { page: ed.page }, &[path]),
             #[cfg(target_arch = "wasm32")]
@@ -393,12 +388,32 @@ fn added_text_format(
     style: &mut pdfcraft_engine::AddedText,
     paragraphs: Option<crate::format_text_ui::Paragraphs>,
 ) -> crate::format_text_ui::Outcome {
-    let shown = style.family.label().to_string();
+    let shown = style.face.as_ref().map_or_else(|| style.family.label().to_string(), |face| face.name.clone());
     let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
-    if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
-        style.family = family;
+    match out.font {
+        Some(crate::format_text_ui::FontChoice::Family(family)) => {
+            style.family = family;
+            style.face = None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(crate::format_text_ui::FontChoice::Installed(ref path)) => {
+            // The list holds only fonts that may be embedded; one that can't be read is left out.
+            if let Some(face) = installed_face_file(path) {
+                style.face = Some(face);
+            }
+        }
+        _ => {}
     }
     out
+}
+
+/// The face in an installed font file (at most 16 MiB), when it may be embedded.
+#[cfg(not(target_arch = "wasm32"))]
+fn installed_face_file(path: &std::path::Path) -> Option<pdfcraft_engine::TextFace> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
+    pdfcraft_engine::TextFace::new(bytes).ok()
 }
 
 impl PdfCraftApp {
@@ -444,6 +459,16 @@ impl PdfCraftApp {
         let edit = pdfcraft_engine::Edit::EditTextBlock { page: ed.page, block: ed.block, text: ed.text.clone(), style: ed.style() };
         if self.apply_edit(edit) {
             ed.applied();
+            if let Some(doc) = self.session.get(self.views[index].id) {
+                // The edit can move the paragraph in the page's list (an Arabic paragraph redrawn as
+                // added text goes to the end, and those below it move up one): it is the paragraph
+                // that now covers its old box, not the one at its old number.
+                let blocks = doc.text_blocks(ed.page);
+                let old_box = ed.source_rect().map(f64::from);
+                if let Some(now) = pdfcraft_engine::block_overlapping(&blocks, old_box) {
+                    ed.block = now;
+                }
+            }
             if let Some(doc) = self.session.get(self.views[index].id)
                 && let Some(block) = doc.text_blocks(ed.page).get(ed.block)
             {

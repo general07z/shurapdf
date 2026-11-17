@@ -31,7 +31,7 @@ pub(crate) use image::{
 use image::{rotate_knob, turn_degrees, turn_degrees_delta};
 #[cfg(test)]
 use layout::{DARK_EDITOR_FILL, contrast};
-pub(crate) use layout::{caret_color_on, editor_fill, editor_font, install_source_fonts};
+pub(crate) use layout::{SourceFonts, caret_color_on, editor_fill, editor_font, install_source_fonts};
 use layout::{color32, editor_galley, editor_job, look_of, luminance, source_look, unseen};
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
@@ -78,7 +78,7 @@ pub struct LineEditor {
     source_rect: [f32; 4],
     multiline: bool,
     source: Option<(pdfcraft_engine::TextBlock, Vec<pdfcraft_engine::TextLine>)>,
-    pub(crate) fonts: BTreeMap<String, String>,
+    pub(crate) fonts: SourceFonts,
     /// The draft extends outside the source container; its frame follows the live draft bounds.
     pub overflow: bool,
     /// The initial source container width in screen pixels.
@@ -104,6 +104,17 @@ pub struct LineEditor {
     extras0: Extras,
     /// The text the box's own Undo history starts from; see [`forget_typing_before`].
     typing_from: Option<String>,
+    /// The frame drawn around the open paragraph on the last frame (screen), grown with its
+    /// draft. Its border moves the paragraph and its side handles resize it, as in Acrobat.
+    frame: Option<Rect>,
+    /// The installed-font scan had finished when the paragraph's fonts were set up. Until it has,
+    /// the installed copy of a font can't draw the paragraph, and a paragraph opened first
+    /// would keep the stand-in font for good.
+    installed_fonts_ready: bool,
+    /// The box dragged wider or narrower while the paragraph is open (user-space points): its
+    /// change of width and the shift of its left edge. The typing box follows, and Apply
+    /// rewraps the paragraph at the new width.
+    box_change: [f64; 2],
 }
 
 /// The paragraph editor's text box: one for the tabs of a pane (they share it), and one for each pane
@@ -251,13 +262,6 @@ impl LineEditor {
         if name.is_empty() { tl!("Keep source fonts").to_string() } else { name.to_string() }
     }
 
-    /// Back to the paragraph's own font: no page font chosen and the family it started with.
-    pub(crate) fn keep_source_font(&mut self) {
-        self.font_resource = None;
-        self.look.family = self.look0.family;
-        self.family_chosen = false;
-    }
-
     /// A standard family picked from the font list, replacing the paragraph's font even when it
     /// is the family the paragraph's font name reads as.
     pub(crate) fn choose_family(&mut self, family: pdfcraft_engine::FontFamily) {
@@ -270,9 +274,47 @@ impl LineEditor {
         self.changes_with(&self.text)
     }
 
+    /// Whether every run under `range` of the text is bold (`None` before the source is known).
+    fn selection_is_bold(&self, range: &std::ops::Range<usize>) -> Option<bool> {
+        let (block, lines) = self.source.as_ref()?;
+        let mut any = false;
+        for (span, index) in block.edited_spans(&self.text) {
+            if span.start < range.end && range.start < span.end {
+                any = true;
+                if !lines.get(index).is_some_and(|l| l.bold) {
+                    return Some(false);
+                }
+            }
+        }
+        any.then_some(true)
+    }
+
+    /// The paragraph's box when it was opened or last applied (user space).
+    pub(crate) fn source_rect(&self) -> [f32; 4] {
+        self.source_rect
+    }
+
+    /// The font resource of the paragraph's first run.
+    fn source_font(&self) -> Option<String> {
+        let (block, lines) = self.source.as_ref()?;
+        block.lines.first().and_then(|i| lines.get(*i)).map(|line| line.font.clone())
+    }
+
+    /// Whether the text has a character the paragraph did not have. A Word PDF embeds only the
+    /// glyphs it used, so a new one is not in the paragraph's own font: the installed copy of
+    /// the font draws it, and the paragraph keeps its font.
+    fn has_new_characters(&self) -> bool {
+        self.text.chars().any(|c| !c.is_whitespace() && !self.original.contains(c))
+    }
+
     /// Whether the paragraph with `text` in it differs from what was opened.
     fn changes_with(&self, text: &str) -> bool {
-        text != self.original || self.look != self.look0 || self.extras != self.extras0 || self.family_chosen || self.size_chosen
+        text != self.original
+            || self.look != self.look0
+            || self.extras != self.extras0
+            || self.family_chosen
+            || self.size_chosen
+            || self.box_change != [0.0, 0.0]
     }
 
     /// Extra width permitted by the editor. Source containers now remain fixed.
@@ -288,9 +330,15 @@ impl LineEditor {
     /// The formatting the panel changed.
     pub fn style(&self) -> pdfcraft_engine::BlockStyle {
         let (l, o) = (&self.look, &self.look0);
+        // Bold alone, on a paragraph whose font has an installed bold face: that face draws it
+        // (a standard bold font has no Arabic letters, and the paragraph keeps its font).
+        let bold_face = (l.bold && !o.bold && l.family == o.family && !self.family_chosen && l.italic == o.italic && self.font_resource.is_none())
+            .then(|| self.source_font().and_then(|font| self.fonts.bold_faces.get(&font).cloned()))
+            .flatten();
         let mut style = pdfcraft_engine::BlockStyle {
             resource: self.font_resource.clone(),
-            family: (l.family != o.family || self.family_chosen || l.bold != o.bold || l.italic != o.italic).then_some((l.family, l.bold, l.italic)),
+            family: (l.family != o.family || self.family_chosen || (l.bold != o.bold && bold_face.is_none()) || l.italic != o.italic)
+                .then_some((l.family, l.bold, l.italic)),
             size: (self.size_chosen || l.size != o.size).then_some(l.size),
             color: (l.color != o.color).then_some(l.color),
             // The whole paragraph's alignment when it was picked, or when the rows' own were
@@ -301,6 +349,8 @@ impl LineEditor {
                 .then_some(self.extras.line_spacing),
             char_spacing: (self.extras.char_spacing != self.extras0.char_spacing).then_some(self.extras.char_spacing),
             scale: (self.extras.scale != self.extras0.scale).then_some(self.extras.scale),
+            width: (self.box_change[0] != 0.0).then(|| f64::from((self.source_rect[2] - self.source_rect[0]).abs()) + self.box_change[0]),
+            offset: (self.box_change[1] != 0.0).then_some([self.box_change[1], 0.0]),
             ..Default::default()
         };
         // Rows aligned on their own, sent with every rewrite of the paragraph while it is open
@@ -308,6 +358,16 @@ impl LineEditor {
         // them would undo them. Alone, they are sent only when they changed.
         if l.aligns != o.aligns || self.text != self.original || style != pdfcraft_engine::BlockStyle::default() {
             style.aligns = l.aligns.clone();
+        }
+        // Retyped Arabic in a font Word subset without its joining rules: draw it with the
+        // installed copy of that font, so it keeps the document's look, unless another font was
+        // chosen. Only for a change: an untouched paragraph stays no edit at all.
+        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default() || bold_face.is_some())
+            && style.resource.is_none()
+            && style.family.is_none()
+            && (bold_face.is_some() || self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
+        {
+            style.face = bold_face.or_else(|| self.source_font().and_then(|font| self.fonts.faces.get(&font).cloned()));
         }
         if let Some(range) = &self.selection
             && (style.family.is_some()
@@ -342,10 +402,13 @@ impl LineEditor {
     /// the rewritten paragraph may have different text or geometry.
     pub fn applied(&mut self) {
         self.size_chosen = false;
+        // The selection stays: the applied style didn't move the text, and the next press of Bold
+        // or Italic is for the same words.
         self.font_resource = None;
         self.family_chosen = false;
         self.look0 = self.look.clone();
         self.extras0 = self.extras;
+        self.box_change = [0.0, 0.0];
         self.original = self.text.clone();
         self.selection = None;
         // The page now has this text: the box's history restarts, even when the format left the
@@ -516,6 +579,60 @@ fn look_of_line(l: &pdfcraft_engine::TextLine) -> pdfcraft_engine::AddedText {
     source_look(&l.base_font, l.size, l.color, l.bold, l.italic)
 }
 
+/// What moves paragraph `block` (box `rect`, user space): its text object, or, for a paragraph an
+/// edit redrew as added text (shaped Arabic), that added item. The object lists number them
+/// apart, so the paragraph's number alone names the wrong object (or none) for it.
+fn move_target(doc: &pdfcraft_engine::Document, page: usize, block: usize, rect: [f64; 4]) -> ObjectTarget {
+    let area = |b: [f64; 4]| ((b[2] - b[0]) * (b[3] - b[1])).max(0.0);
+    // The share of the paragraph's box an object covers (an added item's box is wider than its
+    // text), and the object's own area: the tightest box that covers the paragraph is its object.
+    let covers = |r: [f64; 4]| {
+        let (w, h) = ((r[2].min(rect[2]) - r[0].max(rect[0])).max(0.0), (r[3].min(rect[3]) - r[1].max(rect[1])).max(0.0));
+        if area(rect) > 0.0 { w * h / area(rect) } else { 0.0 }
+    };
+    let own = ObjectTarget { kind: ObjectKind::Text, index: block };
+    doc.editable_objects(page)
+        .ok()
+        .and_then(|objects| {
+            // The paragraph's own number names it when that object is its box (identical labels
+            // drawn on top of one another stay apart that way).
+            if objects.iter().any(|o| o.target == own && covers(o.rect) >= 0.8) {
+                return None;
+            }
+            objects
+                .into_iter()
+                .filter(|o| matches!(o.target.kind, ObjectKind::Text | ObjectKind::Added) && covers(o.rect) >= 0.8)
+                .min_by(|a, b| area(a.rect).total_cmp(&area(b.rect)))
+        })
+        .map_or(own, |o| o.target)
+}
+
+/// A preview of text being moved: its words, in the interface font, on a pale ground at `rect`
+/// (screen), so the text is seen going where the pointer takes it (as in Acrobat). The page's
+/// own copy stays where it was until the move is applied. `rtl` text sits at the right edge.
+pub(crate) fn paint_move_ghost(painter: &egui::Painter, rect: Rect, text: &str, size: f32, color: Color32) {
+    if text.trim().is_empty() || !rect.is_finite() {
+        return;
+    }
+    painter.rect_filled(rect, CornerRadius::same(2), Color32::from_white_alpha(215));
+    let galley = painter.layout(text.to_owned(), egui::FontId::proportional(size.clamp(5.0, 200.0)), color, f32::INFINITY);
+    let x = if pdfcraft_fonts::visual_line::paragraph_rtl(text) { rect.right() - 2.0 - galley.size().x } else { rect.left() + 2.0 };
+    painter.with_clip_rect(rect.expand(2.0)).galley(Pos2::new(x, rect.top() + 2.0), galley, color);
+}
+
+/// Whether the installed-font scan has finished (always, where there is none).
+fn installed_fonts_ready(ctx: &egui::Context) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::files::installed_font_files(ctx, false).is_some()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        true
+    }
+}
+
 /// What a drag on a paragraph box takes hold of.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Grip {
@@ -535,6 +652,8 @@ pub struct BlockDrag {
     /// Where the drag started (screen).
     start: Pos2,
     grip: Grip,
+    /// Dragged from the frame of the paragraph open for typing: its typed text goes with it.
+    editing: bool,
 }
 
 /// How far an edge grip reaches either side of a box's edge (screen pixels). Wide enough to
@@ -543,6 +662,34 @@ const EDGE_REACH: f32 = 8.0;
 /// How far outside an open paragraph's frame the pointer still means the frame (screen pixels):
 /// the frame's Move cursor shows, and a press there takes hold of the box (`object_ui`).
 pub(crate) const FRAME_REACH: f32 = 8.0;
+
+/// The grips of the frame `f` of the paragraph open for typing. The editor's own text covers the
+/// inside, so the width handles stand just outside the sides and the border strip around the
+/// frame (not its inside) moves the paragraph.
+fn frame_handles(f: Rect) -> [Rect; 2] {
+    let h = (f.height() * 0.5).clamp(14.0, 28.0);
+    [f.left() - 5.0, f.right() + 5.0].map(|x| Rect::from_center_size(Pos2::new(x, f.center().y), egui::vec2(8.0, h)))
+}
+
+fn frame_grip_at(f: Rect, p: Pos2) -> Option<Grip> {
+    let [left, right] = frame_handles(f);
+    if left.expand(2.0).contains(p) {
+        Some(Grip::Left)
+    } else if right.expand(2.0).contains(p) {
+        Some(Grip::Right)
+    } else {
+        (f.expand(FRAME_REACH).contains(p) && !f.contains(p)).then_some(Grip::Move)
+    }
+}
+
+/// Whether a press at `p` takes hold of a width handle of the paragraph open for typing on
+/// `page`. The handles stand just outside its frame, where area selection would start instead.
+pub(crate) fn grabs_open_handle(view: &DocView, page: usize, p: Pos2) -> bool {
+    view.line_editor.as_ref().filter(|e| e.page == page).and_then(|e| e.frame).is_some_and(|f| {
+        let [left, right] = frame_handles(f);
+        left.expand(2.0).contains(p) || right.expand(2.0).contains(p)
+    })
+}
 
 /// The rewrap handles drawn on a paragraph box's left and right edges (screen).
 fn width_handles(b: Rect) -> [Rect; 2] {
@@ -672,6 +819,9 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
         extras: Extras::default(),
         extras0: Extras::default(),
         typing_from: None,
+        frame: None,
+        installed_fonts_ready: installed_fonts_ready(ui.ctx()),
+        box_change: [0.0, 0.0],
     });
 }
 
@@ -693,12 +843,21 @@ pub(crate) struct ParagraphCx<'a> {
 /// press that is a paragraph's (`press`) moves it, rewraps it or, a click, opens it in the editor.
 /// Returns `true` when the pointer was used.
 pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], pcx: ParagraphCx<'_>, view: &mut DocView) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::files::start_installed_font_scan(cx.ui.ctx());
     let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
     let ParagraphCx { press, gate, hover, adding } = pcx;
     let info = &doc.info;
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
         view.block_drag = None;
         return true;
+    }
+    // A paragraph opened before the installed-font scan finished gets its fonts again now.
+    if let Some(ed) = view.line_editor.as_mut().filter(|e| e.page == page && !e.installed_fonts_ready)
+        && installed_fonts_ready(ui.ctx())
+    {
+        ed.fonts = install_source_fonts(ui.ctx(), doc, page);
+        ed.installed_fonts_ready = true;
     }
     let boxes: Vec<Rect> = lines.iter().map(|l| paragraph_box(xf, info, page, l.rect)).collect();
     // Outlines stay on their page, like its text (#3061).
@@ -743,8 +902,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         }
     };
     // A drag in progress: the box follows the pointer (or the grabbed edge does); releasing applies it.
+    // The box being dragged: the open paragraph's frame while it is typed in, else its box.
+    let dragged_box = |d: &BlockDrag| if d.editing { view.line_editor.as_ref().and_then(|e| e.frame) } else { boxes.get(d.block).copied() };
     if let Some(d) = view.block_drag.filter(|d| d.page == page)
-        && let (Some(b), Some(l)) = (boxes.get(d.block).copied(), lines.get(d.block))
+        && let (Some(b), Some(l)) = (dragged_box(&d), lines.get(d.block))
     {
         let p = ptr.pos.unwrap_or(d.start);
         let dx = p.x - d.start.x;
@@ -753,6 +914,15 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             Grip::Left => Rect::from_min_max(Pos2::new((b.left() + dx).min(b.right() - 12.0), b.min.y), b.max),
             Grip::Right => Rect::from_min_max(b.min, Pos2::new((b.right() + dx).max(b.left() + 12.0), b.max.y)),
         };
+        if d.grip == Grip::Move && preview != b {
+            // The text goes with the pointer. Its size on screen: the box's width over the
+            // paragraph's own.
+            let width = (l.rect[2] - l.rect[0]).abs().max(1.0) as f32;
+            let k = ((b.width() - 4.0) / width).max(0.01);
+            let [r, g, bl] = l.color.map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
+            let text = view.line_editor.as_ref().filter(|_| d.editing).map_or(l.editor_text.as_str(), |e| e.text.as_str());
+            paint_move_ghost(&painter, preview, text, l.size as f32 * k, Color32::from_rgb(r, g, bl));
+        }
         painter.rect_stroke(preview, CornerRadius::same(2), Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
         let resizing = d.grip != Grip::Move;
         if resizing {
@@ -762,7 +932,36 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         if resp.drag_stopped() || !ptr.any_down {
             view.block_drag = None;
             let (from, to) = (user_box(xf, info, page, b), user_box(xf, info, page, preview));
-            let edit = if resizing {
+            // The open paragraph closes with its typed text, moved or resized in the same edit;
+            // one left as it was is moved like a closed one.
+            // Resizing it only changes the typing box (upright pages): the paragraph is rewrapped
+            // when the edit is applied.
+            if d.editing
+                && resizing
+                && info.pages.get(page).is_some_and(|p| p.rotation == 0)
+                && let Some(ed) = view.line_editor.as_mut()
+            {
+                ed.box_change[0] += (to[2] - to[0]) - (from[2] - from[0]);
+                ed.box_change[1] += to[0] - from[0];
+                return true;
+            }
+            let typed = d.editing.then(|| view.line_editor.take()).flatten().filter(LineEditor::has_changes);
+            if d.editing && typed.is_none() {
+                view.line_editor = None;
+            }
+            let edit = if let Some(ed) = typed {
+                let mut style = ed.style();
+                if resizing {
+                    style.width = Some((l.rect[2] - l.rect[0]) + (to[2] - to[0]) - (from[2] - from[0]));
+                    let shift = to[0] - from[0];
+                    style.offset = (shift != 0.0).then_some([shift, 0.0]);
+                } else {
+                    style.offset = Some([to[0] - from[0], to[1] - from[1]]);
+                }
+                let (page, block, text) = (ed.page, ed.block, ed.text.clone());
+                view.applied_editor = Some(ed);
+                Edit::EditTextBlock { page, block, text, style }
+            } else if resizing {
                 // The new width in user space: the box's change, added to the paragraph's own. A
                 // moved left side (in user space; on an upside-down page that's the screen's right
                 // edge) moves the paragraph with it.
@@ -776,11 +975,7 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             } else {
                 // Translation must keep the selected source operators. Rewriting unchanged text
                 // would also remove unrelated paragraphs that now overlap this one (#594).
-                Edit::MoveObjects {
-                    page,
-                    objects: vec![ObjectTarget { kind: ObjectKind::Text, index: d.block }],
-                    offset: [to[0] - from[0], to[1] - from[1]],
-                }
+                Edit::MoveObjects { page, objects: vec![move_target(doc, page, d.block, l.rect)], offset: [to[0] - from[0], to[1] - from[1]] }
             };
             if preview != b {
                 view.pending_edit = Some(edit);
@@ -809,7 +1004,18 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
             ParagraphPart::Left => Grip::Left,
             ParagraphPart::Right => Grip::Right,
         };
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip });
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: false });
+        return true;
+    }
+    // The same on the frame of the paragraph open for typing: its border moves it, its side
+    // handles resize it (the text inside is the editor's).
+    if resp.drag_started()
+        && let Some(block) = active
+        && let Some(o) = ptr.origin
+        && let Some(frame) = view.line_editor.as_ref().and_then(|e| e.frame)
+        && let Some(grip) = frame_grip_at(frame, o).filter(|g| upright || *g == Grip::Move)
+    {
+        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: true });
         return true;
     }
     // The paragraph under the pointer, where a press would take it: outlined, with its width
@@ -905,13 +1111,18 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
     // while the format panel was open.
     // A font definition becomes active at the start of the next egui pass. Keep the source
     // raster visible until then instead of flashing an unrelated interface face.
-    if !ctx.fonts(|f| ed.fonts.values().all(|name| f.definitions().families.contains_key(&FontFamily::Name(name.clone().into())))) {
+    if !ctx.fonts(|f| ed.fonts.families().all(|name| f.definitions().families.contains_key(&FontFamily::Name(name.clone().into())))) {
         ctx.request_repaint();
         return None;
     }
     ed.rect = xf.user_rect(info, ed.page, ed.source_rect);
-    ed.max_width = ed.rect.width();
     let scale = (ed.rect.width() / (ed.source_rect[2] - ed.source_rect[0]).abs().max(0.01)).max(0.01);
+    // The box dragged wider or narrower: the typing box follows it.
+    if ed.box_change != [0.0, 0.0] {
+        let (wider, shift) = (ed.box_change[0] as f32 * scale, ed.box_change[1] as f32 * scale);
+        ed.rect = Rect::from_min_size(ed.rect.min + egui::vec2(shift, 0.0), egui::vec2((ed.rect.width() + wider).max(12.0), ed.rect.height()));
+    }
+    ed.max_width = ed.rect.width();
     ed.size = (ed.look.size as f32 * scale).clamp(1.0, 300.0);
     // egui draws the caret at least one row of this font tall. Each row already has its source
     // row's height, so the font stays below every row (half the region's smallest size): on a
@@ -956,6 +1167,15 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
             // can differ from the PDF's. Keep every visible row inside the growing frame.
             let live = draft_rect.map_or(visible, |bounds| bounds.union(visible));
             ui.painter().rect_stroke(live.expand(2.0), CornerRadius::ZERO, Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
+            // Handles outside the sides resize the paragraph (an upright page only).
+            let frame = live.expand(2.0);
+            ed.frame = Some(frame);
+            let upright = has_edges(info, ed.page);
+            if upright {
+                for h in frame_handles(frame) {
+                    ui.painter().rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, ACCENT), egui::StrokeKind::Middle);
+                }
+            }
             // On the frame, a press takes hold of the box (a click selects it, a drag moves it):
             // the pointer says so there, and reads as text inside. Once the text is changed, a
             // press there applies the typing like any click off the text instead of taking the
@@ -964,10 +1184,9 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
             if !ed.has_changes()
                 && let Some(p) = ui.input(|i| i.pointer.hover_pos())
                 && ui.clip_rect().contains(p)
-                && live.expand(2.0 + FRAME_REACH).contains(p)
-                && !live.expand(2.0).contains(p)
+                && let Some(grip) = frame_grip_at(frame, p).filter(|g| upright || *g == Grip::Move)
             {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                ui.ctx().set_cursor_icon(if grip == Grip::Move { egui::CursorIcon::Move } else { egui::CursorIcon::ResizeHorizontal });
             }
             // White, unless the text is too pale to read on white (white text from a coloured
             // banner, #913): then a dark box, with a caret that shows on it.
@@ -1025,6 +1244,25 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
                     }
                 }
                 look = Some((Arc::clone(&output.galley), output.galley_pos));
+                if let Some(cursor) = output.cursor_range {
+                    let selected = cursor.as_sorted_char_range();
+                    let byte = |index| ed.text.char_indices().nth(index).map_or(ed.text.len(), |(at, _)| at);
+                    let before = ed.selection.clone();
+                    ed.selection = (!selected.is_empty()).then(|| byte(selected.start.into())..byte(selected.end.into()));
+                    // The Bold button shows the new selection's own weight (not the paragraph's), so
+                    // pressing it again takes bold off that selection and nothing else.
+                    if ed.selection != before {
+                        let bold = match ed.selection.clone() {
+                            Some(range) => ed.selection_is_bold(&range),
+                            // No selection: the paragraph's own weight again.
+                            None => ed.source.as_ref().map(|(block, _)| block.bold),
+                        };
+                        if let Some(bold) = bold {
+                            ed.look.bold = bold;
+                            ed.look0.bold = bold;
+                        }
+                    }
+                }
                 let r = output.response;
                 if ed.focus {
                     r.request_focus();
@@ -1282,6 +1520,9 @@ C", &picked
         let doc = app.session.get(app.views[0].id).unwrap();
         let block = doc.text_blocks(0).remove(0);
         let ed = LineEditor {
+            frame: None,
+            installed_fonts_ready: true,
+            box_change: [0.0, 0.0],
             selection: None,
             font_resource: None,
             page: 0,
@@ -1292,7 +1533,7 @@ C", &picked
             source_rect: block.rect.map(|v| v as f32),
             multiline: block.rows.len() > 1,
             source: None,
-            fonts: BTreeMap::new(),
+            fonts: SourceFonts::default(),
             overflow: false,
             max_width: 400.0,
             size: block.size as f32,
@@ -1307,6 +1548,94 @@ C", &picked
             typing_from: None,
         };
         (app, ed)
+    }
+
+    /// Retyped Arabic carries the installed copy of the paragraph's font, so the rewrite keeps the
+    /// document's look, as does text with characters its font never drew; an untouched paragraph, text it can already draw or another chosen font don't.
+    #[test]
+    fn retyped_arabic_carries_the_installed_copy_of_its_font() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        let face = Arc::new(b"stand-in for an installed face".to_vec());
+        ed.fonts.faces.insert(font, face.clone());
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        assert_eq!(ed.style().face, None, "untouched: no edit");
+        assert!(finished_edit(ed.clone()).is_none());
+        ed.text = "الموضوع: طلب استبدال".into();
+        assert!(ed.style().face.is_some_and(|f| Arc::ptr_eq(&f, &face)), "retyped Arabic keeps its font");
+        // Letters the paragraph never drew are not in its subset font, Latin or not: the
+        // installed copy draws them, so the paragraph keeps its font.
+        ed.text = "Subject: request".into();
+        assert!(ed.style().face.is_some(), "new characters keep the font too");
+        ed.text = ":".into();
+        assert_eq!(ed.style().face, None, "only characters it already had, no Arabic: the ordinary path");
+        ed.text = "الموضوع".into();
+        ed.choose_family(pdfcraft_engine::FontFamily::Times);
+        assert_eq!(ed.style().face, None, "a chosen font wins");
+    }
+
+    /// Bold on a paragraph whose font has an installed bold face draws it in that face, and does
+    /// not ask for a standard bold font (which has no Arabic letters).
+    #[test]
+    fn bold_uses_the_installed_bold_face_of_the_paragraph_font() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        let bold = Arc::new(b"stand-in for an installed bold face".to_vec());
+        ed.fonts.bold_faces.insert(font, bold.clone());
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        ed.look.bold = true;
+        let style = ed.style();
+        assert!(style.family.is_none(), "no standard family is asked for");
+        assert!(style.face.is_some_and(|f| Arc::ptr_eq(&f, &bold)), "the installed bold face draws it");
+        assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
+        // No installed bold face: the standard bold, as before.
+        ed.fonts.bold_faces.clear();
+        assert!(ed.style().family.is_some());
+    }
+
+    /// A paragraph an edit redrew as added text (shaped Arabic) is moved as that added item.
+    #[test]
+    fn a_paragraph_redrawn_as_added_text_moves_as_the_added_item() {
+        let (mut app, _) = preview_app();
+        let id = app.views[0].id;
+        let _rewritten =
+            app.session.apply(id, pdfcraft_engine::Edit::EditTextBlock { page: 0, block: 0, text: "الموضوع: طلب".into(), style: Default::default() });
+        let doc = app.session.get(id).unwrap();
+        let block = doc.text_blocks(0).remove(0);
+        let target = move_target(doc, 0, 0, block.rect);
+        if !doc.editable_objects(0).unwrap_or_default().iter().any(|o| o.target.kind == ObjectKind::Added) {
+            // No Arabic fallback face in this build ; the paragraph stays a text object.
+            assert_eq!(target.kind, ObjectKind::Text);
+            return;
+        }
+        assert_eq!(target.kind, ObjectKind::Added, "{target:?}");
+        let moved = app.session.apply(id, pdfcraft_engine::Edit::MoveObjects { page: 0, objects: vec![target], offset: [10.0, -5.0] });
+        assert!(moved.is_ok(), "{moved:?}");
+    }
+
+    /// Pressing Bold on selected words and again: the selection survives the first apply, so the
+    /// second press is for the same words (it used to lose them and restyle the whole paragraph).
+    #[test]
+    fn the_selection_survives_an_applied_style_and_shows_its_own_weight() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        ed.source = Some((block, lines));
+        ed.selection = Some(0..4);
+        ed.look.bold = true;
+        ed.applied();
+        assert_eq!(ed.selection, Some(0..4), "kept for the next press");
+        assert!(ed.look0.bold, "what was applied is the new baseline");
+        // The source has no bold run: the selection's own weight is regular.
+        assert_eq!(ed.selection_is_bold(&(0..4)), Some(false));
     }
 
     #[test]
@@ -1344,9 +1673,6 @@ C", &picked
         assert_eq!(ed.style().family, Some((family, ed.look.bold, ed.look.italic)));
         assert!(ed.has_changes());
         assert_eq!(ed.font_shown(&[]), family.label());
-        ed.keep_source_font();
-        assert_eq!(ed.style().family, None, "Keep source fonts withdraws the choice");
-        ed.choose_family(family);
         ed.applied();
         assert_eq!(ed.style().family, None, "an applied choice is the paragraph's font now");
     }
@@ -1564,7 +1890,7 @@ C", &picked
             overflow: false,
             selection: None,
             font_resource: None,
-            fonts: std::collections::BTreeMap::new(),
+            fonts: SourceFonts::default(),
             source: None,
             multiline: false,
             size: 12.0,
@@ -1577,6 +1903,9 @@ C", &picked
             extras: Extras { line_spacing: 1.33, underline: true, ..Default::default() },
             extras0: Extras::default(),
             typing_from: None,
+            frame: None,
+            installed_fonts_ready: false,
+            box_change: [0.0, 0.0],
         };
         let style = ed.style();
         assert_eq!(style.line_spacing, Some(1.33));

@@ -252,7 +252,7 @@ fn mixed_files(app: &PdfCraftApp) -> Vec<(String, Vec<u8>)> {
     let pdf = app.session.create_from_text("a", "from a pdf").unwrap();
     vec![
         ("notes.txt".into(), b"from text".to_vec()),
-        ("report.docx".into(), b"PK\x03\x04".to_vec()),
+        ("report.xlsx".into(), b"PK\x03\x04".to_vec()),
         ("a.pdf".into(), pdf.to_vec()),
         ("photo.png".into(), png()),
     ]
@@ -327,7 +327,7 @@ fn multiple_files_open_as_one_document_in_the_page_grid() {
         assert_eq!(doc.info.pages.len(), 3, "the Word file can't be converted and is left out");
         assert_eq!(doc.info.outline.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["notes", "a", "photo"]);
     }
-    h.get_by_label_contains("left out: report.docx");
+    h.get_by_label_contains("left out: report.xlsx");
     h.get_by_label("Insert a file before page 2");
     if let Ok(path) = std::env::var("PDFCRAFT_CREATE_MULTIPLE_SHOT") {
         let _gpu = crate::gpu();
@@ -352,7 +352,7 @@ fn multiple_files_open_as_one_document_in_the_page_grid() {
 fn multiple_files_that_cannot_be_converted_open_nothing() {
     let mut app = PdfCraftApp::new();
     app.set_option("language", "en").unwrap();
-    app.use_files(pdfcraft_ui_egui::FilePurpose::CreateMultiple, vec![("report.docx".into(), b"PK\x03\x04".to_vec())]);
+    app.use_files(pdfcraft_ui_egui::FilePurpose::CreateMultiple, vec![("report.xlsx".into(), b"PK\x03\x04".to_vec())]);
     assert!(app.views.is_empty());
     assert!(app.toast.is_some());
 }
@@ -388,4 +388,33 @@ fn a_blank_page_is_on_the_system_regions_paper() {
             "{paper:?}: {crop:?} is not {w} × {h}"
         );
     }
+}
+
+/// A protected Word file asks for its password with the same prompt as an encrypted PDF: a
+/// wrong password asks again, the right one opens the converted PDF as a new unsaved tab. The
+/// app runs as on the desktop (a context, background opening), where the prompt's answer used
+/// to go to the PDF opener, which hands a Word file back without its password.
+#[test]
+fn a_protected_word_file_asks_for_its_password_then_opens() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app
+    });
+    h.run_steps(3);
+    h.state_mut().create_from_word("locked.docx", &pdfcraft_word_import::testkit::encrypted_docx("سر-2026"));
+    h.run_steps(2);
+    assert!(h.state().password_prompt.is_some(), "asks for the password");
+    assert!(h.state().views.is_empty(), "nothing opened yet");
+    h.state_mut().submit_password(Some("wrong".into()));
+    h.run_steps(2);
+    let prompt = h.state().password_prompt.as_ref().expect("asks again");
+    assert!(prompt.error.is_some(), "says the password was wrong");
+    h.state_mut().submit_password(Some("سر-2026".into()));
+    for _ in 0..20 {
+        h.run_steps(1);
+    }
+    assert!(h.state().password_prompt.is_none());
+    assert_eq!(h.state().views.len(), 1, "the converted PDF is open");
+    assert_eq!(h.state().session.docs()[0].name, "locked.pdf");
 }

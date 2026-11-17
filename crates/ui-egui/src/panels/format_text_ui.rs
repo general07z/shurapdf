@@ -16,18 +16,13 @@ use crate::edit_text_ui::Extras;
 use crate::theme::Tokens;
 use crate::{icons, widgets};
 
-/// A font picked from the font list. The caller applies it, since keeping the paragraph's own
-/// font also means restoring the family it started with.
+/// A font picked from the font list.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FontChoice {
-    /// The fonts the paragraph already uses.
-    KeepSource,
     /// One of the page's fonts, by resource name.
     Resource(String),
     /// A standard family.
     Family(FontFamily),
-    /// Load font…: pick a font file.
-    Load,
     /// A font file installed on this computer.
     Installed(std::path::PathBuf),
 }
@@ -154,104 +149,61 @@ pub(crate) fn panel(
             .selected_text(fonts.shown.as_str())
             .width(width)
             .show_ui(ui, |ui| {
-                if let Some(sources) = fonts.sources {
-                    if ui.selectable_label(false, tl!("Keep source fonts")).clicked() {
-                        out.font = Some(FontChoice::KeepSource);
-                    }
-                    for (resource, face) in sources.iter().filter(|(r, _)| !r.starts_with("PCApproved")) {
-                        if ui.selectable_label(false, face).clicked() {
-                            out.font = Some(FontChoice::Resource(resource.clone()));
+                // One list: the fonts the page already uses (existing text), the three standard fonts,
+                // then every installed font, scrolled as one with its bar always showing. The current
+                // font is marked, and the list opens on it.
+                #[cfg(not(target_arch = "wasm32"))]
+                let installed = crate::files::installed_font_files(ui.ctx(), false);
+                #[cfg(target_arch = "wasm32")]
+                let installed: Option<Vec<()>> = Some(Vec::new());
+                let height = (ui.ctx().content_rect().height() - 160.0).max(160.0);
+                // Opened just now (the list wasn't drawn last pass): scroll to the current font once.
+                let (id, pass) = (ui.make_persistent_id("format-font-list-pass"), ui.ctx().cumulative_pass_nr());
+                let just_opened = ui.ctx().data(|d| d.get_temp::<u64>(id)).is_none_or(|last| last.saturating_add(1) < pass);
+                ui.ctx().data_mut(|d| d.insert_temp(id, pass));
+                egui::ScrollArea::vertical().max_height(height).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(
+                    ui,
+                    |ui| {
+                        for (resource, face) in fonts.sources.into_iter().flatten().filter(|(r, _)| !r.starts_with("PCApproved")) {
+                            if ui.selectable_label(false, face).clicked() {
+                                out.font = Some(FontChoice::Resource(resource.clone()));
+                            }
                         }
-                    }
-                    ui.separator();
-                }
-                for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                    if ui.selectable_label(fonts.sources.is_none() && look.family == f, f.label()).clicked() {
-                        out.font = Some(FontChoice::Family(f));
-                    }
-                }
-                if fonts.sources.is_some() {
-                    ui.separator();
-                    if ui.selectable_label(false, tl!("Load font…")).clicked() {
-                        out.font = Some(FontChoice::Load);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    ui.menu_button(tl!("Installed fonts…"), |ui| {
-                        ui.set_min_width(260.0);
-                        let reload = ui.button(tl!("Reload")).clicked();
-                        match crate::files::installed_font_files(ui.ctx(), reload) {
+                        for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
+                            let current = fonts.sources.is_none() && look.face.is_none() && look.family == f;
+                            let r = ui.selectable_label(current, f.label());
+                            if current && just_opened {
+                                r.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if r.clicked() {
+                                out.font = Some(FontChoice::Family(f));
+                            }
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        match installed {
                             Some(list) if list.is_empty() => {
-                                ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                                ui.label(tl!("No installed fonts can be embedded. Load a font file."));
                             }
                             Some(list) => {
-                                let search_id = ui.scope_id().with("installed-font-search");
-                                let mut query = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
-                                ui.horizontal(|ui| {
-                                    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                                    crate::icons::paint(ui, icon_rect, "search", 13.0, ui.visuals().text_color().gamma_multiply(0.6));
-                                    let resp = ui.add(
-                                        egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(ui.available_width() - 8.0),
-                                    );
-                                    if resp.changed() {
-                                        ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
+                                for font in list {
+                                    let current = fonts.shown == font.face;
+                                    let r = ui.selectable_label(current, &font.face);
+                                    if current && just_opened {
+                                        r.scroll_to_me(Some(egui::Align::Center));
                                     }
-                                });
-                                ui.separator();
-
-                                let query_lower = query.trim().to_lowercase();
-                                let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =
-                                    std::collections::BTreeMap::new();
-                                for font in &list {
-                                    if query_lower.is_empty()
-                                        || font.family.to_lowercase().contains(&query_lower)
-                                        || font.face.to_lowercase().contains(&query_lower)
-                                    {
-                                        families.entry(&font.family).or_default().push(font);
+                                    if r.clicked() {
+                                        out.font = Some(FontChoice::Installed(font.path));
                                     }
-                                }
-
-                                if families.is_empty() {
-                                    ui.label(tl!("No openly licensed document fonts found. Load a font file."));
-                                } else {
-                                    egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
-                                        for (family, faces) in families {
-                                            if faces.len() == 1 {
-                                                if let Some(&font) = faces.first() {
-                                                    let label =
-                                                        if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
-                                                    if ui.button(label).clicked() {
-                                                        out.font = Some(FontChoice::Installed(font.path.clone()));
-                                                        ui.close();
-                                                    }
-                                                }
-                                            } else {
-                                                ui.menu_button(family, |ui| {
-                                                    ui.set_min_width(180.0);
-                                                    for font in faces {
-                                                        let label = font
-                                                            .face
-                                                            .strip_prefix(family)
-                                                            .map(str::trim)
-                                                            .filter(|s| !s.is_empty())
-                                                            .unwrap_or(&font.face);
-                                                        if ui.button(label).clicked() {
-                                                            out.font = Some(FontChoice::Installed(font.path.clone()));
-                                                            ui.close();
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    });
                                 }
                             }
                             None => {
                                 ui.label(tl!("Finding document fonts…"));
                             }
                         }
-                    });
-                    ui.add_space(4.0);
-                }
+                        #[cfg(target_arch = "wasm32")]
+                        let _ = installed;
+                    },
+                );
             })
             .response
     });

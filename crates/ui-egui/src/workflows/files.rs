@@ -90,6 +90,13 @@ pub(crate) fn installed_font_files(ctx: &egui::Context, reload: bool) -> Option<
     files.lock().ok().and_then(|f| f.files.clone())
 }
 
+/// Start the installed-font scan without waiting for it, so that by the time a paragraph is
+/// opened for editing its face can be drawn from the installed copy (Arabic in Word's PDFs).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn start_installed_font_scan(ctx: &egui::Context) {
+    let _ = installed_font_files(ctx, false);
+}
+
 /// The picker for `purpose`: PDFs, and for Create and Insert also what they convert.
 fn files_picker(purpose: FilePurpose) -> rfd::AsyncFileDialog {
     let dialog = rfd::AsyncFileDialog::new();
