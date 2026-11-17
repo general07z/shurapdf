@@ -15558,8 +15558,8 @@ fn office_documents_convert_through_libreoffice_or_explain_why_not() {
     let text = s.create_from_text("t", "Quarterly report").unwrap();
     let id = s.open("t.pdf", None, text, None).unwrap();
     let docx = Arc::new(s.get(id).unwrap().export_office(compare::OfficeFormat::Docx));
-    assert_eq!(source_kind("Report.docx", &docx), Some(SourceKind::Office));
-    match s.convert_to_pdf("Report.docx", &docx) {
+    assert_eq!(source_kind("Report.docm", &docx), Some(SourceKind::Office));
+    match s.convert_to_pdf("Report.docm", &docx) {
         Ok((kind, pdf)) => {
             assert_eq!(kind, SourceKind::Office);
             let converted = s.open_new("Report.pdf", pdf).unwrap();
@@ -15571,7 +15571,7 @@ fn office_documents_convert_through_libreoffice_or_explain_why_not() {
     }
     // Combine treats it as a file to convert, not as a PDF to pass through.
     assert!(
-        s.as_pdf("Report.docx", &docx).map_or_else(|e| e.to_string().contains("LibreOffice, which isn't installed"), |pdf| pdf.starts_with(b"%PDF-"))
+        s.as_pdf("Report.docm", &docx).map_or_else(|e| e.to_string().contains("LibreOffice, which isn't installed"), |pdf| pdf.starts_with(b"%PDF-"))
     );
 }
 
@@ -15582,12 +15582,12 @@ fn inline_conversions_refuse_office_documents_without_running_libreoffice() {
     let s = Session::new();
     let docx = Arc::new(b"PK\x03\x04\x14\x00".to_vec());
     for err in
-        [s.convert_to_pdf_inline("Report.docx", &docx).map(|_| ()).unwrap_err(), s.as_pdf_inline("Report.docx", &docx).map(|_| ()).unwrap_err()]
+        [s.convert_to_pdf_inline("Report.docm", &docx).map(|_| ()).unwrap_err(), s.as_pdf_inline("Report.docm", &docx).map(|_| ()).unwrap_err()]
     {
         assert_eq!(
             err,
             EditError::Source(
-                "Report.docx: Word, Excel and PowerPoint files can't be added here yet; open it with File ▸ Open, which converts it to a PDF".into()
+                "Report.docm: Word, Excel and PowerPoint files can't be added here yet; open it with File ▸ Open, which converts it to a PDF".into()
             )
         );
     }

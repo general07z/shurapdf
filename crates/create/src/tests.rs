@@ -1652,7 +1652,8 @@ fn source_kind_finds_word_documents() {
     assert!(CONVERTIBLE.contains(&"docx"));
     // Word 97-2003: a compound file named .doc; a zip named .doc is not one.
     assert_eq!(source_kind("old.DOC", &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0]), Some(SourceKind::Word));
-    assert_eq!(source_kind("old.doc", b"PK\x03\x04"), None);
+    // A zip named .doc is not Word's; LibreOffice may still read it.
+    assert_eq!(source_kind("old.doc", b"PK\x03\x04"), Some(SourceKind::Office));
     assert!(CONVERTIBLE.contains(&"doc"));
 }
 
@@ -3078,13 +3079,18 @@ fn stripping_extended_xmp_leaves_the_rest_of_the_jpeg() {
 #[test]
 fn convertible_is_the_image_and_text_extensions() {
     let both: Vec<&str> = IMAGE_EXTENSIONS.iter().chain(TEXT_EXTENSIONS.iter()).copied().collect();
-    assert_eq!(both, CONVERTIBLE.to_vec());
-    assert!(OFFICE_EXTENSIONS.iter().all(|e| !CONVERTIBLE.contains(e) && *e != "pdf"));
+    // Word's own `.docx` and `.doc` are read by the built-in engine and listed too; every other
+    // Office extension goes through LibreOffice and isn't.
+    let word = ["docx", "doc"];
+    assert_eq!(both.iter().chain(word.iter()).copied().collect::<Vec<_>>(), CONVERTIBLE.to_vec());
+    assert!(OFFICE_EXTENSIONS.iter().all(|e| word.contains(e) || (!CONVERTIBLE.contains(e) && *e != "pdf")));
 }
 
 #[test]
 fn office_documents_are_their_own_kind() {
-    assert_eq!(source_kind("Report.docx", b"PK\x03\x04\x14\x00"), Some(SourceKind::Office));
+    // A .docx is Word's own kind (the built-in engine); the other Word-family files are Office.
+    assert_eq!(source_kind("Report.docx", b"PK\x03\x04\x14\x00"), Some(SourceKind::Word));
+    assert_eq!(source_kind("Report.docm", b"PK\x03\x04\x14\x00"), Some(SourceKind::Office));
     assert_eq!(source_kind("Budget.xls", &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]), Some(SourceKind::Office));
     // A PDF saved with a Word name is still a PDF; a ZIP that isn't named like Office is nothing.
     assert_eq!(source_kind("Report.docx", b"%PDF-1.7\n"), Some(SourceKind::Pdf));
