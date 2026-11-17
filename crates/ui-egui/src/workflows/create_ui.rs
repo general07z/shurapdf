@@ -96,25 +96,16 @@ fn stem(name: &str) -> &str {
 }
 
 impl PdfCraftApp {
-<<<<<<< HEAD
-    /// Convert a non-PDF file (image, text, Word) into a new tab. Returns `None` when `bytes` is not
-    /// something Create understands (the caller then tries to open it as a PDF).
+    /// Convert a non-PDF file (image, text, Word or another Office document) into a new tab. Returns
+    /// `None` when `bytes` is not something Create understands (the caller then tries to open it as a
+    /// PDF). Another Office document blocks while LibreOffice runs: File ▸ Open converts it on the
+    /// open worker instead ([`Self::open_converted_pdf`]), leaving this for startup and inline opens.
     pub(crate) fn open_converted(&mut self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
         use pdfcraft_engine::SourceKind;
         match pdfcraft_engine::source_kind(name, bytes) {
             Some(SourceKind::Word) => return Some(self.open_word(name, None, Arc::new(bytes.to_vec()), None, true)),
-            Some(SourceKind::Image | SourceKind::Text) => {}
+            Some(SourceKind::Image | SourceKind::Text | SourceKind::Office) => {}
             _ => return None,
-=======
-    /// Convert a non-PDF file (image, text, Office document) into a new tab. Returns `None` when
-    /// `bytes` is not something Create understands (the caller then tries to open it as a PDF).
-    /// An Office document blocks while LibreOffice runs: File ▸ Open converts it on the open
-    /// worker instead ([`Self::open_converted_pdf`]), leaving this for startup and inline opens.
-    pub(crate) fn open_converted(&mut self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
-        use pdfcraft_engine::SourceKind;
-        if !matches!(pdfcraft_engine::source_kind(name, bytes), Some(SourceKind::Image | SourceKind::Text | SourceKind::Office)) {
-            return None;
->>>>>>> upstream/main
         }
         let created = self.session.convert_to_pdf(name, &Arc::new(bytes.to_vec())).map(|(_, pdf)| pdf);
         Some(self.open_converted_pdf(name, created.map_err(|e| e.to_string())))
@@ -361,19 +352,14 @@ impl PdfCraftApp {
         }
     }
 
-<<<<<<< HEAD
     /// Reduce File Size with the High compression preset: images to 100 ppi, JPEG low quality.
     pub(crate) fn reduce_file_size_high(&mut self) {
         self.start_optimize(crate::optimize_ui::OptimizeKind::Reduce, &pdfcraft_engine::optimize::Preset::High.settings(), &[]);
     }
 
-    /// Save an optimized copy (Reduce File Size, Optimize PDF) next to the original, reporting
-    /// the saving. A Reduce File Size copy that isn't smaller is not saved (#490).
-=======
     /// Save an optimized copy (Reduce File Size, Optimize PDF) to `destination`, or where the user
     /// now chooses, reporting the saving. A Reduce File Size copy that isn't smaller is not saved
     /// (#490).
->>>>>>> upstream/main
     pub(crate) fn save_optimized(
         &mut self,
         id: pdfcraft_engine::DocId,

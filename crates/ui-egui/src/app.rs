@@ -840,24 +840,11 @@ impl PdfCraftApp {
                 view.pending_pick = None;
             }
         }
-<<<<<<< HEAD
-        // The window shows the active document's name (or title, if it asks for that).
-        let title = self
-            .active
-            .and_then(|i| crate::canvas::tab_label(self, i))
-            .or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-            .map_or_else(|| crate::PRODUCT_NAME.to_owned(), |name| format!("{name} — {}", crate::PRODUCT_NAME));
-        if title != self.window_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.window_title = title;
-        }
-=======
         panes::frame(self);
         // Forms' scripts read Highlight fields as `app.runtimeHighlight`.
         let highlight = self.active.and_then(|i| self.views.get(i)).map_or(self.view_defaults.highlight_fields, |v| v.highlight_fields);
         self.session.set_field_highlight(highlight);
         self.sync_titles(&ctx);
->>>>>>> upstream/main
         // The accessible window takes the same name, so a screen reader (AT-SPI on Linux, UIA on
         // Windows) can tell it apart (#4614). egui builds the root node afresh every pass.
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |root| root.set_label(self.window_title.as_str()));

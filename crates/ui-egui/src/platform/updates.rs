@@ -9,14 +9,8 @@ use craft_update::{CheckResultDialog, CheckResultResponse};
 
 use crate::PdfCraftApp;
 
-/// Where every release of this build is listed: upstream's, or a branded build's own
-/// (`PDFCRAFT_UPDATE_REPO`, as [`crate::UPDATE_APP`] updates from).
-pub fn releases_page() -> String {
-    match option_env!("PDFCRAFT_UPDATE_REPO") {
-        Some(repo) if !repo.is_empty() => format!("https://github.com/{repo}/releases"),
-        _ => "https://github.com/storytold/pdfcraft/releases".to_owned(),
-    }
-}
+/// Where every PdfCraft release is listed.
+pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
 
 /// Stands in for the network in tests.
 #[cfg(not(target_arch = "wasm32"))]
@@ -137,7 +131,7 @@ impl PdfCraftApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.open_url(&releases_page());
+            self.open_url(RELEASES_PAGE);
         }
     }
 
@@ -176,54 +170,10 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
         if app.updates.open && !app.updates.check_requested && matches!(app.updates.updater.status(), Status::Idle) {
             app.updates.open = false;
         }
-<<<<<<< HEAD
-    }
-    if !app.updates.open {
-        return;
-    }
-    let t = theme::Tokens::get(ctx);
-    let current = env!("CARGO_PKG_VERSION");
-    let mut close = false;
-    let modal = crate::widgets::show_modal(ctx, "updates", |ui| {
-        ui.set_width(420.0);
-        ui.horizontal(|ui| {
-            ui.add(crate::icons::image("cloud", 22.0, t.accent));
-            ui.label(egui::RichText::new(tl!("Check for updates")).font(theme::semibold(16.0)));
-        });
-        ui.add_space(8.0);
-        #[cfg(not(target_arch = "wasm32"))]
-        match app.updates.updater.status() {
-            Status::Idle => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(tl!("Checking for a newer version…"));
-                });
-            }
-            Status::Checking => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(tl!("Checking for a newer version…"));
-                });
-            }
-            Status::UpToDate => {
-                ui.label(crate::i18n::fmt(tl!("PdfCraft {c} is up to date."), &[("c", current)]));
-            }
-            Status::Failed(e) => {
-                ui.label(crate::i18n::fmt(tl!("Couldn't check for updates: {e}"), &[("e", e)]));
-                ui.label(
-                    egui::RichText::new(crate::i18n::fmt(
-                        tl!("You have version {c}. All releases are listed at {page}."),
-                        &[("c", current), ("page", &releases_page())],
-                    ))
-                    .color(t.text_muted),
-                );
-            }
-=======
         if app.updates.open {
             let dialog = CheckResultDialog::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION"));
             let response = dialog.show(ctx, app.updates.updater.status());
             answer_result(app, ctx, response);
->>>>>>> upstream/main
         }
     }
     #[cfg(target_arch = "wasm32")]

@@ -16,13 +16,18 @@ use crate::edit_text_ui::Extras;
 use crate::theme::Tokens;
 use crate::{icons, widgets};
 
-/// A font picked from the font list.
+/// A font picked from the font list. The caller applies it, since keeping the paragraph's own
+/// font also means restoring the family it started with.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FontChoice {
+    /// The fonts the paragraph already uses.
+    KeepSource,
     /// One of the page's fonts, by resource name.
     Resource(String),
     /// A standard family.
     Family(FontFamily),
+    /// Load font…: pick a font file.
+    Load,
     /// A font file installed on this computer.
     Installed(std::path::PathBuf),
 }
@@ -144,28 +149,6 @@ pub(crate) fn panel(
     // The font, across the panel.
     ui.spacing_mut().combo_height = 360.0;
     let width = ui.available_width();
-<<<<<<< HEAD
-    craft_ui::ComboBox::from_id_salt("format-font")
-        .selected_text(fonts.shown.as_str())
-        .width(width)
-        .show_ui(ui, |ui| {
-            // One list: the fonts the page already uses (existing text), the three standard fonts,
-            // then every installed font, scrolled as one with its bar always showing. The current
-            // font is marked, and the list opens on it.
-            #[cfg(not(target_arch = "wasm32"))]
-            let installed = crate::files::installed_font_files(ui.ctx());
-            #[cfg(target_arch = "wasm32")]
-            let installed: Option<Vec<()>> = Some(Vec::new());
-            let height = (ui.ctx().content_rect().height() - 160.0).max(160.0);
-            // Opened just now (the list wasn't drawn last pass): scroll to the current font once.
-            let (id, pass) = (ui.make_persistent_id("format-font-list-pass"), ui.ctx().cumulative_pass_nr());
-            let just_opened = ui.ctx().data(|d| d.get_temp::<u64>(id)).is_none_or(|last| last.saturating_add(1) < pass);
-            ui.ctx().data_mut(|d| d.insert_temp(id, pass));
-            egui::ScrollArea::vertical().max_height(height).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(
-                ui,
-                |ui| {
-                    for (resource, face) in fonts.sources.into_iter().flatten().filter(|(r, _)| !r.starts_with("PCApproved")) {
-=======
     let font_resp = outlined(ui, |ui| {
         craft_ui::ComboBox::from_id_salt("format-font")
             .selected_text(fonts.shown.as_str())
@@ -176,52 +159,10 @@ pub(crate) fn panel(
                         out.font = Some(FontChoice::KeepSource);
                     }
                     for (resource, face) in sources.iter().filter(|(r, _)| !r.starts_with("PCApproved")) {
->>>>>>> upstream/main
                         if ui.selectable_label(false, face).clicked() {
                             out.font = Some(FontChoice::Resource(resource.clone()));
                         }
                     }
-<<<<<<< HEAD
-                    for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                        let current = fonts.sources.is_none() && look.face.is_none() && look.family == f;
-                        let r = ui.selectable_label(current, f.label());
-                        if current && just_opened {
-                            r.scroll_to_me(Some(egui::Align::Center));
-                        }
-                        if r.clicked() {
-                            out.font = Some(FontChoice::Family(f));
-                        }
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    match installed {
-                        Some(list) if list.is_empty() => {
-                            ui.label(tl!("No installed fonts can be embedded. Load a font file."));
-                        }
-                        Some(list) => {
-                            for font in list {
-                                let current = fonts.shown == font.face;
-                                let r = ui.selectable_label(current, &font.face);
-                                if current && just_opened {
-                                    r.scroll_to_me(Some(egui::Align::Center));
-                                }
-                                if r.clicked() {
-                                    out.font = Some(FontChoice::Installed(font.path));
-                                }
-                            }
-                        }
-                        None => {
-                            ui.label(tl!("Finding document fonts…"));
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    let _ = installed;
-                },
-            );
-        })
-        .response
-        .on_hover_text(format!("{}\n{}", tl!("Font"), tl!("Thai and Arabic use regular fallback fonts when available.")));
-    ui.add_space(4.0);
-=======
                     ui.separator();
                 }
                 for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
@@ -256,7 +197,6 @@ pub(crate) fn panel(
                                     }
                                 });
                                 ui.separator();
->>>>>>> upstream/main
 
                                 let query_lower = query.trim().to_lowercase();
                                 let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =

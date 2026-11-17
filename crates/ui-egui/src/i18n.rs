@@ -159,29 +159,8 @@ pub static LANGUAGES: [LangInfo; LANGUAGE_COUNT] = [
 /// (escaped), read on first use ([`Lang::has_own`]).
 static OWN_ROWS: [OnceLock<HashSet<(&'static str, &'static str)>>; LANGUAGE_COUNT] = [const { OnceLock::new() }; LANGUAGE_COUNT];
 
-<<<<<<< HEAD
-    /// Return the parsed catalogue, building it on first use and warning about entries that fall back to
-    /// English.
-    fn catalog(&self) -> &Catalog {
-        self.catalog.get_or_init(|| {
-            let (catalog, errors) = Catalog::parse(self.source, self.plural_forms());
-            for error in errors {
-                log::warn!("{} interface catalog: {error}; that entry shows in English", self.code);
-            }
-            // Catalogs keep logical text: the fork shapes and reorders each run once. Accessibility
-            // names, copied text and search therefore see the same logical string as the source.
-            let mut catalog = catalog;
-            catalog.rename_translations(renamed);
-            catalog
-        })
-    }
-}
-
-/// A language the UI can be shown in (a handle into [`LANGUAGES`]).
-=======
 /// A language the UI can be shown in: English, or one of [`LANGUAGES`] whose catalogs are
 /// embedded.
->>>>>>> upstream/main
 #[derive(Clone, Copy)]
 pub struct Lang {
     lang: craft_i18n::Lang,
@@ -359,18 +338,6 @@ impl Lang {
 /// interface is English only; tests that need a translation skip with a note.
 pub fn catalogs_embedded() -> bool {
     !CRAFT_I18N.is_empty()
-}
-
-/// The `language` preference of a fresh install: the build's `PDFCRAFT_DEFAULT_LANGUAGE` (set at
-/// compile time, e.g. `ar` for an organisation whose users read Arabic whatever their Windows
-/// language is), else [`AUTO`]. Saved settings override it; an unknown code means [`AUTO`].
-pub fn default_pref() -> &'static str {
-    default_pref_from(option_env!("PDFCRAFT_DEFAULT_LANGUAGE"))
-}
-
-/// [`default_pref`] for a given build setting.
-pub(crate) fn default_pref_from(setting: Option<&str>) -> &'static str {
-    setting.map(str::trim).and_then(normalize_pref).unwrap_or(AUTO)
 }
 
 /// The canonical `language` preference for user input: [`AUTO`] or a registered code (any case).
@@ -575,74 +542,9 @@ pub fn key_name(s: &str) -> &str {
     lang.i18n().get(lang.lang, "key", s).unwrap_or(s)
 }
 
-/// Translate an English UI string; unknown strings come back unchanged (in a branded build,
-/// with the product's own name; see [`renamed`]).
+/// Translate an English UI string; unknown strings come back unchanged.
 pub fn tr(lang: Lang, s: &str) -> &str {
-<<<<<<< HEAD
-    lang.catalog().plain(s).unwrap_or_else(|| branded(s))
-}
-
-/// The upstream product name as interface text says it.
-const UPSTREAM_NAME: &str = "PdfCraft";
-
-/// `text` with the product named as this build names itself ([`crate::PRODUCT_NAME`]), or `None`
-/// when nothing changes. Only the name as a word is replaced: `PdfCraft.Document` (a file type
-/// id) or `PdfCraftData` (a folder) stay as they are, since they name things on disk, not the app.
-fn renamed(text: &str) -> Option<String> {
-    renamed_as(text, crate::PRODUCT_NAME)
-}
-
-/// [`renamed`] for the product name `name`.
-fn renamed_as(text: &str, name: &str) -> Option<String> {
-    if name == UPSTREAM_NAME || !text.contains(UPSTREAM_NAME) {
-        return None;
-    }
-    // Part of a longer word, a path or an id: not the app's name.
-    let joins = |c: char| c.is_alphanumeric() || matches!(c, '\\' | '/' | '_');
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(UPSTREAM_NAME) {
-        let (before, from) = rest.split_at(at);
-        let Some(after) = from.strip_prefix(UPSTREAM_NAME) else { break };
-        let joined_before = before.chars().next_back().is_some_and(joins);
-        let mut next = after.chars();
-        let joined_after = match next.next() {
-            Some('.') => next.next().is_some_and(char::is_alphanumeric),
-            Some(c) => joins(c),
-            None => false,
-        };
-        out.push_str(before);
-        out.push_str(if joined_before || joined_after { UPSTREAM_NAME } else { name });
-        rest = after;
-    }
-    out.push_str(rest);
-    Some(out)
-}
-
-/// The most untranslated strings [`branded`] keeps a renamed copy of.
-const MAX_BRANDED: usize = 4096;
-
-/// `s` as [`renamed`] says it, for English text that no catalog holds. The interface's strings
-/// are a fixed set, so each renamed one is kept for the rest of the run (at most [`MAX_BRANDED`];
-/// past that, text shows unrenamed rather than growing without bound).
-fn branded(s: &str) -> &str {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, PoisonError};
-    static RENAMED: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
-    let Some(text) = renamed(s) else { return s };
-    let mut cache = RENAMED.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(done) = cache.get(s) {
-        return done;
-    }
-    if cache.len() >= MAX_BRANDED {
-        return s;
-    }
-    let leaked: &'static str = Box::leak(text.into_boxed_str());
-    cache.insert(s.to_owned(), leaked);
-    leaked
-=======
     lang.i18n().t(lang.lang, s)
->>>>>>> upstream/main
 }
 
 /// How the layers below say their own sentences in the current language.
@@ -788,13 +690,7 @@ pub fn menu_label(id: &str, label: &str) -> String {
 /// The form is the language's CLDR category; `{n}` is written in `0`–`9` without grouping or
 /// isolate marks, as PdfCraft always has.
 pub fn trn(lang: Lang, n: u64, one: &str, other: &str) -> String {
-<<<<<<< HEAD
-    let idx = (lang.0.plural)(n);
-    let text = lang.catalog().plural(one, other, idx).unwrap_or_else(|| branded(if n == 1 { one } else { other }));
-    fmt(text, &[("n", &n.to_string())])
-=======
     lang.i18n().trn_plain(lang.lang, n, one, other)
->>>>>>> upstream/main
 }
 
 /// `name` lowercased with the Latin accents that occur in language names folded away, so a

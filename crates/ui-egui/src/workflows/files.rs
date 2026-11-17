@@ -29,18 +29,6 @@ pub enum FilePurpose {
     RedactWords,
 }
 
-<<<<<<< HEAD
-/// The installed document fonts, discovered off the GUI thread on first use: `None` until the
-/// scan has finished.
-#[cfg(not(target_arch = "wasm32"))]
-type InstalledFonts = Arc<std::sync::Mutex<Option<Vec<pdfcraft_engine::text_fonts::FontFile>>>>;
-
-#[cfg(not(target_arch = "wasm32"))]
-fn installed_fonts(ctx: &egui::Context) -> &'static InstalledFonts {
-    static CACHE: std::sync::OnceLock<InstalledFonts> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| {
-        let files: InstalledFonts = Arc::new(std::sync::Mutex::new(None));
-=======
 #[cfg(not(target_arch = "wasm32"))]
 fn discover_fonts_safely(
     discover: impl FnOnce() -> Vec<pdfcraft_engine::text_fonts::FontFile> + std::panic::UnwindSafe,
@@ -82,7 +70,6 @@ pub(crate) fn installed_font_files(ctx: &egui::Context, reload: bool) -> Option<
     let files = CACHE.get_or_init(|| Arc::new(Mutex::new(FontScanCache::default())));
     let start = files.lock().is_ok_and(|mut state| state.begin(reload));
     if start {
->>>>>>> upstream/main
         let result = files.clone();
         let ctx = ctx.clone();
         if std::thread::Builder::new()
@@ -99,27 +86,8 @@ pub(crate) fn installed_font_files(ctx: &egui::Context, reload: bool) -> Option<
         {
             result.finish(Vec::new());
         }
-<<<<<<< HEAD
-        files
-    })
-}
-
-/// Discover installed document fonts off the GUI thread, on first use (the picker, or Edit text
-/// opening: [`start_installed_font_scan`]).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn installed_font_files(ctx: &egui::Context) -> Option<Vec<pdfcraft_engine::text_fonts::FontFile>> {
-    installed_fonts(ctx).lock().ok().and_then(|f| f.clone())
-}
-
-/// Start the installed-font scan without waiting for it, so that by the time a paragraph is
-/// opened for editing its face can be drawn from the installed copy (Arabic in Word's PDFs).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn start_installed_font_scan(ctx: &egui::Context) {
-    installed_fonts(ctx);
-=======
     }
     files.lock().ok().and_then(|f| f.files.clone())
->>>>>>> upstream/main
 }
 
 /// The picker for `purpose`: PDFs, and for Create and Insert also what they convert.
@@ -135,11 +103,7 @@ fn files_picker(purpose: FilePurpose) -> rfd::AsyncFileDialog {
         return dialog.add_filter_any_case("PDF", &["pdf"]);
     }
     let all: Vec<&str> = std::iter::once("pdf").chain(pdfcraft_engine::CONVERTIBLE).collect();
-<<<<<<< HEAD
-    dialog.add_filter(tl!("PDF, images, text and Word"), &all).add_filter("PDF", &["pdf"])
-=======
-    dialog.add_filter_any_case(tl!("PDF, images and text"), &all).add_filter_any_case("PDF", &["pdf"])
->>>>>>> upstream/main
+    dialog.add_filter_any_case(tl!("PDF, images, text and Word"), &all).add_filter_any_case("PDF", &["pdf"])
 }
 
 /// The Replace Pages dialog: the chosen file and the ranges (1-based, inclusive).

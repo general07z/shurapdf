@@ -449,27 +449,6 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, press: PagePress, vie
             s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false });
             return true;
         }
-<<<<<<< HEAD
-    }
-    // A width handle of the paragraph open for typing resizes it (`edit_text_ui`), not an area
-    // selection or a move.
-    if crate::edit_text_ui::grabs_open_handle(view, page, p) {
-        return false;
-    }
-    // The frame of the paragraph open for typing takes hold of the box, as in Acrobat: a click
-    // selects it (for the arrow keys), a drag moves it. Its text keeps the caret.
-    if let Some(block) = view.line_editor.as_ref().filter(|e| e.page == page && !e.has_changes()).map(|e| e.block)
-        && let Some(object) = objects.iter().find(|o| o.target == ObjectTarget { kind: ObjectKind::Text, index: block })
-        && on_frame(screen(xf, info, page, object), p)
-    {
-        s.clear();
-        s.page = Some(page);
-        s.selected.push(object.clone());
-        s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false });
-        leave_single(view);
-        view.current = page;
-        return true;
-=======
         // The frame of the paragraph open for typing selects its box (for the arrow keys) and
         // moves it.
         PagePress::Mine(Owner::Objects { part: ObjectsPart::Frame }) => {
@@ -486,7 +465,6 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, press: PagePress, vie
             }
         }
         _ => {}
->>>>>>> upstream/main
     }
     s.clear();
     // A press on something (a paragraph, its edge reaching past its box #2276, a picture, added
@@ -585,13 +563,6 @@ pub(crate) fn paint(painter: &egui::Painter, xf: &PageXform, page: usize, info: 
     let mut union = Rect::NOTHING;
     for object in &selection.selected {
         let rect = screen(xf, info, page, object).translate(delta);
-        // A text being moved goes with the pointer (its size from the box: a row is about 1.25 × it).
-        if delta != egui::Vec2::ZERO
-            && let Some(text) = object.text.as_deref()
-        {
-            let rows = text.lines().count().max(1) as f32;
-            crate::edit_text_ui::paint_move_ghost(painter, rect, text, rect.height() / (rows * 1.25), egui::Color32::BLACK);
-        }
         painter.rect_filled(rect, 0.0, BLUE.gamma_multiply(0.05));
         painter.rect_stroke(rect, 0.0, Stroke::new(1.5, BLUE), egui::StrokeKind::Outside);
         union = union.union(rect);

@@ -322,18 +322,14 @@ impl PdfCraftApp {
         activate: bool,
     ) -> Result<(), String> {
         use pdfcraft_render::OpenError;
-<<<<<<< HEAD
         // A protected Word file comes back here from the password prompt.
         if pdfcraft_engine::source_kind(name, &bytes) == Some(pdfcraft_engine::SourceKind::Word) {
             return self.open_word(name, path, bytes, password, activate);
         }
-        let prepared = match self.session.prepare_open(name, path.clone(), bytes.clone(), password) {
-=======
         // A new document opens with the remembered Highlight fields, which its scripts read; the
         // session keeps the document in front's.
         let context = self.session.open_context().with_highlight(self.view_defaults.highlight_fields);
         let prepared = match context.prepare_open(name, path.clone(), bytes.clone(), password) {
->>>>>>> upstream/main
             Ok(prepared) => prepared,
             Err(e @ (OpenError::NeedsPassword | OpenError::WrongPassword)) => {
                 let error = matches!(e, OpenError::WrongPassword).then(|| "Incorrect password. Try again.".to_string());
