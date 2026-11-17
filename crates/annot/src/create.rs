@@ -311,6 +311,11 @@ pub(crate) fn on_side(rect: [f64; 4], side: Side, end: [f64; 2]) -> bool {
     }
 }
 
+/// A free text box's `/Q`: right-aligned for a right-to-left paragraph, else left.
+fn free_text_quadding(contents: &str) -> i64 {
+    if pdfcraft_fonts::visual_line::paragraph_rtl(contents) { 2 } else { 0 }
+}
+
 /// Add a comment; returns its index in the page's `/Annots`.
 pub fn add_annotation(doc: &mut Document, new: &NewAnnotation, meta: &Meta) -> Result<usize, AnnotError> {
     let page = page_ref(doc, new.page)?;
@@ -497,8 +502,7 @@ pub fn add_annotation(doc: &mut Document, new: &NewAnnotation, meta: &Meta) -> R
             let size = if font_size.is_finite() && *font_size > 0.0 { font_size.clamp(1.0, 400.0) } else { 12.0 };
             d.set(b"DA".to_vec(), free_text_da(style.color, style.border_color, size));
             // Arabic or Hebrew text starts at the right edge, as it is typed.
-            let align = if pdfcraft_fonts::visual_line::paragraph_rtl(&new.contents) { 2 } else { 0 };
-            d.set(b"Q".to_vec(), Object::Int(align));
+            d.set(b"Q".to_vec(), Object::Int(free_text_quadding(&new.contents)));
             if let Some(f) = style.fill {
                 d.set(b"C".to_vec(), rgb(f));
             }

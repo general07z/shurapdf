@@ -1,7 +1,9 @@
 use super::draw::{draw, params};
 use super::layout::{first_undrawable, is_thai, nums, shaped_arabic, thai_error};
 use super::types::{Added, AddedImage, AddedText, CHAR_SPACING_LIMIT, Face, Family, Ink, MarkerScan, TAG};
-use super::{Content, Dict, Document, EditError, GlyphError, MarkKind, ObjRef, Object, PdfString, Stream, align_from, check, contents, page_list, place_tagged};
+use super::{
+    Content, Dict, Document, EditError, GlyphError, MarkKind, ObjRef, Object, PdfString, Stream, align_from, check, contents, page_list, place_tagged,
+};
 
 /// A text item's gray or CMYK ink. Items written before inks, and an ink out of range or not
 /// made only of numbers (a `/Gray` name, a `/CMYK` entry that isn't a number), have none: the

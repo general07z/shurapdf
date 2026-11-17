@@ -556,7 +556,11 @@ pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
         // that leaves is undrawable.
         b"FreeText" => {
             let contents = text(b"Contents")?;
-            let bad = if contents.chars().any(shaped_text::is_thai) { shaped_text::first_undrawable(&contents) } else { first_undrawable_shaped(&contents) };
+            let bad = if contents.chars().any(shaped_text::is_thai) {
+                shaped_text::first_undrawable(&contents)
+            } else {
+                first_undrawable_shaped(&contents)
+            };
             return Some(("the comment's text", bad?));
         }
         b"Line" if !d.contains(b"PCMeasureValue") => ("the line's caption", line_caption(d)?),
@@ -1448,6 +1452,28 @@ fn shaped_border(
     Some(rect)
 }
 
+/// The Arabic or Hebrew shaper for `text` when the standard face can't draw it (Thai has its own
+/// path), if this build has the faces.
+fn arabic_shaper(text: &str) -> Option<Shaper> {
+    if text.chars().any(shaped_text::is_thai) { None } else { first_undrawable(text).and(Shaper::for_text(text)) }
+}
+
+/// `text` wrapped to `width` at `size`, measured by `shaper` when there is one, else by `face`.
+fn wrap_free_text(text: &str, size: f64, width: f64, shaper: Option<Shaper>, face: pdfcraft_fonts::Std14) -> Vec<String> {
+    match shaper {
+        Some(s) => pdfcraft_fonts::wrap_with(text, size, width, |t, size| s.width(t, size)),
+        None => pdfcraft_fonts::wrap_with(text, size, width, |s, size| text_width_in(face, s, size)),
+    }
+}
+
+/// The width of one `line` (its `pieces` when drawn without the shaper) at `size`.
+fn line_width(shaper: Option<Shaper>, line: &str, pieces: &[shaped_text::Piece], size: f64, face: pdfcraft_fonts::Std14) -> f64 {
+    match shaper {
+        Some(s) => s.width(line, size),
+        None => shaped_text::pieces_width(pieces, size, 0.0, |s, size| face.text_width(s, size)),
+    }
+}
+
 fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawing, dr_face: Option<pdfcraft_fonts::Std14>) -> Option<Stream> {
     let d = context.dict;
     let parts = context.parts;
@@ -1570,11 +1596,8 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     ));
     let mut out = c.into_bytes();
     // Arabic or Hebrew is shaped and drawn as outlines when this build has the faces (`Shaper`).
-    let shaper = if text.chars().any(shaped_text::is_thai) { None } else { first_undrawable(&text).and(Shaper::for_text(&text)) };
-    let lines = match shaper {
-        Some(s) => pdfcraft_fonts::wrap_with(&text, size, width, |t, size| s.width(t, size)),
-        None => pdfcraft_fonts::wrap_with(&text, size, width, |s, size| text_width_in(face, s, size)),
-    };
+    let shaper = arabic_shaper(&text);
+    let lines = wrap_free_text(&text, size, width, shaper, face);
     let mut y = rect[3] - pad - size * reach(&lines)[0];
     if round {
         y -= ((rect[3] - rect[1] - 2.0 * pad - text_lines_height(&lines, size)) / 2.0).max(0.0);
@@ -1589,10 +1612,7 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         if y < rect[1] - size {
             break;
         }
-        let lw = match shaper {
-            Some(s) => s.width(line, size),
-            None => shaped_text::pieces_width(pieces, size, 0.0, |s, size| face.text_width(s, size)),
-        };
+        let lw = line_width(shaper, line, pieces, size, face);
         let x = match q {
             1 => rect[0] + pad + (width - lw) / 2.0,
             2 => rect[2] - pad - lw,
@@ -1601,7 +1621,17 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         if let Some(s) = shaper {
             s.draw(&mut out, line, [x, y], size, "Helv", rg(text_color).trim_end());
         } else {
-            shaped.show_line(&mut out, pieces, x, y, size, crate::text_style::resource_name(face), win_ansi, |s| face.text_width(s, size), &mut current);
+            shaped.show_line(
+                &mut out,
+                pieces,
+                x,
+                y,
+                size,
+                crate::text_style::resource_name(face),
+                win_ansi,
+                |s| face.text_width(s, size),
+                &mut current,
+            );
         }
         y -= size * 1.2;
     }

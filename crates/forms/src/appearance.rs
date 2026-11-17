@@ -833,22 +833,8 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
         Some((o, enc)) => (da.font.clone(), o, enc),
         None => ("Helv".to_string(), helvetica(), FontText::WinAnsi),
     };
-    // Arabic or Hebrew the font can't hold is shaped and drawn as outlines
-    // (pdfcraft_fonts::visual_line::Shaper), when this build has the faces; otherwise it is drawn
-    // as `?`, as before.
-    let shaper = (!thai
-        && matches!(f.kind, FieldKind::Text | FieldKind::Combo)
-        && !f.is_comb()
-        && !f.has(flags::PASSWORD)
-        && !text.chars().any(shaped_text::is_thai)
-        && enc.first_unencodable(&text).is_some())
-    .then(|| pdfcraft_fonts::visual_line::Shaper::for_text(&text))
-    .flatten();
-    let width_of = |text: &str, size: f64| match shaper {
-        Some(s) => s.width(text, size),
-        None if thai => shaped_text::thai_width(text, size, |s, size| enc.width(s, size)),
-        None => enc.width(text, size),
-    };
+    let shaper = outline_shaper(f, &enc, &text, thai);
+    let width_of = |text: &str, size: f64| field_text_width(shaper, thai, &enc, text, size);
     // How far a line's ink reaches below and above its baseline (em), where Thai stacks or
     // descenders reach past the form font's (Helvetica's) -0.207 and 0.718; `None` otherwise.
     let thai_ink = |line: &str| thai.then(|| shaped_text::thai_reach(line)).flatten().map(|[lo, hi]| [lo.min(-0.207), hi.max(0.718)]);
@@ -966,20 +952,7 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
             }
         }
     }
-    let (body, fonts, unencodable) = match shaper {
-        Some(shaper) => {
-            let mut body = Vec::new();
-            let mut unencodable = None;
-            for (x, y, line) in &shown {
-                unencodable = unencodable.or_else(|| shaper.first_unencodable(line));
-                shaper.draw(&mut body, line, [*x, *y], size, &font_name, &da.color);
-            }
-            let mut fonts = Dict::new();
-            fonts.set(font_name.as_bytes().to_vec(), font_obj);
-            (body, fonts, unencodable)
-        }
-        None => draw_lines(&shown, size, &font_name, font_obj, &enc, thai),
-    };
+    let (body, fonts, unencodable) = draw_field_lines(&shown, shaper, size, &font_name, font_obj, (&enc, thai, &da.color));
     // Acrobat regenerates only what is inside /Tx BMC when it redraws a field (e.g. on focus
     // changes), discarding what came before it (issues #1613, #633). The background and border
     // therefore go inside the marked-content block too, so a redraw keeps them with the text.
@@ -1006,6 +979,67 @@ fn field_appearance_fit(doc: &Document, f: &Field, w: &Widget, values: &[String]
     // Nothing drawn is nothing cut, however small the box.
     let overflow = overflow.filter(|_| !text.is_empty());
     (Stream::flate(d, &content), unencodable, overflow)
+}
+
+/// The width of `text` at `size` as the field draws it: by its Arabic or Hebrew `shaper`, its
+/// Thai shaping (`thai`) or the field font `enc`.
+fn field_text_width(shaper: Option<pdfcraft_fonts::visual_line::Shaper>, thai: bool, enc: &FontText, text: &str, size: f64) -> f64 {
+    match shaper {
+        Some(s) => s.width(text, size),
+        None if thai => shaped_text::thai_width(text, size, |s, size| enc.width(s, size)),
+        None => enc.width(text, size),
+    }
+}
+
+/// Arabic or Hebrew the font can't hold is shaped and drawn as outlines
+/// (`pdfcraft_fonts::visual_line::Shaper`), when this build has the faces; otherwise it is drawn as
+/// `?`, as before. Thai has its own path (`thai`).
+fn outline_shaper(f: &Field, enc: &FontText, text: &str, thai: bool) -> Option<pdfcraft_fonts::visual_line::Shaper> {
+    (!thai
+        && matches!(f.kind, FieldKind::Text | FieldKind::Combo)
+        && !f.is_comb()
+        && !f.has(flags::PASSWORD)
+        && !text.chars().any(shaped_text::is_thai)
+        && enc.first_unencodable(text).is_some())
+    .then(|| pdfcraft_fonts::visual_line::Shaper::for_text(text))
+    .flatten()
+}
+
+/// The `shown` lines of a field, by its outline `shaper` when it has one, else in the field's font
+/// (`with`: its encoding, whether Thai is shaped, the text colour operators).
+fn draw_field_lines(
+    shown: &[(f64, f64, String)],
+    shaper: Option<pdfcraft_fonts::visual_line::Shaper>,
+    size: f64,
+    font_name: &str,
+    font: Object,
+    with: (&FontText, bool, &str),
+) -> (Vec<u8>, Dict, Option<char>) {
+    match shaper {
+        Some(shaper) => draw_shaped_lines(shown, shaper, size, font_name, font, with.2),
+        None => draw_lines(shown, size, font_name, font, with.0, with.1),
+    }
+}
+
+/// The `shown` lines drawn by `shaper` as outlines, the font resources (just the field's font) and
+/// the first character it can't draw.
+fn draw_shaped_lines(
+    shown: &[(f64, f64, String)],
+    shaper: pdfcraft_fonts::visual_line::Shaper,
+    size: f64,
+    font_name: &str,
+    font: Object,
+    color: &str,
+) -> (Vec<u8>, Dict, Option<char>) {
+    let mut body = Vec::new();
+    let mut unencodable = None;
+    for (x, y, line) in shown {
+        unencodable = unencodable.or_else(|| shaper.first_unencodable(line));
+        shaper.draw(&mut body, line, [*x, *y], size, font_name, color);
+    }
+    let mut fonts = Dict::new();
+    fonts.set(font_name.as_bytes().to_vec(), font);
+    (body, fonts, unencodable)
 }
 
 /// The text operators for the `shown` lines (where each starts, and what it says) at `size`, in

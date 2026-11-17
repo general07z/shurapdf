@@ -6,8 +6,8 @@ use super::fallback::{
 };
 use super::interp::{Carry, Origin, TextState, interpret};
 use super::lines::{
-    ContentStream, content_streams, dropped_advances, dropped_side_effects, joined, page_dict, reopen_text_object, rewritten_contents, show_side_effects, splice,
-    text_lines,
+    ContentStream, content_streams, dropped_advances, dropped_side_effects, joined, page_dict, reopen_text_object, rewritten_contents,
+    show_side_effects, splice, text_lines,
 };
 use super::{
     Dict, Document, EditError, HashMap, HashSet, Matrix, Metrics, Object, Op, PdfString, TextLine, TextSession, alignment_frame, group_blocks,
@@ -1564,7 +1564,10 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
         if by_tm.contains(&s.op) {
             continue;
         }
-        let Some(start) = ops.get(..s.op).and_then(|before| before.iter().rposition(|o| o.is("BT") || o.is("ET"))).filter(|at| ops.get(*at).is_some_and(|o| o.is("BT")))
+        let Some(start) = ops
+            .get(..s.op)
+            .and_then(|before| before.iter().rposition(|o| o.is("BT") || o.is("ET")))
+            .filter(|at| ops.get(*at).is_some_and(|o| o.is("BT")))
         else {
             continue;
         };

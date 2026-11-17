@@ -130,22 +130,21 @@ pub(super) fn draw_laid_shaped(
 ) -> Result<(), EditError> {
     let r = text_rect(t);
     let latin = font_name(t.family.base_font(t.bold, t.italic));
-    let shaped =
-        ShapedFonts::styled(
-            shaped_text::clusters(laid.iter().map(|(_, _, _, pieces, _)| pieces.as_slice())),
-            outline,
-            taken,
-            fonts,
-            "PCAr",
-            &mut |o| Object::Ref(doc.add(o)),
-            t.bold,
-            t.italic,
-        )
-        .map_err(|(e, c)| match c.script {
-            ShapedScript::Arabic => arabic_error(e, &c.text),
-            ShapedScript::Hebrew => hebrew_error(e, &c.text),
-            ShapedScript::Thai => thai_error(e, &c.text),
-        })?;
+    let shaped = ShapedFonts::styled(
+        shaped_text::clusters(laid.iter().map(|(_, _, _, pieces, _)| pieces.as_slice())),
+        outline,
+        taken,
+        fonts,
+        "PCAr",
+        &mut |o| Object::Ref(doc.add(o)),
+        t.bold,
+        t.italic,
+    )
+    .map_err(|(e, c)| match c.script {
+        ShapedScript::Arabic => arabic_error(e, &c.text),
+        ShapedScript::Hebrew => hebrew_error(e, &c.text),
+        ShapedScript::Thai => thai_error(e, &c.text),
+    })?;
     out.extend(format!("BT {}", t.fill_op()).bytes());
     if t.bold {
         // Bold shaped glyphs are filled and stroked, and an uncoloured Type 3 glyph strokes with

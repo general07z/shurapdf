@@ -745,6 +745,55 @@ fn has_edges(info: &DocInfo, page: usize) -> bool {
     info.pages.get(page).is_some_and(|p| p.rotation % 180 == 0)
 }
 
+/// The outline of the paragraph under the pointer (`hovered`: its number and box), and its width
+/// handles when it is closed (`active` is the one open for typing) on an upright page.
+fn paint_hovered(painter: &egui::Painter, hovered: Option<(usize, Rect)>, active: Option<usize>, upright: bool) {
+    let Some((block, b)) = hovered else { return };
+    if active != Some(block) {
+        painter.rect_stroke(b, CornerRadius::same(2), Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
+    }
+    if upright && active.is_none() {
+        for h in width_handles(b) {
+            painter.rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, ACCENT), egui::StrokeKind::Middle);
+        }
+    }
+}
+
+/// The drag a press that has begun to drag starts on `page`, when it is a paragraph's. The open
+/// paragraph's width handles resize it (its typing box follows); the rest of its frame is the
+/// objects' (`object_ui`), which moves the box. Once the open paragraph's text has changed, a
+/// press on its frame is nobody's in the router (`object_ui` takes only an unchanged one), so the
+/// pointer doesn't offer a move there; a drag still takes the box, moving it with the typing in
+/// one edit.
+fn drag_start(
+    view: &DocView,
+    page: usize,
+    generation: u64,
+    active: Option<usize>,
+    owner: Option<(usize, ParagraphPart)>,
+    origin: Option<Pos2>,
+) -> Option<BlockDrag> {
+    let o = origin?;
+    if let Some((block, part)) = owner
+        && (active.is_none() || (active == Some(block) && part != ParagraphPart::Body))
+    {
+        let grip = match part {
+            ParagraphPart::Body => Grip::Move,
+            ParagraphPart::Left => Grip::Left,
+            ParagraphPart::Right => Grip::Right,
+        };
+        return Some(BlockDrag { page, block, generation, start: o, grip, editing: active.is_some() });
+    }
+    let block = active?;
+    let on_strip = view
+        .line_editor
+        .as_ref()
+        .filter(|e| e.page == page && e.has_changes())
+        .and_then(|e| e.frame)
+        .is_some_and(|f| f.expand(FRAME_REACH).contains(o) && !f.contains(o) && !frame_handles(f).iter().any(|h| h.expand(1.0).contains(o)));
+    on_strip.then_some(BlockDrag { page, block, generation, start: o, grip: Grip::Move, editing: true })
+}
+
 /// What of the paragraphs `lines` lies under `p` on `page`: the one hit test of Edit text's
 /// paragraphs, for the cursor and the press. A closed paragraph moves when dragged (the four-way
 /// arrow says so; a click still opens it for typing) and its edge rewraps it, from a little way
@@ -1011,39 +1060,11 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
     };
     // Add text holds text that can't be drawn where it is being typed (#125).
     let held_draft = adding.is_some() && view.content.blocked().is_some();
-    // The open paragraph's width handles resize it (its typing box follows); the rest of its frame
-    // is the objects' (`object_ui`), which moves the box.
-    if ptr.drag_started
-        && !held_draft
-        && let Some(o) = ptr.origin
-        && let Some((block, part)) = owner
-        && (active.is_none() || (active == Some(block) && part != ParagraphPart::Body))
+    if !held_draft
+        && ptr.drag_started
+        && let Some(drag) = drag_start(view, page, doc.edit_generation(), active, owner, ptr.origin)
     {
-        let grip = match part {
-            ParagraphPart::Body => Grip::Move,
-            ParagraphPart::Left => Grip::Left,
-            ParagraphPart::Right => Grip::Right,
-        };
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip, editing: active.is_some() });
-        return true;
-    }
-    // Once the open paragraph's text has changed, a press on its frame is nobody's in the router
-    // (`object_ui` takes only an unchanged one), so the pointer doesn't offer a move there; a drag
-    // still takes the box, moving it with the typing in one edit.
-    let on_open_strip = |p: Pos2| {
-        view.line_editor
-            .as_ref()
-            .filter(|e| e.page == page && e.has_changes())
-            .and_then(|e| e.frame)
-            .is_some_and(|f| f.expand(FRAME_REACH).contains(p) && !f.contains(p) && !frame_handles(f).iter().any(|h| h.expand(1.0).contains(p)))
-    };
-    if ptr.drag_started
-        && !held_draft
-        && let Some(block) = active
-        && let Some(o) = ptr.origin
-        && on_open_strip(o)
-    {
-        view.block_drag = Some(BlockDrag { page, block, generation: doc.edit_generation(), start: o, grip: Grip::Move, editing: true });
+        view.block_drag = Some(drag);
         return true;
     }
     // The paragraph under the pointer, where a press would take it: outlined, with its width
@@ -1053,14 +1074,8 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         Some(Owner::Paragraph { block, .. }) => Some(block),
         _ => None,
     };
-    if let Some(b) = hovered.filter(|_| !view.objects.holds(page) && !view.content.moving_on(page)).and_then(|h| boxes.get(h).map(|b| (h, *b))) {
-        if active != Some(b.0) {
-            painter.rect_stroke(b.1, CornerRadius::same(2), Stroke::new(1.5, ACCENT), egui::StrokeKind::Outside);
-        }
-        if upright && active.is_none() {
-            draw_handles(b.1);
-        }
-    }
+    let holds_page = view.objects.holds(page) || view.content.moving_on(page);
+    paint_hovered(&painter, hovered.filter(|_| !holds_page).and_then(|h| boxes.get(h).map(|b| (h, *b))), active, upright);
     // A click opens the paragraph the press was on.
     let Some((hit, _)) = owner else { return hovered.is_some() };
     if resp.clicked() {

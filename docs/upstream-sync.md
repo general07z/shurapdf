@@ -49,10 +49,13 @@ redrawn paragraph, Bold on a selection, width handles of the open paragraph. Rep
   retyped paragraph by its `Tm` (a numeric-only `TJ` inside `/ActualText` now reads as part of the box),
   forms/annot appearances = upstream's Thai path plus our Arabic/Hebrew `Shaper`, Word export keeps
   right-to-left paragraphs. Word and Office kinds: `.docx`/`.doc` read by WordCraft, other Office files by LibreOffice.
-  **Still to do:**
-  1. ui-egui text-editing UI was taken from upstream whole: re-port the frame handles, live move preview,
-     Bold on a selection, installed bold faces, one merged font list (no `Keep source fonts`/`Load font…`).
-  2. Run our Arabic matrix (real letter, Word table PDF) and the fidelity workflow; clippy -D warnings;
-     `cargo xtask layers/assets/parity`.
-  3. Known environmental test failures here: language catalogs (craft-i18n not checked out), a root-user
-     read-only-folder test.
+  **Done since:** ui-egui text-editing UI re-ported onto upstream's page input and router: the open
+  paragraph's width handles are router hits (`ParagraphPart::Left/Right` with the open paragraph's frame),
+  Bold/Italic keep the selection while any other format clears it (upstream's own test needs that), installed
+  bold faces, one merged font list without `Keep source fonts`/`Load font…`, live move preview, installed
+  fonts for added text. The mirrored Arabic interface (`ar.tsv`, RowSide tests) is not taken: not needed.
+  Gates run here: all tests of the touched crates pass except two that need language catalogs this machine
+  lacks (craft-i18n); clippy -D warnings clean except an upstream `xfdf` lint of this newer toolchain;
+  `xtask layers` and `xtask assets` pass. Arabic matrix: real letter 0 failures (own face and none, 168 edits),
+  Word table PDF 0 failures without a face; with a face 124 failures in narrow cells (known gap, as on main).
+  **Still to do:** the fidelity workflow on the Council runner, then the PR to `main`.
