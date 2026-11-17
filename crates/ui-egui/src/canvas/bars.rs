@@ -1,7 +1,4 @@
-use super::{
-    Color32, CornerRadius, DocInfo, DocView, Edit, PdfCraftApp, Pos2, QuickTool, Rect, Sense, SnapshotKind, Stroke, Tokens, comments, icons, theme,
-    vec2,
-};
+use super::{Color32, CornerRadius, DocInfo, DocView, PdfCraftApp, Pos2, Rect, Sense, SnapshotKind, Stroke, Tokens, icons, vec2};
 
 /// Whether `p` lies in the bottom-left quadrant of `area`, where the page size shows (#1855).
 pub(super) fn in_size_hint_zone(area: Rect, p: Pos2) -> bool {
@@ -59,16 +56,21 @@ pub(super) enum Notice {
     Close,
     /// Stop showing the secured-document notice, in every document (#4035).
     HideSecured,
+    /// Lock the placed signatures into the page (#2149).
+    LockSignatures,
 }
 
 /// The notice bar above the pages: a file changed on disk first, then what a historical
-/// snapshot is, then the signature status bar, a form's scripts having been turned
-/// off, security, forms and warnings.
+/// snapshot is, then pages cut at the renderer's limits, then the offer to lock a signature just
+/// placed, then the signature status bar, a form's scripts having been turned off, security,
+/// forms and warnings.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn notices(
     view: &mut DocView,
     doc: &pdfcraft_engine::Document,
     secured: bool,
     repaired: bool,
+    lock_offer: bool,
     signed: Option<(&str, Color32, &str, String)>,
     ui: &mut egui::Ui,
     t: &Tokens,
@@ -120,6 +122,29 @@ pub(super) fn notices(
         });
         if close {
             return Some(Notice::Close);
+        }
+    }
+    // Content cut at the renderer's limits (#623): what is missing is not visible, so the page
+    // is named in a bar of its own, which the signature, form and security bars below can't
+    // replace and dismissing them doesn't hide. Dismissing it covers the pages cut so far: a
+    // page found cut later shows it again.
+    if view.cut_pages.iter().any(|p| !view.cut_notice_dismissed.contains(p)) {
+        cut_pages_bar(view, ui, t);
+    }
+    // A signature just placed with Fill & Sign is a comment others can move (#2149): offer to
+    // lock it into the page now. `lock_offer` is false for a digitally signed document.
+    if lock_offer && !view.lock_offer_dismissed {
+        let mut lock = false;
+        notice_bar(ui, t, "lock", t.accent_text, tl!("Signature added. Others can move it until it's locked.").to_string(), |ui| {
+            if icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked() {
+                view.lock_offer_dismissed = true;
+            }
+            if crate::widgets::pill_button(ui, tl!("Lock now"), true).clicked() {
+                lock = true;
+            }
+        });
+        if lock {
+            return Some(Notice::LockSignatures);
         }
     }
     if let Some((icon, color, template, arg)) = signed {
@@ -245,6 +270,33 @@ pub(super) fn notices(
     open_security.then_some(Notice::Security).or(toggled)
 }
 
+/// The bar naming the pages whose content was cut at the renderer's limits (#623).
+fn cut_pages_bar(view: &mut DocView, ui: &mut egui::Ui, t: &Tokens) {
+    let Some(&first) = view.cut_pages.iter().next() else { return };
+    let page = first.saturating_add(1).to_string();
+    let n = view.cut_pages.len();
+    let text = if n == 1 {
+        crate::i18n::fmt(
+            tl!("Page {page} holds more content than PdfCraft can read: part of it isn't drawn, and only part of its text can be found or copied."),
+            &[("page", &page)],
+        )
+    } else {
+        crate::i18n::fmt(
+            tl!(
+                "{n} pages hold more content than PdfCraft can read, page {page} first: parts of them aren't drawn, and only part of their text can be found or copied."
+            ),
+            &[("n", &n.to_string()), ("page", &page)],
+        )
+    };
+    let mut dismiss = false;
+    notice_bar(ui, t, "triangle-alert", t.accent_text, text, |ui| {
+        dismiss = icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked();
+    });
+    if dismiss {
+        view.cut_notice_dismissed.extend(view.cut_pages.iter().copied());
+    }
+}
+
 /// One notice bar: an icon and a message on the left, `buttons` (added right to left) on the
 /// right. The buttons are laid out first, so the message only gets the width they leave: it
 /// wraps there (or, when very little is left, is cut short with the full text on hover) instead
@@ -254,8 +306,29 @@ pub(super) fn notices(
 fn notice_bar(ui: &mut egui::Ui, t: &Tokens, icon: &str, icon_color: Color32, text: String, buttons: impl FnOnce(&mut egui::Ui)) {
     const ROW: f32 = 28.0;
     const ICON: f32 = 16.0;
+    /// Content width below which the buttons stack under the message.
+    const STACK_BELOW: f32 = 200.0;
+    /// Content width under which stacking is not tried: the message would wrap to a column of a
+    /// few characters, thousands of points tall, and push the hotbar off the screen. Such a width
+    /// is below the smallest supported window, so the single row stays as it was.
+    const STACK_ABOVE: f32 = 100.0;
     egui::Frame::NONE.fill(t.accent_soft).inner_margin(egui::Margin::symmetric(14, 7)).show(ui, |ui| {
         let width = ui.available_width();
+        if (STACK_ABOVE..STACK_BELOW).contains(&width) {
+            // A narrow document area (a half-width window): the message takes the full width and
+            // the buttons sit on a row of their own below it, rather than squeezing it to nothing.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                let (slot, _) = ui.allocate_exact_size(vec2(ICON, ICON), Sense::hover());
+                icons::paint(ui, Rect::from_center_size(slot.center(), vec2(ICON, ICON)), icon, ICON, icon_color);
+                ui.add(egui::Label::new(egui::RichText::new(text).color(t.text)).wrap());
+            });
+            // The buttons wrap onto further rows when even the full width is too narrow for them all.
+            ui.allocate_ui_with_layout(vec2(width, ROW), egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
+                ui.set_min_height(ROW);
+                buttons(ui);
+            });
+            return;
+        }
         ui.allocate_ui_with_layout(vec2(width, ROW), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.set_min_height(ROW);
             buttons(ui);
@@ -276,6 +349,7 @@ fn notice_bar(ui: &mut egui::Ui, t: &Tokens, icon: &str, icon_color: Color32, te
     });
 }
 
+<<<<<<< HEAD
 /// The floating quick-action bar at the start edge of the document area (the right one in a
 /// right-to-left interface, beside the Tools pane there).
 pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
@@ -492,4 +566,59 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                 });
             });
     });
+=======
+/// The bar's narrowest form: one 32 pt button, 6 pt margins and a 1 pt border each side.
+pub(crate) const QUICK_BAR_WIDTH: f32 = 46.0;
+pub(crate) const QUICK_BAR_EDGE: f32 = 14.0;
+
+/// How far from the side panel the quick-action bar stands, given the width of the margin between
+/// the panel and the page and the bar's own width: centred in the margin when it holds the bar,
+/// else 14 pt in (a page filling the width). With no page on screen the caller passes a margin of 0,
+/// which is 14 pt too.
+pub(crate) fn quick_bar_offset(margin: f32, width: f32) -> f32 {
+    // shortcut: centred in at most 100 pt of margin, so a wide margin keeps the bar by the panel.
+    // `f32::min` returns the other operand for NaN, which would pass the fit check below.
+    let margin = if margin.is_nan() { 0.0 } else { margin.min(100.0) };
+    if margin >= width + 2.0 * 8.0 { (margin - width) / 2.0 } else { QUICK_BAR_EDGE }
+}
+
+/// The unified quick-action bar and hotbar in the margin or docked to an edge.
+pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui: &mut egui::Ui) {
+    crate::hotbar::show(app, area, page_left, ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quick_bar_offset;
+
+    #[test]
+    fn the_quick_bar_centres_in_the_margin_that_holds_it() {
+        assert_eq!(quick_bar_offset(72.0, 46.0), 13.0);
+        assert_eq!(quick_bar_offset(62.0, 46.0), 8.0);
+        // A wide margin centres in its first 100 pt, not all of it.
+        assert_eq!(quick_bar_offset(400.0, 46.0), 27.0);
+    }
+
+    #[test]
+    fn the_margin_that_just_holds_the_bar_centres_and_a_point_less_does_not() {
+        // 46 pt of bar and 8 pt to spare each side: 62 pt.
+        assert_eq!(quick_bar_offset(62.0, 46.0), 8.0);
+        assert_eq!(quick_bar_offset(61.0, 46.0), 14.0);
+        assert_eq!(quick_bar_offset(1000.0, 46.0), 27.0);
+    }
+
+    #[test]
+    fn a_wider_quick_bar_centres_by_its_own_width_and_needs_a_wider_margin() {
+        // A 70 pt bar centres by that, and 72 pt no longer holds it.
+        assert_eq!(quick_bar_offset(120.0, 70.0), 15.0);
+        assert_eq!(quick_bar_offset(72.0, 70.0), 14.0);
+    }
+
+    #[test]
+    fn the_quick_bar_keeps_14_pt_in_when_the_margin_cannot_hold_it() {
+        for margin in [61.9, 30.0, 0.0, -50.0, f32::NEG_INFINITY, f32::NAN] {
+            assert_eq!(quick_bar_offset(margin, 46.0), 14.0, "{margin}");
+        }
+    }
+>>>>>>> upstream/main
 }

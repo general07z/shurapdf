@@ -1,6 +1,29 @@
-use super::Zip;
-use super::as_html::esc;
-use super::layout::{Block, Image, Item, Page, Run, Table, body_size, items};
+use super::as_html::language_tag;
+use super::layout::{Image, Item, Page, Table, body_size, items, reading_order};
+use craft_opc::{PackageOut, RT_BASE, RelOut, RelsOut};
+use craft_xml::{Writer, esc};
+
+pub(crate) fn core_properties_xml(title: &str) -> Vec<u8> {
+    let mut w = Writer::document();
+    w.open(
+        "cp:coreProperties",
+        &[("xmlns:cp", "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"), ("xmlns:dc", "http://purl.org/dc/elements/1.1/")],
+    );
+    w.leaf("dc:title", &[], title);
+    w.into_bytes()
+}
+
+pub(crate) fn image_mime(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" | "jpe" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
 
 /// A colour's 8-bit sRGB components (NaN and out-of-range values clamp; NaN reads as 0).
 pub(crate) fn rgb8(c: [f64; 3]) -> [u8; 3] {
@@ -14,95 +37,40 @@ pub(crate) fn hex(c: [f64; 3]) -> Option<String> {
     (r | g | b != 0).then(|| format!("{r:02X}{g:02X}{b:02X}"))
 }
 
-/// Arabic and Hebrew letters (and the Arabic presentation forms): right-to-left script.
-fn is_rtl_letter(c: char) -> bool {
-    matches!(u32::from(c), 0x0591..=0x05F4 | 0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFC)
-        && c.is_alphabetic()
-}
-
-/// Whether `text` reads right to left: it has more Arabic or Hebrew letters than other letters.
-pub(crate) fn reads_rtl(text: &str) -> bool {
-    let (rtl, other) =
-        text.chars().filter(|c| c.is_alphabetic()).fold((0usize, 0usize), |(r, o), c| if is_rtl_letter(c) { (r + 1, o) } else { (r, o + 1) });
-    rtl > other
-}
-
-/// The paragraph properties that make Word lay out a right-to-left paragraph (`<w:bidi/>`).
-fn bidi_ppr(rtl: bool) -> &'static str {
-    if rtl { "<w:bidi/>" } else { "" }
-}
-
-/// A formatted text run (shared by paragraphs and table cells). Word applies the complex-script
-/// size, bold and italic (`szCs`, `bCs`, `iCs`) to Arabic and Hebrew, not the plain ones, so both
-/// are written; a run with right-to-left letters is marked `rtl`.
+/// A formatted text run (shared by paragraphs and table cells).
 fn run_xml(text: &str, size: f64, bold: bool, italic: bool, color: [f64; 3]) -> String {
     let mut rpr = String::new();
     if bold {
-        rpr.push_str("<w:b/><w:bCs/>");
+        rpr.push_str("<w:b/>");
     }
     if italic {
-        rpr.push_str("<w:i/><w:iCs/>");
+        rpr.push_str("<w:i/>");
     }
     if let Some(h) = hex(color) {
         rpr.push_str(&format!("<w:color w:val=\"{h}\"/>"));
     }
     let half_points = if size.is_finite() { (size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
-    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/><w:szCs w:val=\"{half_points}\"/>"));
-    if text.chars().any(is_rtl_letter) {
-        rpr.push_str("<w:rtl/>");
-    }
+    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/>"));
     format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(text))
 }
 
-/// A paragraph's runs in reading order. Runs come in left-to-right page order; in a right-to-left
-/// paragraph Word wants them in reading order, so the order is reversed, except that a stretch of
-/// left-to-right runs (Latin words, numbers) keeps its own order. The word spaces the page showed
-/// between neighbours stay between the same neighbours.
-fn reading_order<'a>(runs: &'a [Run<'a>], rtl: bool) -> Vec<(String, &'a Block)> {
-    if !rtl {
-        return runs.iter().map(|r| (r.text.clone(), r.block)).collect();
-    }
-    // Each run's text without the separating space, and whether a space followed it on the page.
-    let parts: Vec<(&str, bool, &Block)> = runs.iter().map(|r| (r.text.trim_end_matches(' '), r.text.ends_with(' '), r.block)).collect();
-    let ltr = |t: &str| !t.chars().any(is_rtl_letter) && t.chars().any(char::is_alphanumeric);
-    // Groups of page-order indices: a right-to-left run alone, consecutive left-to-right runs together.
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (i, (t, _, _)) in parts.iter().enumerate() {
-        let joins = ltr(t) && groups.last().and_then(|g| g.last()).is_some_and(|&j| parts.get(j).is_some_and(|p| ltr(p.0)));
-        match groups.last_mut() {
-            Some(g) if joins => g.push(i),
-            _ => groups.push(vec![i]),
-        }
-    }
-    let spaced_after = |i: usize| parts.get(i).is_some_and(|p| p.1);
-    let mut out: Vec<(String, &Block)> = Vec::with_capacity(parts.len());
-    // Groups in reading order: right to left. Inside a group runs keep page order, and a space
-    // after one of them is the space before its right neighbour, the next run read. Between
-    // groups, the next one read is the group to the left: the space between them on the page
-    // followed that group's last run.
-    for (g, group) in groups.iter().enumerate().rev() {
-        for (k, &i) in group.iter().enumerate() {
-            let Some(&(text, _, block)) = parts.get(i) else { continue };
-            let spaced = if k + 1 < group.len() {
-                spaced_after(i)
-            } else {
-                g.checked_sub(1).and_then(|left| groups.get(left)).and_then(|left| left.last()).is_some_and(|&j| spaced_after(j))
-            };
-            out.push((if spaced { format!("{text} ") } else { text.to_owned() }, block));
-        }
-    }
-    out
-}
-
-/// One Word table: explicit absent borders (alignment alone cannot prove PDF rules), a grid sized
-/// from the detected column edges, `gridSpan` for spanning cells, empty cells for holes.
+/// One Word table: when the page's rules draw its grid, single inside borders and single outer
+/// borders on the edges they rule; explicit absent borders otherwise (alignment alone cannot
+/// prove PDF rules), a grid sized from the detected column
+/// edges, `gridSpan` for spanning cells, empty cells for holes.
 pub(crate) fn docx_table(t: &Table) -> String {
     let mut edges = t.cols.clone();
     edges.push(t.rect[2]);
     let widths: Vec<i64> = edges.windows(2).map(|w| ((w[1] - w[0]).max(20.0) * 20.0).round().clamp(60.0, 31680.0) as i64).collect();
     let mut s = String::from("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>");
-    for edge in ["top", "left", "bottom", "right", "insideH", "insideV"] {
-        s.push_str(&format!("<w:{edge} w:val=\"nil\"/>"));
+    let [top, left, bottom, right] = t.ruled.unwrap_or_default();
+    let inside = t.ruled.is_some();
+    for (edge, drawn) in [("top", top), ("left", left), ("bottom", bottom), ("right", right), ("insideH", inside), ("insideV", inside)] {
+        if drawn {
+            s.push_str(&format!("<w:{edge} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"));
+        } else {
+            s.push_str(&format!("<w:{edge} w:val=\"nil\"/>"));
+        }
     }
     s.push_str("</w:tblBorders></w:tblPr><w:tblGrid>");
     for w in &widths {
@@ -116,8 +84,7 @@ pub(crate) fn docx_table(t: &Table) -> String {
             let span = if c.span > 1 { format!("<w:gridSpan w:val=\"{}\"/>", c.span) } else { String::new() };
             let w: i64 = widths.iter().skip(column).take(c.span).sum();
             s.push_str(&format!(
-                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}{}</w:p></w:tc>",
-                if reads_rtl(&c.text) { "<w:pPr><w:bidi/></w:pPr>" } else { "" },
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}</w:p></w:tc>",
                 run_xml(&c.text, c.size, c.bold, c.italic, c.color)
             ));
             column = column.saturating_add(c.span);
@@ -212,7 +179,10 @@ fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, sha
     // page-sized watermark cannot push the invoice footer onto another page.
     let mut s = String::from("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"20\" w:lineRule=\"exact\"/></w:pPr>");
     let body = body_size(std::slice::from_ref(page)).max(1.0);
-    for b in &page.blocks {
+    // Rotated pages are positioned shapes, so paragraph flow never orders them. Emit the
+    // text boxes in reading order; the file's block order is not the reading order.
+    let blocks = reading_order(page, page.blocks.iter().map(|b| (b.rect, b.size, b)).collect());
+    for b in blocks {
         *shape_id = shape_id.saturating_add(1);
         let rotation = layout_number(-b.rotation).rem_euclid(360.0);
         let (sin, cos) = rotation.to_radians().sin_cos();
@@ -234,10 +204,8 @@ fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, sha
             "position:absolute;margin-left:{x:.3}pt;margin-top:{y:.3}pt;width:{w:.3}pt;height:{h:.3}pt;rotation:{rotation:.3};z-index:{z};mso-position-horizontal-relative:page;mso-position-vertical-relative:page"
         );
         s.push_str(&format!(
-            "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr>{}<w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
-            shape_id,
-            bidi_ppr(reads_rtl(&b.text)),
-            run_xml(&b.text, b.size, b.bold, b.italic, b.color)
+            "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
+            shape_id, run_xml(&b.text, b.size, b.bold, b.italic, b.color)
         ));
     }
     for im in &page.images {
@@ -294,9 +262,40 @@ fn word_background(pages: &[Page]) -> Option<String> {
     (same && first != [255, 255, 255]).then(|| format!("{:02X}{:02X}{:02X}", first[0], first[1], first[2]))
 }
 
+/// The `w:lang` that makes `tag` the language of a Word document's text. Word keeps one language
+/// per script: Chinese, Japanese and Korean are its East Asian text, Arabic, Hebrew, Persian and
+/// Urdu its right-to-left text, and any other language its Latin, Greek and Cyrillic text. A
+/// script the tag names (`pa-Arab`, `zh-Latn`) decides over its language.
+fn word_lang(tag: &str) -> String {
+    let mut subtags = tag.split('-');
+    let primary = subtags.next().unwrap_or_default().to_ascii_lowercase();
+    // The script comes straight after the language and any three-letter extended languages; a
+    // singleton before it starts an extension or private use, which names no script.
+    let script = subtags
+        .find(|s| s.len() != 3 || !s.bytes().all(|b| b.is_ascii_alphabetic()))
+        .filter(|s| s.len() == 4 && s.bytes().all(|b| b.is_ascii_alphabetic()))
+        .map(str::to_ascii_lowercase);
+    let attribute = match (script.as_deref(), primary.as_str()) {
+        (Some("arab" | "hebr" | "syrc" | "thaa"), _) => "w:bidi",
+        (Some("hans" | "hant" | "hani" | "jpan" | "kore" | "hang" | "hira" | "kana"), _) => "w:eastAsia",
+        (Some("latn" | "cyrl" | "grek"), _) => "w:val",
+        (_, "zh" | "ja" | "ko") => "w:eastAsia",
+        (_, "ar" | "he" | "fa" | "ur") => "w:bidi",
+        _ => "w:val",
+    };
+    format!("<w:lang {attribute}=\"{}\"/>", esc(tag))
+}
+
 /// A Word document (.docx, Office Open XML). Ordinary pages flow as paragraphs and tables;
 /// pages with rotated text, or text that overlaps artwork, use floating shapes to retain their layout.
 pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
+    docx_with_language(pages, title, None)
+}
+
+/// [`docx`] for a document in `language` (a BCP 47 tag such as `bg-BG`, as a PDF's `/Lang` gives
+/// it): the default language of its text, so Word checks the spelling in that language rather
+/// than in its own. A language that is not a well formed tag is left out.
+pub fn docx_with_language(pages: &[Page], title: &str, language: Option<&str>) -> Vec<u8> {
     let mut body = String::new();
     let mut media: Vec<(String, &Image)> = Vec::new();
     // Word needs a paragraph between adjacent tables and after the last one in the body.
@@ -313,17 +312,14 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
                 match &it {
                     Item::Para(runs, lvl) => {
                         let style = match lvl {
-                            1 => "<w:pStyle w:val=\"Heading1\"/>",
-                            2 => "<w:pStyle w:val=\"Heading2\"/>",
+                            1 => "<w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>",
+                            2 => "<w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr>",
                             _ => "",
                         };
-                        let rtl = reads_rtl(&runs.iter().map(|r| r.text.as_str()).collect::<String>());
                         body.push_str("<w:p>");
-                        if !style.is_empty() || rtl {
-                            body.push_str(&format!("<w:pPr>{style}{}</w:pPr>", bidi_ppr(rtl)));
-                        }
-                        for (text, block) in reading_order(runs, rtl) {
-                            body.push_str(&run_xml(&text, block.size, block.bold, block.italic, block.color));
+                        body.push_str(style);
+                        for r in runs {
+                            body.push_str(&run_xml(&r.text, r.block.size, r.block.bold, r.block.italic, r.block.color));
                         }
                         body.push_str("</w:p>");
                     }
@@ -376,58 +372,45 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
 xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w10=\"urn:schemas-microsoft-com:office:word\">{background}<w:body>{body}\
 </w:body></w:document>"
     );
-    let mut types = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
-<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/>\
-<Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpg\" ContentType=\"image/jpeg\"/>\
-<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
-<Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\
-<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>",
-    );
-    if page_colour.is_some() {
-        types.push_str(
-            "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>",
-        );
-    }
-    types.push_str("</Types>");
-    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
-<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\
-<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/></Relationships>";
-    let mut doc_rels = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
-<Relationship Id=\"rIdStyles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>",
-    );
-    for (i, (name, _)) in media.iter().enumerate() {
-        doc_rels.push_str(&format!(
-            "<Relationship Id=\"rIdImg{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{name}\"/>",
-            i + 1
-        ));
+    let mut pkg = PackageOut::default();
+    let mut root_rels = RelsOut::default();
+    root_rels.add("officeDocument", "word/document.xml", false);
+    root_rels.add("metadata/core-properties", "docProps/core.xml", false);
+    pkg.rels("", &root_rels);
+
+    let mut doc_rels = RelsOut::default();
+    doc_rels.items.push(RelOut { id: "rIdStyles".into(), ty: format!("{RT_BASE}styles"), target: "styles.xml".into(), external: false });
+    for (i, (name, im)) in media.iter().enumerate() {
+        doc_rels.items.push(RelOut {
+            id: format!("rIdImg{}", i + 1),
+            ty: format!("{RT_BASE}image"),
+            target: format!("media/{name}"),
+            external: false,
+        });
+        pkg.binary(&format!("word/media/{name}"), image_mime(im.ext), im.bytes.to_vec());
     }
     if page_colour.is_some() {
-        doc_rels.push_str("<Relationship Id=\"rIdSettings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
+        doc_rels.items.push(RelOut { id: "rIdSettings".into(), ty: format!("{RT_BASE}settings"), target: "settings.xml".into(), external: false });
     }
-    doc_rels.push_str("</Relationships>");
-    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+    pkg.rels("word/document.xml", &doc_rels);
+    let defaults = language_tag(language)
+        .map(|tag| format!("<w:docDefaults><w:rPrDefault><w:rPr>{}</w:rPr></w:rPrDefault></w:docDefaults>", word_lang(tag)))
+        .unwrap_or_default();
+    let styles = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{defaults}\
 <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"120\"/></w:pPr></w:style>\
 <w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:keepNext/><w:spacing w:before=\"240\"/><w:outlineLvl w:val=\"0\"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>\
 <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:pPr><w:keepNext/><w:spacing w:before=\"200\"/><w:outlineLvl w:val=\"1\"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>\
-</w:styles>";
-    let core = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title></cp:coreProperties>",
-        esc(title)
+</w:styles>"
     );
-    let mut z = Zip::default();
-    z.add("[Content_Types].xml", types.as_bytes(), true);
-    z.add("_rels/.rels", rels.as_bytes(), true);
-    z.add("docProps/core.xml", core.as_bytes(), true);
-    z.add("word/document.xml", doc.as_bytes(), true);
-    z.add("word/styles.xml", styles.as_bytes(), true);
-    z.add("word/_rels/document.xml.rels", doc_rels.as_bytes(), true);
+    pkg.xml_part("docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml", core_properties_xml(title));
+    pkg.xml_part("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", doc.into_bytes());
+    pkg.xml_part("word/styles.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml", styles.into_bytes());
     if page_colour.is_some() {
-        z.add("word/settings.xml", b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:displayBackgroundShape/></w:settings>", true);
+        let mut settings = Writer::document();
+        settings.open("w:settings", &[("xmlns:w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main")]);
+        settings.empty("w:displayBackgroundShape", &[]);
+        pkg.xml_part("word/settings.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml", settings.into_bytes());
     }
-    for (name, im) in &media {
-        z.add(&format!("word/media/{name}"), &im.bytes, false);
-    }
-    z.finish()
+    pkg.finish().unwrap_or_default()
 }
