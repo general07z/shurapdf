@@ -257,6 +257,7 @@ impl PdfCraftApp {
                     recovered: None,
                     then: None,
                     after_open: None,
+                    display_override: None,
                 });
                 Ok(())
             }

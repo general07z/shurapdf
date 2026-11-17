@@ -1461,7 +1461,7 @@ fn word_writes_arabic_paragraphs_right_to_left_in_reading_order() {
     };
     // On the page, left to right: "2026", "Law", then the Arabic (right-aligned).
     let blocks = vec![block("2026", 300.0, 326.0, false), block("Law", 329.0, 350.0, false), block("مجلس الشورى", 353.0, 420.0, true)];
-    let arabic_page = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let arabic_page = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, rules: Vec::new() };
     let xml = part(&docx(&[arabic_page], "Arabic"), "word/document.xml");
     let para = xml.split("<w:p>").find(|p| p.contains("مجلس")).expect("the Arabic paragraph");
     assert!(para.starts_with("<w:pPr><w:bidi/></w:pPr>"), "{para}");

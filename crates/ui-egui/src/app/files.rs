@@ -687,7 +687,7 @@ impl PdfCraftApp {
         // A protected Word file is converted here with the password: the background opener
         // reads PDFs only, and would hand the Word file back without it.
         if pdfcraft_engine::source_kind(&p.name, &p.bytes) == Some(pdfcraft_engine::SourceKind::Word) {
-            if let Err(e) = self.open_word(&p.name, p.path, p.bytes, Some(&pw), p.activate) {
+            if let Err(e) = self.open_word(&p.name, p.path.take(), std::mem::take(&mut p.bytes), Some(&pw), p.activate) {
                 self.notify_fmt("Couldn't open {name}: {e}", &[("name", &p.name), ("e", &e)]);
             }
             return;

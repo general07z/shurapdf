@@ -16,6 +16,7 @@
 
 use pdfcraft_cos::{Dict, Object, PdfString, Stream};
 use pdfcraft_fonts::shaped_text;
+use pdfcraft_fonts::visual_line::{Shaper, first_undrawable_shaped};
 use pdfcraft_fonts::{first_undrawable, literal, win_ansi, wrap_with};
 
 /// The width of `text` at `size` as appearances draw it: Helvetica, with Thai shaped in the Thai
@@ -551,7 +552,13 @@ pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
     let text = |key: &[u8]| d.get(key).and_then(Object::as_string).map(PdfString::to_text);
     let (what, text) = match d.name(b"Subtype")? {
         // A text box draws Thai too.
-        b"FreeText" => return Some(("the comment's text", shaped_text::first_undrawable(&text(b"Contents")?)?)),
+        // Thai is drawn from its own face; Arabic and Hebrew are shaped (`Shaper`), and only what
+        // that leaves is undrawable.
+        b"FreeText" => {
+            let contents = text(b"Contents")?;
+            let bad = if contents.chars().any(shaped_text::is_thai) { shaped_text::first_undrawable(&contents) } else { first_undrawable_shaped(&contents) };
+            return Some(("the comment's text", bad?));
+        }
         b"Line" if !d.contains(b"PCMeasureValue") => ("the line's caption", line_caption(d)?),
         b"Line" | b"PolyLine" | b"Polygon" => ("the measurement label", text(b"PCMeasureValue")?),
         b"Stamp" if matches!(d.get(b"PCStamp"), Some(Object::Bool(true))) || d.contains(b"PCPicture") => {
@@ -1562,7 +1569,12 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         rg(text_color)
     ));
     let mut out = c.into_bytes();
-    let lines = pdfcraft_fonts::wrap_with(&text, size, width, |s, size| text_width_in(face, s, size));
+    // Arabic or Hebrew is shaped and drawn as outlines when this build has the faces (`Shaper`).
+    let shaper = if text.chars().any(shaped_text::is_thai) { None } else { first_undrawable(&text).and(Shaper::for_text(&text)) };
+    let lines = match shaper {
+        Some(s) => pdfcraft_fonts::wrap_with(&text, size, width, |t, size| s.width(t, size)),
+        None => pdfcraft_fonts::wrap_with(&text, size, width, |s, size| text_width_in(face, s, size)),
+    };
     let mut y = rect[3] - pad - size * reach(&lines)[0];
     if round {
         y -= ((rect[3] - rect[1] - 2.0 * pad - text_lines_height(&lines, size)) / 2.0).max(0.0);
@@ -1573,17 +1585,24 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     let mut fonts = font_resources(face);
     let (pieces, shaped) = shaped_text::appearance_lines(&lines, &mut fonts);
     let mut current = None;
-    for pieces in &pieces {
+    for (pieces, line) in pieces.iter().zip(&lines) {
         if y < rect[1] - size {
             break;
         }
-        let lw = shaped_text::pieces_width(pieces, size, 0.0, |s, size| face.text_width(s, size));
+        let lw = match shaper {
+            Some(s) => s.width(line, size),
+            None => shaped_text::pieces_width(pieces, size, 0.0, |s, size| face.text_width(s, size)),
+        };
         let x = match q {
             1 => rect[0] + pad + (width - lw) / 2.0,
             2 => rect[2] - pad - lw,
             _ => rect[0] + pad,
         };
-        shaped.show_line(&mut out, pieces, x, y, size, crate::text_style::resource_name(face), win_ansi, |s| face.text_width(s, size), &mut current);
+        if let Some(s) = shaper {
+            s.draw(&mut out, line, [x, y], size, "Helv", rg(text_color).trim_end());
+        } else {
+            shaped.show_line(&mut out, pieces, x, y, size, crate::text_style::resource_name(face), win_ansi, |s| face.text_width(s, size), &mut current);
+        }
         y -= size * 1.2;
     }
     out.extend_from_slice(b"ET\n");

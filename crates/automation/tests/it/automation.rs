@@ -13536,6 +13536,8 @@ fn word_files_create_and_combine_through_tools_and_stay_in_the_root() {
     assert_eq!(text.len(), 2, "{text:?}");
     assert!(text[1].contains("مجلس الشورى"), "{text:?}");
     let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #2517, through the same tools as the report. One blank line is two paragraphs, and editing
 /// the first leaves the second. The neighbour at y=656.8 is one blank line below (two 14.4 pt
 /// leadings under the second row). Growing the first paragraph, saving, reopening and editing

@@ -1,9 +1,9 @@
 //! Local image signatures, shared by Fill & Sign and its automation tool.
 
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
-use image::DynamicImage;
+use image::{DynamicImage, ImageFormat};
 use pdfcraft_render::PageInfo;
 
 use crate::{Document, Edit, MarkFile, guard};
@@ -264,7 +264,7 @@ impl SignatureImage {
             pixel.0[3] = (f32::from(pixel.0[3]) * keep).round() as u8;
         }
         let mut png = Cursor::new(Vec::new());
-        DynamicImage::ImageRgba8(out).write_to(&mut png, ImageFormat::Png)?;
+        DynamicImage::ImageRgba8(out).write_to(&mut png, ImageFormat::Png).map_err(|e| SignatureImageError::Decode(e.to_string()))?;
         Self::from_bytes(&png.into_inner())
     }
 
