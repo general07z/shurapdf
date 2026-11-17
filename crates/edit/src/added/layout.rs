@@ -1,4 +1,3 @@
-use pdfcraft_fonts::visual_line::visual_pieces;
 use super::types::{AddedImage, AddedText};
 use super::{
     Content, Document, EditError, GlyphError, Level, ObjRef, Object, ParagraphBidiInfo, ShapedScript, shape_arabic, shape_hebrew, shape_thai,

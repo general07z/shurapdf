@@ -6,7 +6,7 @@ use super::fallback::{
 };
 use super::interp::{Carry, Origin, TextState, interpret};
 use super::lines::{
-    content_streams, dropped_advances, dropped_side_effects, joined, page_dict, reopen_text_object, rewritten_contents, show_side_effects, splice,
+    ContentStream, content_streams, dropped_advances, dropped_side_effects, joined, page_dict, reopen_text_object, rewritten_contents, show_side_effects, splice,
     text_lines,
 };
 use super::{
@@ -1271,7 +1271,7 @@ impl ShapedRewrite {
         {
             return Ok(None);
         }
-        let (_, ParaStyle { size, k, .. }) = paragraph_style(&first.origin, style)?;
+        let (_, ParaStyle { size, k, .. }) = paragraph_style(&first.origin, style, None)?;
         let [dx, dy] = style.offset.unwrap_or([0.0, 0.0]);
         let points = size * k;
         if ![points, dx, dy].iter().all(|v| v.is_finite()) || points <= 0.0 {
@@ -1301,6 +1301,8 @@ impl ShapedRewrite {
             align,
             char_spacing: 0.0,
             face: None,
+            aligns: style.aligns.clone(),
+            ink: None,
         };
         // Every line must shape before anything changes: a refusal leaves the page as it was.
         Ok(text.text.split('\n').all(|line| pdfcraft_fonts::visual_line::visual_pieces(line, rtl).is_ok()).then_some(Self { text, rect }))
@@ -1321,7 +1323,7 @@ impl ShapedRewrite {
         // emptied and drawn again beside it. Part of an item (one of its paragraphs) is left to
         // the added-text editor, which keeps the rest.
         let stream_of = |line: &TextLine| match streams.get(line.stream) {
-            Some((Object::Ref(r), _)) => Some(*r),
+            Some(ContentStream { entry: Object::Ref(r), .. }) => Some(*r),
             _ => None,
         };
         let items: Vec<crate::added::Added> = crate::added::list_added(doc).into_iter().filter(|a| a.page == page).collect();
@@ -1339,10 +1341,10 @@ impl ShapedRewrite {
             crate::added::update_content(doc, page, index, &crate::added::Content::Text(self.text))?;
             return Ok(LineEdit { substituted: Some("Noto Sans Arabic".into()) });
         }
-        let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
+        let pieces = joined(&streams);
         let ops = pieces.parse().ops;
         let new_data = splice(&pieces, &ops, |i| (Vec::new(), !dropped.contains(&i)));
-        let contents = rewritten_contents(doc, &streams, new_data);
+        let contents = rewritten_contents(doc, &streams, new_data)?;
         let before = p.dict.get(b"Contents").cloned();
         doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
         if let Err(e) = crate::added::add_content(doc, page, &crate::added::Content::Text(self.text)) {

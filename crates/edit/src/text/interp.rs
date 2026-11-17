@@ -838,13 +838,12 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
     let mut in_word = false;
     // Whether the text ends in a space read from a gap rather than from a glyph. The run just
     // before may have ended in one: a justified line can be split over `TJ` and `Tj`.
-    let mut gap_space = std::mem::take(&mut carry.gap_space);
     let mut glyph_count = 0_usize;
     // The advance of the glyph just shown when it was a space (see the TJ adjustments below).
     let mut space_advance: Option<f64> = None;
     // A space was just read from a gap: a space glyph right after it is the same space (Word
     // justifies a line by widening the gap before each space glyph).
-    let mut gap_space = false;
+    let mut gap_space = std::mem::take(&mut carry.gap_space);
     for p in &pieces {
         match p {
             Object::String(s) => {
