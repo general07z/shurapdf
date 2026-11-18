@@ -300,23 +300,43 @@ fn main() {
         ui_only(Path::new(&out), Path::new(&list));
     }
     let Some(out) = first.map(PathBuf::from) else {
-        eprintln!("usage: word_fidelity OUT_DIR [--private DIR]");
+        eprintln!("usage: word_fidelity OUT_DIR [--private DIR] [--stage connection|documents|editing|ui|all]");
         std::process::exit(2);
     };
-    let private = match (args.next().as_deref(), args.next()) {
-        (Some("--private"), Some(dir)) => Some(PathBuf::from(dir)),
-        _ => None,
-    };
+    let mut private = None;
+    let mut stage = String::from("all");
+    while let Some(flag) = args.next() {
+        match (flag.as_str(), args.next()) {
+            ("--private", Some(dir)) => private = Some(PathBuf::from(dir)),
+            ("--stage", Some(name)) => stage = name,
+            _ => {
+                eprintln!("unknown option {flag}: usage: word_fidelity OUT_DIR [--private DIR] [--stage connection|documents|editing|ui|all]");
+                std::process::exit(2);
+            }
+        }
+    }
+    // A stage runs alone (the workflow runs them as separate jobs, so a machine that drops one
+    // still delivers the others); `all` is every stage in one run.
+    if !["all", "connection", "documents", "editing", "ui"].contains(&stage.as_str()) {
+        eprintln!("unknown stage {stage}: connection, documents, editing, ui or all");
+        std::process::exit(2);
+    }
+    let want = |name: &str| stage == "all" || stage == name;
     if let Err(e) = std::fs::create_dir_all(&out) {
         eprintln!("{}: {e}", out.display());
         std::process::exit(2);
     }
     let self_check = reference() == WordEngine::BuiltIn;
-    let connection = if cfg!(windows) && !self_check { checks::run(&out) } else { Vec::new() };
+    let connection = if cfg!(windows) && !self_check && want("connection") { checks::run(&out) } else { Vec::new() };
     let mut private_pdfs: Vec<PathBuf> = Vec::new();
-    let mut rows: Vec<Row> =
-        pdfcraft_word_import::testkit::fidelity_corpus().into_iter().map(|(name, bytes)| compare(name, &bytes, Some(&out.join(name)))).collect();
-    if let Some(dir) = private.filter(|d| d.is_dir()) {
+    // Word's PDF of every document: the documents stage reports it, and editing and the interface start from it.
+    let needs_rows = want("documents") || want("editing") || want("ui");
+    let mut rows: Vec<Row> = if needs_rows {
+        pdfcraft_word_import::testkit::fidelity_corpus().into_iter().map(|(name, bytes)| compare(name, &bytes, Some(&out.join(name)))).collect()
+    } else {
+        Vec::new()
+    };
+    if let Some(dir) = private.filter(|d| d.is_dir()).filter(|_| needs_rows) {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .map(|rd| {
                 rd.flatten()
@@ -342,18 +362,21 @@ fn main() {
     // The editing checks: Word's PDF of every document, then the real PDFs kept on the machine.
     let faces = editing::faces();
     let work = out.join("editing-work");
-    let mut edited: Vec<editing::Outcome> = rows
-        .iter()
-        .filter_map(|r| {
-            let keep = out.join(&r.name);
-            Some(editing::run(&r.name, r.word.as_deref()?, &work, &faces, keep.is_dir().then_some(keep.as_path())))
-        })
-        .collect();
-    for (i, path) in private_pdfs.iter().enumerate() {
-        let name = format!("private-pdf-{}", i + 1);
-        match std::fs::read(path) {
-            Ok(bytes) => edited.push(editing::run(&name, &bytes, &work, &faces, None)),
-            Err(e) => edited.push(editing::Outcome { name, edits: 0, failures: Vec::new(), error: Some(e.kind().to_string()) }),
+    let mut edited: Vec<editing::Outcome> = Vec::new();
+    if want("editing") {
+        edited = rows
+            .iter()
+            .filter_map(|r| {
+                let keep = out.join(&r.name);
+                Some(editing::run(&r.name, r.word.as_deref()?, &work, &faces, keep.is_dir().then_some(keep.as_path())))
+            })
+            .collect();
+        for (i, path) in private_pdfs.iter().enumerate() {
+            let name = format!("private-pdf-{}", i + 1);
+            match std::fs::read(path) {
+                Ok(bytes) => edited.push(editing::run(&name, &bytes, &work, &faces, None)),
+                Err(e) => edited.push(editing::Outcome { name, edits: 0, failures: Vec::new(), error: Some(e.kind().to_string()) }),
+            }
         }
     }
     // The interface checks: the first synthetic PDFs Word made, and the real documents' PDFs (kept
@@ -373,10 +396,18 @@ fn main() {
         }
     }
     inputs.extend(private_pdfs.iter().enumerate().map(|(i, p)| (format!("private-pdf-{}", i + 1), p.clone())));
-    let (ui_md, ui_failed) = if std::env::var_os("WORD_FIDELITY_NO_UI").is_some() { (String::new(), false) } else { ui_checks(&out, &inputs) };
-    let mut md = String::from("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
+    let (ui_md, ui_failed) =
+        if !want("ui") || std::env::var_os("WORD_FIDELITY_NO_UI").is_some() { (String::new(), false) } else { ui_checks(&out, &inputs) };
+    let mut md = String::new();
+    if want("documents") {
+        md.push_str("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
+    }
     let mut word_failed = false;
-    for r in &rows {
+    for r in rows.iter().filter(|_| want("documents") || want("editing") || want("ui")) {
+        if !want("documents") {
+            word_failed |= r.error.as_ref().is_some_and(|e| e.starts_with("Microsoft Word"));
+            continue;
+        }
         if let Some(e) = &r.error {
             word_failed |= e.starts_with("Microsoft Word");
             md.push_str(&format!("| {} | – | – | – | error: {} |\n", r.name, e.replace('|', "/")));
@@ -402,10 +433,12 @@ fn main() {
     if !edited.is_empty() {
         md.push_str(&editing::table(&edited, &faces, |name| !name.starts_with("private-")));
     }
-    md.push_str(&editing::font_report());
+    if want("editing") {
+        md.push_str(&editing::font_report());
+    }
     md.push_str(&ui_md);
     print!("{md}");
-    if let Err(e) = std::fs::write(out.join("summary.md"), &md) {
+    if let Err(e) = std::fs::write(out.join(if stage == "all" { "summary.md".to_owned() } else { format!("summary-{stage}.md") }), &md) {
         eprintln!("summary.md: {e}");
     }
     // In GitHub Actions, the table also goes on the run's page.
