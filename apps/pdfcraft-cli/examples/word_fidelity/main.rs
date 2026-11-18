@@ -292,6 +292,40 @@ fn ui_checks(out: &Path, inputs: &[(String, PathBuf)]) -> (String, bool) {
     (md, failed)
 }
 
+/// The table of the documents (when `show`), and whether Microsoft Word failed to convert any of
+/// them (known whichever stage runs, so a stage that does not show the table still stops on it).
+fn documents_table(rows: &[Row], show: bool) -> (String, bool) {
+    let mut md = String::new();
+    let mut word_failed = false;
+    if show {
+        md.push_str("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
+    }
+    for r in rows {
+        word_failed |= r.error.as_ref().is_some_and(|e| e.starts_with("Microsoft Word"));
+        if !show {
+            continue;
+        }
+        if let Some(e) = &r.error {
+            md.push_str(&format!("| {} | – | – | – | error: {} |\n", r.name, e.replace('|', "/")));
+            continue;
+        }
+        let avg = if r.scores.is_empty() { 0.0 } else { r.scores.iter().sum::<f64>() / r.scores.len() as f64 };
+        let (low_i, low) = r.scores.iter().copied().enumerate().fold((0, 1.0f64), |m, (i, s)| if s < m.1 { (i, s) } else { m });
+        let pages: Vec<String> = r.scores.iter().map(|s| format!("{:.0}", s * 100.0)).collect();
+        md.push_str(&format!(
+            "| {} | {} / {} | {:.1}% | {:.1}% (p. {}) | {} |\n",
+            r.name,
+            r.word_pages,
+            r.builtin_pages,
+            avg * 100.0,
+            low * 100.0,
+            low_i + 1,
+            pages.join(" ")
+        ));
+    }
+    (md, word_failed)
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let first = args.next();
@@ -398,35 +432,7 @@ fn main() {
     inputs.extend(private_pdfs.iter().enumerate().map(|(i, p)| (format!("private-pdf-{}", i + 1), p.clone())));
     let (ui_md, ui_failed) =
         if !want("ui") || std::env::var_os("WORD_FIDELITY_NO_UI").is_some() { (String::new(), false) } else { ui_checks(&out, &inputs) };
-    let mut md = String::new();
-    if want("documents") {
-        md.push_str("| Document | Pages (Word / built-in) | Average | Lowest page | Per page |\n|---|---|---|---|---|\n");
-    }
-    let mut word_failed = false;
-    for r in rows.iter().filter(|_| want("documents") || want("editing") || want("ui")) {
-        if !want("documents") {
-            word_failed |= r.error.as_ref().is_some_and(|e| e.starts_with("Microsoft Word"));
-            continue;
-        }
-        if let Some(e) = &r.error {
-            word_failed |= e.starts_with("Microsoft Word");
-            md.push_str(&format!("| {} | – | – | – | error: {} |\n", r.name, e.replace('|', "/")));
-            continue;
-        }
-        let avg = if r.scores.is_empty() { 0.0 } else { r.scores.iter().sum::<f64>() / r.scores.len() as f64 };
-        let (low_i, low) = r.scores.iter().copied().enumerate().fold((0, 1.0f64), |m, (i, s)| if s < m.1 { (i, s) } else { m });
-        let pages: Vec<String> = r.scores.iter().map(|s| format!("{:.0}", s * 100.0)).collect();
-        md.push_str(&format!(
-            "| {} | {} / {} | {:.1}% | {:.1}% (p. {}) | {} |\n",
-            r.name,
-            r.word_pages,
-            r.builtin_pages,
-            avg * 100.0,
-            low * 100.0,
-            low_i + 1,
-            pages.join(" ")
-        ));
-    }
+    let (mut md, word_failed) = documents_table(&rows, want("documents"));
     if !connection.is_empty() {
         md.push_str(&checks::table(&connection));
     }
