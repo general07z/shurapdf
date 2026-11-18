@@ -249,6 +249,19 @@ fn starts_list_item(row: &[usize], lines: &[TextLine]) -> bool {
     row.iter().filter_map(|i| lines.get(*i)).map(|l| l.text.trim_start()).find(|t| !t.is_empty()).is_some_and(opens_with_marker)
 }
 
+/// Whether `row` leaves a bracket open: more `(` than `)` in its text. The next row then finishes
+/// what it opened, and a `12)` at its start closes that bracket rather than numbering a list item
+/// (a wrapped "(Law 12)", which Word and a rewrite both break at its space).
+fn leaves_bracket_open(row: &[usize], lines: &[TextLine]) -> bool {
+    let text = row.iter().filter_map(|i| lines.get(*i)).flat_map(|l| l.text.chars());
+    let (open, close) = text.fold((0usize, 0usize), |(o, c), ch| match ch {
+        '(' => (o.saturating_add(1), c),
+        ')' => (o, c.saturating_add(1)),
+        _ => (o, c),
+    });
+    open > close
+}
+
 /// Whether any line of `row` holds right-to-left letters.
 fn reads_rtl(row: &[usize], lines: &[TextLine]) -> bool {
     row.iter().filter_map(|i| lines.get(*i)).any(|l| l.text.chars().any(crate::bidi::is_rtl))
@@ -317,10 +330,10 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
             // A bullet of its own opens a list item (#2564): such a row is a new paragraph, and
             // letting it join is what made an edit of the row above delete this item and the ones
             // after it.
-            if starts_list_item(row, lines) {
+            let Some(prev_row) = block.rows.last() else { return false };
+            if starts_list_item(row, lines) && !leaves_bracket_open(prev_row, lines) {
                 return false;
             }
-            let Some(prev_row) = block.rows.last() else { return false };
             let Some(prev) = prev_row.first().and_then(|i| lines.get(*i)) else { return false };
             let Some(pr) = frame_row_rect(prev_row, lines) else { return false };
             let gap = prev.frame_origin().1 - first.frame_origin().1;
