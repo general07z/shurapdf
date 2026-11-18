@@ -9,6 +9,13 @@
 #[path = "src/windows_manifest.rs"]
 mod windows_manifest;
 
+/// The in-box DLLs only printing uses (Windows.Data.Pdf draws the job, prntvpt reads the
+/// driver's print capabilities). Trimmed Windows installations (NTLite) can lack them, and a
+/// load-time import of a missing DLL stops the program before `main` (#2630). Delay-loaded, they
+/// load on the first print; `pdfcraft_print::spool` checks they exist before calling in.
+/// Same list in `apps/pdfcraft{,-cli}/build.rs`, `crates/print/build.rs` and `crates/print/src/spool.rs`.
+const DELAY_LOADED: [&str; 2] = ["windows.data.pdf.dll", "prntvpt.dll"];
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../assets/app-icon/pdfcraft.ico");
@@ -22,6 +29,12 @@ fn main() {
     // A build may name the product (PDFCRAFT_PRODUCT_NAME, e.g. ShuraPDF); the file stays pdfcraft.exe.
     let product = std::env::var("PDFCRAFT_PRODUCT_NAME").ok().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "PdfCraft".to_owned());
     let description = format!("{product} PDF workbench");
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        for dll in DELAY_LOADED {
+            println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
+        }
+        println!("cargo:rustc-link-arg-bins=delayimp.lib");
+    }
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../../assets/app-icon/pdfcraft.ico")
         .set_icon_with_id("../../assets/app-icon/pdfcraft-document.ico", "2")

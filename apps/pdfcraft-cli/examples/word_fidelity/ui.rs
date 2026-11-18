@@ -38,6 +38,9 @@ pub struct Outcome {
     pub baseline: usize,
     /// Bold presses after which another paragraph was open.
     pub wrong_paragraph: usize,
+    /// Numbers only (never text) about each such press: the open paragraph's number and box before
+    /// and after, and how many paragraphs the page had.
+    pub wrong_details: Vec<String>,
     /// Milliseconds per drawn frame (typing and dragging), and until the page is drawn after a move.
     pub frames: Vec<f64>,
     pub settled: Vec<f64>,
@@ -221,11 +224,35 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
             }
             // Bold twice: the same paragraph must stay open.
             let expected = open_paragraph(&h).unwrap_or(opened);
-            for _ in 0..2 {
+            let shape = |h: &Harness<'static, PdfCraftApp>| -> (Option<usize>, Vec<[f64; 4]>) {
+                let state = h.state();
+                let block = state.views.first().and_then(|v| v.line_editor.as_ref()).map(|e| e.block);
+                let rects = state
+                    .views
+                    .first()
+                    .and_then(|v| state.session.get(v.id))
+                    .map(|d| d.text_blocks(0).iter().map(|b| b.rect).collect())
+                    .unwrap_or_default();
+                (block, rects)
+            };
+            for press in 1..=2 {
+                let (was, was_rects) = shape(&h);
                 h.get_by_label("Bold").click();
                 settle(&mut h);
                 if open_paragraph(&h).as_deref() != Some(expected.as_str()) {
                     outcome.wrong_paragraph += 1;
+                    let (now, now_rects) = shape(&h);
+                    let boxed = |r: Option<&[f64; 4]>| r.map_or("none".to_owned(), |r| format!("{:.0},{:.0},{:.0},{:.0}", r[0], r[1], r[2], r[3]));
+                    outcome.wrong_details.push(format!(
+                        "paragraph {} press {press}: open #{:?} box {} -> open #{:?} box {}; paragraphs {} -> {}",
+                        n + 1,
+                        was,
+                        boxed(was.and_then(|b| was_rects.get(b))),
+                        now,
+                        boxed(now.and_then(|b| now_rects.get(b))),
+                        was_rects.len(),
+                        now_rects.len()
+                    ));
                 }
             }
             let bolded = h.render()?;
@@ -290,6 +317,13 @@ pub fn table(outcomes: &[Outcome], backend: &str, public: impl Fn(&str) -> bool)
             o.settled.iter().map(|s| format!("{s:.0}")).collect::<Vec<_>>().join(" ")
         ));
     }
+    // Numbers about a Bold that opened another paragraph; a real document's are shown too (no text).
+    for o in outcomes {
+        for d in &o.wrong_details {
+            md.push_str(&format!("\n- {}: {d}", o.name));
+        }
+    }
+    md.push('\n');
     md
 }
 
