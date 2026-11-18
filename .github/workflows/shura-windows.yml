@@ -4,8 +4,8 @@ name: ShuraPDF Windows build
 # for Windows x64 with the repository's own packaging/windows/package.ps1: a portable zip and an
 # MSI, English by default (PDFCRAFT_DEFAULT_LANGUAGE; users switch to Arabic in Preferences), with the
 # craft-fonts faces (Arabic text added to PDFs) and their OFL notices. Branded as ShuraPDF; Help ▸ Check
-# for updates looks only at this repository's releases (PDFCRAFT_UPDATE_REPO, PDFCRAFT_PACKAGE_ID). Signed when the WINDOWS_CERTIFICATE secrets exist
-# (docs/code-signing.md), unsigned with a warning otherwise. Every run keeps the packages as an
+# for updates looks only at this repository's releases (PDFCRAFT_UPDATE_REPO, PDFCRAFT_PACKAGE_ID). Signed through SignPath
+# when its variable and secret exist, else with the WINDOWS_CERTIFICATE secrets (docs/code-signing.md), unsigned with a warning otherwise. Every run keeps the packages as an
 # artifact; a v* tag also publishes them, with the public signing certificate, as a release.
 on:
   push:
@@ -40,8 +40,12 @@ jobs:
       DIST: ${{ github.workspace }}\dist
       SIGN_DESCRIPTION: ShuraPDF
       SIGN_URL: https://github.com/${{ github.repository }}
-      # Whether the signing secrets exist (a step's `if` can read job env, not secrets).
-      HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      # Whether the signing secrets exist (a step's `if` can read job env, not secrets). Not with
+      # SignPath, which signs instead.
+      HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' && !(vars.SIGNPATH_ORGANIZATION_ID != '' && secrets.SIGNPATH_API_TOKEN != '') }}
+      # Whether signing goes through SignPath (docs/code-signing.md): its organization id is a repository
+      # variable (not a secret), its API token a secret. Then the build is signed in stages below.
+      HAS_SIGNPATH: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && secrets.SIGNPATH_API_TOKEN != '' }}
       # Whether the read-only deploy key for the private general07z/shuraword exists.
       HAS_SHURAWORD: ${{ secrets.SHURAWORD_DEPLOY_KEY != '' }}
       CARGO_TERM_COLOR: always
@@ -119,11 +123,81 @@ jobs:
           if (-not (Select-String -LiteralPath Cargo.lock -SimpleMatch 'general07z/shuraword' -Quiet)) { throw 'Cargo.lock does not use shuraword: the patch did not apply' }
           Write-Output "WordCraft from general07z/shuraword at $rev"
       - name: Build, sign and package
+        if: env.HAS_SIGNPATH != 'true'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: ./packaging/windows/package.ps1 -Arch x64
+      # ---- Signing through SignPath: executables first, so the MSI and the zip carry them signed,
+      # then the MSI. The service takes an artifact uploaded by this very run (its proof of where
+      # the file was built); the signed files come back to the folders named below.
+      - name: Build the executables (unsigned)
+        if: env.HAS_SIGNPATH == 'true'
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch x64 -Phase Binaries
+      - name: Upload the executables for signing
+        if: env.HAS_SIGNPATH == 'true'
+        id: unsigned-binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-executables
+          path: dist/unsigned/*.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Sign the executables (SignPath)
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'shurapdf' }}
+          signing-policy-slug: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: executables
+          github-artifact-id: ${{ steps.unsigned-binaries.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-executables
+      - name: Package with the signed executables
+        if: env.HAS_SIGNPATH == 'true'
+        shell: pwsh
+        env:
+          SIGNED_BIN_DIR: ${{ github.workspace }}\signed-executables
+        run: ./packaging/windows/package.ps1 -Arch x64 -Phase Package -SkipBuild
+      - name: Upload the MSI for signing
+        if: env.HAS_SIGNPATH == 'true'
+        id: unsigned-msi
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-msi
+          path: dist/*.msi
+          if-no-files-found: error
+          retention-days: 7
+      - name: Sign the MSI (SignPath)
+        if: env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'shurapdf' }}
+          signing-policy-slug: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-signing' || 'test-signing' }}
+          artifact-configuration-slug: msi
+          github-artifact-id: ${{ steps.unsigned-msi.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-msi
+      - name: Put the signed MSI in dist and check both signatures
+        if: env.HAS_SIGNPATH == 'true'
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem signed-msi -Filter *.msi -Recurse)
+          if ($signed.Count -ne 1) { throw "expected one signed MSI in signed-msi, found $($signed.Count)" }
+          $target = @(Get-ChildItem dist -Filter *.msi)
+          if ($target.Count -ne 1) { throw "expected one MSI in dist, found $($target.Count)" }
+          Copy-Item -LiteralPath $signed[0].FullName -Destination $target[0].FullName -Force
+          foreach ($file in @($target[0].FullName, (Join-Path 'signed-executables' 'pdfcraft.exe'))) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            Format-List -InputObject $signature -Property Path, Status, SignerCertificate
+            if ($signature.Status -ne 'Valid') { throw "$file is not validly signed: $($signature.Status)" }
+          }
       - name: Public signing certificate
         if: env.HAS_CERT == 'true'
         shell: pwsh
