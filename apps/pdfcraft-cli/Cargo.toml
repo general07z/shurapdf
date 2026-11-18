@@ -34,6 +34,8 @@ pdfcraft-ui-egui = { workspace = true }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Decodes `render` output in tests/it/owner_password.rs.
+craft-image-codecs = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 # `geteuid` for `ui`'s control-file owner check: safe, so no `unsafe` libc call here.
