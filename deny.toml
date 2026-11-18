@@ -19,6 +19,7 @@ allow = [
     "Unicode-3.0",
     "BSL-1.0",
     "CC0-1.0",
+    "IJG",
 ]
 
 [licenses.private]
@@ -63,6 +64,14 @@ ignore = [
     # size and aborts on a huge one. Same case as the two above: extraction only, never called.
     { id = "RUSTSEC-2026-0429", reason = "zip ZipArchive::extract only; wordcraft-docx reads parts in memory" },
     { id = "RUSTSEC-2026-0369", reason = "zip extraction to disk only; wordcraft-docx reads parts in memory" },
+    # zip 3.0 again (wordcraft-docx): AES-encrypted entries returned without checking their
+    # authentication code, and ZipStreamReader reading local-header names. A .docx is not
+    # AES-encrypted (a password-protected one is a compound file, which WordCraft decrypts itself)
+    # and WordCraft opens the package with ZipArchive, never the stream reader. Revisit when
+    # WordCraft moves to zip >= 9, as the two above.
+    { id = "RUSTSEC-2026-0545", reason = "zip AES entries; a .docx has none, and wordcraft-docx does not decrypt zip entries" },
+    { id = "RUSTSEC-2026-0548", reason = "zip ZipStreamReader; wordcraft-docx opens the package with ZipArchive" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; required by the Rust house rules and craft-libs (#7647)" },
     # proc-macro-error is unmaintained (no vulnerability). It reaches the tree as a proc macro of
     # winprint's fmt-derive (craft-print's Windows spooler), so it runs at compile time on Windows
     # and is not in the binary.

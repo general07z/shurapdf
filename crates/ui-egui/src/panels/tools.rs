@@ -17,7 +17,7 @@ pub fn left_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     if app.left == LeftPanel::Tool("organize") && app.active.and_then(|i| app.views.get(i)).is_some_and(|v| !v.organize) {
         app.left = crate::organize_panel::workspace_panel(app.mode);
     }
-    egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin { left: 14, right: 10, top: 12, bottom: 10 }).stroke(Stroke::new(1.0, t.divider)).show(
+    egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin { left: 14, right: 14, top: 12, bottom: 10 }).stroke(Stroke::new(1.0, t.divider)).show(
         ui,
         |ui| match app.left {
             // Organize pages has its own panel whenever the grid shows (with a document open).
@@ -58,6 +58,15 @@ pub(crate) fn panel_header(ui: &mut egui::Ui, t: &Tokens, title: &str, lead: Opt
     (go_back, close)
 }
 
+/// Width kept free at the right of a scrolling list for the floating scrollbar.
+const SCROLLBAR_GUTTER: f32 = 18.0;
+
+/// The scrollbar floats over the right edge: keeps the rows of the scroll area `ui` is in (and
+/// their rounded hover wash) clear of it.
+pub(super) fn clear_of_scrollbar(ui: &mut egui::Ui) {
+    ui.set_max_width((ui.available_width() - SCROLLBAR_GUTTER).max(0.0));
+}
+
 /// The All tools sidebar: Expand (the full view) and Close, then the tool list, the first few
 /// tools until View more shows them all.
 fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
@@ -70,30 +79,28 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         app.left_open = false;
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        clear_of_scrollbar(ui);
         ui.add_space(2.0);
         let shown = if app.all_tools_expanded { TOOL_GROUPS.len() } else { COLLAPSED_TOOLS.min(TOOL_GROUPS.len()) };
         for g in &TOOL_GROUPS[..shown] {
-            if tool_row(ui, t, g).clicked() {
+            let (resp, pin_clicked) = tool_row(ui, t, g, app.is_tool_pinned(g.id));
+            if pin_clicked {
+                app.toggle_pin_tool(g.id);
+            } else if resp.clicked() {
                 app.select_tool(g.id);
             }
         }
         ui.add_space(4.0);
         let more = if app.all_tools_expanded { "View less" } else { "View more" };
-        // At the start edge, under the rows' labels: the right one in a right-to-left interface.
-        let start =
-            if crate::i18n::current().rtl() { egui::Layout::right_to_left(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) };
-        let clicked = ui
-            .with_layout(start, |ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(tl!(more)).color(t.accent_text).font(theme::medium(13.0)))
-                        .selectable(false)
-                        .sense(Sense::click()),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            })
-            .inner;
-        if clicked {
+        if ui
+            .add(
+                egui::Label::new(egui::RichText::new(tl!(more)).color(t.accent_text).font(theme::medium(13.0)))
+                    .selectable(false)
+                    .sense(Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
             app.all_tools_expanded = !app.all_tools_expanded;
         }
     });
@@ -101,58 +108,55 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
 
 /// Draw a one-line row label without painting into the status chip or beyond the sidebar.
 /// Accessibility retains the complete name through the row's WidgetInfo.
-/// `inset` is the label's distance from the row's start edge (the right one in a right-to-left
-/// interface, where the label ends there).
-pub(super) fn row_label(
-    ui: &mut egui::Ui,
-    text: &str,
-    font: egui::FontId,
-    color: Color32,
-    side: widgets::RowSide,
-    inset: f32,
-    max_width: f32,
-) -> bool {
+pub(super) fn row_label(ui: &mut egui::Ui, text: &str, font: egui::FontId, color: Color32, left_center: egui::Pos2, max_width: f32) -> bool {
     let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
     job.wrap = egui::text::TextWrapping { max_width: max_width.max(1.0), max_rows: 1, break_anywhere: true, ..Default::default() };
     let galley = ui.fonts_mut(|f| f.layout_job(job));
     let elided = galley.elided;
-    let x = if side.rtl { side.body.right() - inset - galley.size().x } else { side.body.left() + inset };
-    ui.painter().galley(egui::pos2(x, side.body.center().y - galley.size().y / 2.0), galley, color);
+    ui.painter().galley(left_center - vec2(0.0, galley.size().y / 2.0), galley, color);
     elided
 }
 
 /// Draw one tool-group row with its icon, label, badge and availability hint.
-fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup) -> egui::Response {
+fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup, is_pinned: bool) -> (egui::Response, bool) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!(g.label)));
     let press = theme::Press::track(ui, &resp);
     press.wash(ui, rect, 6, false);
     let body = rect.translate(press.offset());
-    let side = widgets::RowSide::new(body);
-    icons::paint(ui, side.rect(Rect::from_min_size(body.min + vec2(6.0, 7.0), vec2(20.0, 20.0))), g.icon, 19.0, hue(g));
-    let right_reserved = match (g.badge, g.availability) {
-        (Some(b), _) => ui.fonts_mut(|f| f.layout_no_wrap(tl!(b).to_owned(), theme::semibold(9.5), Color32::WHITE).size().x) + 26.0,
+    icons::paint(ui, Rect::from_min_size(body.min + vec2(6.0, 7.0), vec2(20.0, 20.0)), g.icon, 19.0, hue(g));
+
+    let pin_rect = Rect::from_center_size(body.right_center() - vec2(14.0, 0.0), vec2(22.0, 22.0));
+    let pin_resp = ui.interact(pin_rect, ui.scope_id().with(("pin_toggle_row", g.id)), Sense::click());
+    let pin_hovered = pin_resp.hovered();
+    let mut pin_clicked = false;
+
+    let pin_space = 26.0;
+    let badge_or_hint_reserved = match (g.badge, g.availability) {
+        (Some(b), _) => ui.fonts_mut(|f| f.layout_no_wrap(tl!(b).to_owned(), theme::semibold(9.5), Color32::WHITE).size().x) + 18.0,
         (None, Availability::Planned(m)) if resp.hovered() => {
             let hint = format!("{} · {m}", tl!("Planned"));
-            ui.fonts_mut(|f| f.layout_no_wrap(hint, theme::medium(10.5), t.text_faint).size().x) + 18.0
+            ui.fonts_mut(|f| f.layout_no_wrap(hint, theme::medium(10.5), t.text_faint).size().x) + 10.0
         }
-        _ => 8.0,
+        _ => 0.0,
     };
-    let clipped = row_label(ui, tl!(g.label), theme::regular(13.5), t.text, side, 36.0, rect.width() - 36.0 - right_reserved);
+    let right_reserved = pin_space + badge_or_hint_reserved + 8.0;
+    let clipped =
+        row_label(ui, tl!(g.label), theme::regular(13.5), t.text, body.left_center() + vec2(36.0, 0.0), rect.width() - 36.0 - right_reserved);
     match (g.badge, g.availability) {
         (Some(b), _) => {
             let font = theme::semibold(9.5);
             let badge = tl!(b);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(badge.to_string(), font.clone(), Color32::WHITE).size().x);
-            let r = side.rect(Rect::from_center_size(body.right_center() - vec2(w / 2.0 + 10.0, 0.0), vec2(w + 10.0, 16.0)));
+            let r = Rect::from_center_size(body.right_center() - vec2(pin_space + w / 2.0 + 4.0, 0.0), vec2(w + 10.0, 16.0));
             ui.painter().rect_filled(r, CornerRadius::same(4), t.badge_new);
             ui.painter().text(r.center(), Align2::CENTER_CENTER, badge, font, Color32::WHITE);
         }
         // Planned tools: a quiet milestone hint instead of a chip, so the list stays calm.
         (None, Availability::Planned(m)) if resp.hovered() => {
             ui.painter().text(
-                side.pos(body.right_center() - vec2(10.0, 0.0)),
-                side.align(Align2::RIGHT_CENTER),
+                body.right_center() - vec2(pin_space + 4.0, 0.0),
+                Align2::RIGHT_CENTER,
                 format!("{} · {m}", tl!("Planned")),
                 theme::medium(10.5),
                 t.text_faint,
@@ -160,13 +164,34 @@ fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup) -> egui::Response {
         }
         _ => {}
     }
+
+    let row_hovered = ui.rect_contains_pointer(rect) || resp.hovered();
+    if is_pinned || row_hovered || pin_hovered {
+        if pin_hovered {
+            ui.painter().rect_filled(pin_rect, CornerRadius::same(4), t.pressed);
+        }
+        let pin_tint = if is_pinned {
+            t.accent_text
+        } else if pin_hovered {
+            t.text
+        } else {
+            t.text_faint
+        };
+        icons::paint(ui, pin_rect.shrink(3.0), "pin", 15.0, pin_tint);
+        let tip = if is_pinned { tl!("Unpin from Home") } else { tl!("Pin to Home") };
+        pin_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+        if theme::hand(pin_resp).on_hover_text(tip).clicked() {
+            pin_clicked = true;
+        }
+    }
+
     let tip = match g.availability {
         Availability::Ready => tl!("Available").to_string(),
         Availability::Planned(m) => format!("{} {m} — {}", tl!("Planned for milestone"), tl!("open to see what it will include")),
         Availability::Provider => tl!("Optional: needs an AI provider you configure").into(),
     };
     let tip = if clipped { format!("{} — {tip}", tl!(g.label)) } else { tip };
-    theme::hand(resp).on_hover_text(tip)
+    (theme::hand(resp).on_hover_text(tip), pin_clicked)
 }
 
 /// Draw the detail view for one tool group, dispatching its commands and tool-specific panels.
@@ -204,6 +229,10 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
     }
     // Prepare a form: Preview fills the form as a reader would; Edit goes back.
     if g.id == "form" {
+        if let Some(view) = app.active.and_then(|i| app.views.get_mut(i)) {
+            ui.add(widgets::checkbox(&mut view.prepare.show_tab_numbers, tl!("Show tab numbers")));
+            ui.add_space(4.0);
+        }
         ui.horizontal(|ui| {
             let label = if app.form_preview { "Edit fields" } else { "Preview" };
             if widgets::pill_button(ui, tl!(label), app.form_preview).on_hover_text(tl!("Try the form as people filling it in will see it")).clicked()
@@ -222,6 +251,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
     let marks = if footer { app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(0, |d| d.redaction_marks()) } else { 0 };
     let list_h = if footer { (ui.available_height() - 52.0).max(80.0) } else { ui.available_height() };
     egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(list_h).show(ui, |ui| {
+        clear_of_scrollbar(ui);
         ui.add_space(2.0);
         for s in g.sections {
             widgets::section_title(ui, tl!(s.title));
@@ -235,11 +265,10 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 let press = theme::Press::track(ui, &resp);
                 press.wash(ui, rect, 6, false);
                 let body = rect.translate(press.offset());
-                let side = widgets::RowSide::new(body);
                 let fg = if ready { t.text } else { t.text_muted };
                 icons::paint(
                     ui,
-                    side.rect(Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0))),
+                    Rect::from_min_size(body.min + vec2(6.0, 8.0), vec2(18.0, 18.0)),
                     item.icon,
                     17.0,
                     if ready { hue(g) } else { t.text_faint },
@@ -252,9 +281,8 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 let font = theme::semibold(9.5);
                 let chip_label = tl!(chip).to_string();
                 let w = crate::widgets::text_width(ui, &chip_label, &font);
-                let ltr_chip = Rect::from_center_size(body.right_center() - vec2(w / 2.0 + 10.0, 0.0), vec2(w + 10.0, 16.0));
-                row_label(ui, tl!(item.label), theme::regular(13.0), fg, side, 34.0, ltr_chip.left() - body.left() - 42.0);
-                let r = side.rect(ltr_chip);
+                let r = Rect::from_center_size(body.right_center() - vec2(w / 2.0 + 10.0, 0.0), vec2(w + 10.0, 16.0));
+                row_label(ui, tl!(item.label), theme::regular(13.0), fg, body.left_center() + vec2(34.0, 0.0), r.left() - body.left() - 42.0);
                 ui.painter().rect_filled(r, CornerRadius::same(4), fill);
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, chip_label, font, cfg);
                 let resp = theme::hand(resp).on_hover_text(format!("{} — {}", tl!(item.label), item.command));
@@ -263,7 +291,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                     if resp.clicked() {
                         run = Some(item.command);
                     }
-                } else if let Some(cmd) = actions_menu(app, ui, &resp, item, side.pos(ltr_chip.left_center() - vec2(10.0, 0.0)), fg) {
+                } else if let Some(cmd) = actions_menu(app, ui, &resp, item, r.left_center() - vec2(10.0, 0.0), fg) {
                     run = Some(cmd);
                 }
             }
@@ -273,6 +301,9 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
             if let Some(cmd) = crate::fill_sign::signature_entries(ui, app, t) {
                 run = Some(cmd);
             }
+            // Where the signing happens, not only in Preferences, and once: not also in the Sign
+            // menu over the page, where it was easy to miss (#2149).
+            ui.add(widgets::checkbox(&mut app.flatten_fill_sign_on_save, tl!("Lock into the page when saving")));
         }
     });
     if footer {
