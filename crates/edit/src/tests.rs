@@ -4493,6 +4493,42 @@ fn a_wrapped_list_item_keeps_its_continuation_and_the_items_after_it() {
     );
 }
 
+/// A row that opens with `12)` closes a bracket the row above left open (a wrapped "(Law 12)"),
+/// so it continues that paragraph; the same row after a closed bracket is still a list item.
+#[test]
+fn a_row_closing_a_bracket_from_the_row_above_is_not_a_list_item() {
+    let wrapped = text_page("BT /F1 12 Tf 14.4 TL 1 0 0 1 72 700 Tm (Article 3 of the law \\(Law) Tj T* (12\\) applies to every member.) Tj ET");
+    let blocks = text::text_blocks(&wrapped, 0).unwrap();
+    assert_eq!(blocks.len(), 1, "{:?}", blocks.iter().map(|b| &b.text).collect::<Vec<_>>());
+    let list = text_page("BT /F1 12 Tf 14.4 TL 1 0 0 1 72 700 Tm (Article 3 of the law \\(Law 12\\).) Tj T* (12\\) applies to every member.) Tj ET");
+    assert_eq!(text::text_blocks(&list, 0).unwrap().len(), 2, "a closed bracket leaves 12) a list item");
+}
+
+/// An Arabic paragraph whose Latin "(Law 12)" wraps after "(Law", as a rewrite or Word lays it
+/// out: its rows read back as one paragraph in typing order (the Council's editing check found
+/// such a paragraph split in three after Bold or a wider box).
+#[test]
+fn an_arabic_paragraph_whose_bracket_wraps_reads_as_one_paragraph() {
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let mut doc = fixture();
+    let text = AddedText {
+        rect: [72.0, 600.0, 400.0, 700.0],
+        text: "المادة ٣ من القانون رقم 12 لسنة 2026 (Law\n12) البند الأول".into(),
+        size: 12.0,
+        align: Align::Right,
+        ..AddedText::default()
+    };
+    add_content(&mut doc, 0, &Content::Text(text)).unwrap();
+    let doc = reopen(&doc);
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let ours: Vec<&str> = blocks.iter().map(|b| b.text.as_str()).filter(|t| t.contains("البند") || t.contains("المادة")).collect();
+    assert_eq!(ours.len(), 1, "{ours:?}");
+    assert!(ours[0].contains("(Law 12)") && ours[0].starts_with("المادة"), "{ours:?}");
+}
+
 fn page_content_bytes(doc: &Document, page: usize) -> Vec<u8> {
     let p = pdfcraft_model::pages(doc).swap_remove(page);
     let c = p.dict.get(b"Contents").unwrap();
