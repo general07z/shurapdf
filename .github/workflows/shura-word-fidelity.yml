@@ -3,7 +3,7 @@ name: ShuraPDF Word fidelity
 # Fork workflow (see the fork rules in CLAUDE.md). Measures how close the built-in Word engine
 # (WordCraft from general07z/shuraword) comes to Microsoft Word's own Save as PDF:
 # apps/pdfcraft-cli/examples/word_fidelity.rs converts each document with both and scores every
-# page. GitHub's Windows machine builds the tool; the Council's self-hosted Windows runner, which
+# page, in four stages (connection, documents, editing, interface), each its own job. GitHub's Windows machine builds the tool; the Council's self-hosted Windows runner, which
 # has Office, runs it. It asks only for the labels every self-hosted Windows runner gets
 # (self-hosted, windows): this repository has that one runner, and a custom label is one more thing
 # to get wrong when the runner is set up again.
@@ -76,11 +76,19 @@ jobs:
           path: target/release/examples/word_fidelity.exe
           retention-days: 1
 
+  # One job per stage, one after another on the one runner (max-parallel 1): a machine that drops
+  # a long job (a cancel it did not ask for, a sleep, a logoff) still delivers the stages that
+  # finished, each with its own artifact, and a failed stage does not stop the next.
   compare:
-    name: Word vs built-in (Council runner)
+    name: Word vs built-in (Council runner, ${{ matrix.stage }})
     needs: build
     runs-on: [self-hosted, windows]
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        stage: [connection, documents, editing, ui]
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -89,18 +97,19 @@ jobs:
       # cmd, not PowerShell: the runner's PowerShell may not run script files (execution
       # policy), and the step needs none. The tool skips a private folder that isn't there and
       # writes the table to the run's summary itself.
-      - name: Compare
+      - name: Compare (${{ matrix.stage }})
         shell: cmd
         env:
           PRIVATE_DIR: ${{ inputs.private_dir }}
-          OUT: ${{ runner.temp }}\word-fidelity
+          OUT: ${{ runner.temp }}\word-fidelity-${{ matrix.stage }}
+          STAGE: ${{ matrix.stage }}
         run: |
           if exist "%OUT%" rmdir /s /q "%OUT%"
-          "%RUNNER_TEMP%\word-fidelity-tool\word_fidelity.exe" "%OUT%" --private "%PRIVATE_DIR%"
+          "%RUNNER_TEMP%\word-fidelity-tool\word_fidelity.exe" "%OUT%" --private "%PRIVATE_DIR%" --stage %STAGE%
       - name: Results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: word-fidelity-results
-          path: ${{ runner.temp }}\word-fidelity
+          name: word-fidelity-${{ matrix.stage }}
+          path: ${{ runner.temp }}\word-fidelity-${{ matrix.stage }}
           retention-days: 14
