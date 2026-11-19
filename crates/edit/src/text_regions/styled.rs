@@ -1619,6 +1619,48 @@ fn paragraph_marker(block: &TextBlock, lines: &[TextLine], ops: &[Op]) -> Option
     Some((start, None, after_text))
 }
 
+/// Where a marker that would open at `open` and close at `close` opens without splitting an
+/// `/ActualText` span. A span open at `open` that ends before `close` would otherwise close
+/// inside the marker and leave the marker's end to close it instead: the span then covers the
+/// whole paragraph, and a reader takes the span's text (one row of an Arabic paragraph edited
+/// twice) for all of it. The marker opens before each such span.
+fn open_outside_spans(ops: &[Op], open: usize, close: usize) -> usize {
+    // The marked-content sequences open just before `open`, innermost last.
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, op) in ops.iter().enumerate().take(open) {
+        match op.op.as_slice() {
+            b"BDC" | b"BMC" => stack.push(i),
+            b"EMC" => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    // Each one's end, found by depth from `open`; innermost first.
+    let mut depth = 0usize;
+    let mut ends = Vec::new();
+    for (i, op) in ops.iter().enumerate().skip(open) {
+        if ends.len() == stack.len() {
+            break;
+        }
+        match op.op.as_slice() {
+            b"BDC" | b"BMC" => depth = depth.saturating_add(1),
+            b"EMC" if depth > 0 => depth -= 1,
+            b"EMC" => ends.push(i),
+            _ => {}
+        }
+    }
+    let mut at = open;
+    for (&start, &end) in stack.iter().rev().zip(&ends) {
+        let actual = ops.get(start).and_then(|op| op.operands.get(1)).is_some_and(|o| matches!(o, Object::Dict(d) if d.get(b"ActualText").is_some()));
+        if !actual || end >= close {
+            break;
+        }
+        at = start;
+    }
+    at
+}
+
 struct RewriteAnchor<'a> {
     lead: &'a TextLine,
     drop: std::collections::HashSet<usize>,
@@ -1703,6 +1745,7 @@ fn splice_with_marker(
     drop: &std::collections::HashSet<usize>,
     mut left_behind: impl FnMut(usize, bool) -> Vec<Op>,
 ) -> Vec<Vec<u8>> {
+    let emptied = crate::text::emptied_spans(ops, drop);
     let data = splice(pieces, ops, |i| {
         let mut insert = Vec::new();
         if let Some((start_at, next, close)) = marker {
@@ -1718,6 +1761,9 @@ fn splice_with_marker(
         }
         if i == at {
             insert.append(&mut block_ops);
+        }
+        if emptied.contains(&i) {
+            return (insert, false);
         }
         let keep = !drop.contains(&i);
         insert.extend(left_behind(i, keep));
@@ -2100,6 +2146,7 @@ pub(crate) fn rewrite_styled_block(
     // safe. The close is not part of `block_ops`: that vector can end inside a text object
     // when the rewrite splits one, and a kept row's operators come later in the stream.
     let marker = if marked { None } else { paragraph_marker(block, lines, &ops) };
+    let marker = marker.map(|(open, next, close)| (open_outside_spans(&ops, open, next.unwrap_or(close)), next, close));
     // A dropped `'` or `"` leaves its line move and spacing, and a dropped show its advance.
     let mut advances = crate::text::dropped_advances(doc, &ops, &res, &drop);
     let split_at = split.then_some(start);

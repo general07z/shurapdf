@@ -8691,6 +8691,37 @@ fn a_justified_arabic_row_fills_its_width_again() {
     assert!((left - 446.0).abs() < 1.0 && (right - 512.0).abs() < 1.0, "the first row fills 446–512 again: {left}–{right}");
 }
 
+/// Found by the Word fidelity matrix (justified-arabic): a paragraph retyped in a face, then
+/// edited again near its end, read back as its first row alone. The second edit keeps the rows
+/// it doesn't change, and opened its paragraph marker inside the first row's `/ActualText` span:
+/// the span then covered the whole paragraph and a reader took its one row for all of it.
+#[test]
+fn an_arabic_paragraph_edited_twice_reads_back_whole() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = word_arabic_page(
+        "BT /F1 12 Tf 446 700 Td [(BA) -1000 ( DE) -1000 ( BA)] TJ ET BT /F1 12 Tf 446 680 Td [(DE) -1000 ( BA) -1000 ( DE)] TJ ET \
+         BT /F1 12 Tf 485 660 Td (BA DE) Tj ET",
+    );
+    let block = text::text_blocks(&doc, 0).unwrap()[0].clone();
+    assert_eq!(block.rows.len(), 3);
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&format!("{} مس", block.editor_text)), &style).unwrap();
+    let mut doc = reopen(&doc);
+    let once = text::text_blocks(&doc, 0).unwrap()[0].editor_text.clone();
+    assert!(once.ends_with("مس"), "{once}");
+    let typed = format!("{} ٢ نس", once.trim_end_matches("مس").trim_end());
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &text::BlockStyle::default()).unwrap();
+    let doc = reopen(&doc);
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let read: Vec<String> = blocks.iter().map(|b| b.editor_text.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+    assert_eq!(read, [typed.split_whitespace().collect::<Vec<_>>().join(" ")], "the paragraph reads back whole");
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(!content.contains("BDC\nEMC"), "no span is left with nothing in it: {content}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
