@@ -4529,6 +4529,28 @@ fn an_arabic_paragraph_whose_bracket_wraps_reads_as_one_paragraph() {
     assert!(ours[0].contains("(Law 12)") && ours[0].starts_with("المادة"), "{ours:?}");
 }
 
+/// Right-aligned rows at a wide leading (twice the size, as a Word letter set in double spacing
+/// and its rewrite draw them, each row placed on its own with no `TL`) are one paragraph: their
+/// right edges agree while their ragged left edges do not. Reading the step to the next row only
+/// from rows that start at the same left split every row of a rewritten Arabic paragraph into a
+/// paragraph of its own.
+#[test]
+fn right_aligned_rows_at_a_wide_leading_are_one_paragraph() {
+    let rows =
+        [("Wide spaced first row of the paragraph, long", 700.0), ("short", 675.0), ("the third row is a long one again", 650.0), ("brief", 625.0)];
+    let content: String = rows
+        .iter()
+        .map(|(t, y)| {
+            // Each row ends at x = 500: its start is 500 less its Helvetica width at 12 pt.
+            let w = pdfcraft_fonts::helvetica_width(t, 12.0);
+            format!("BT /F1 12 Tf 1 0 0 1 {} {y} Tm ({t}) Tj ET ", 500.0 - w)
+        })
+        .collect();
+    let doc = text_page(&content);
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(blocks.len(), 1, "{:?}", blocks.iter().map(|b| &b.text).collect::<Vec<_>>());
+}
+
 fn page_content_bytes(doc: &Document, page: usize) -> Vec<u8> {
     let p = pdfcraft_model::pages(doc).swap_remove(page);
     let c = p.dict.get(b"Contents").unwrap();
