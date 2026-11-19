@@ -3,12 +3,12 @@
 </p>
 
 > **ShuraPDF** is an Arabic-first fork of PdfCraft for the Shura Council, Kingdom of Bahrain:
-> Word to PDF, a mirrored Arabic interface and an Arabic-default Windows build. Setup:
+> Word to PDF (through Microsoft Word or a built-in engine), editing existing Arabic text, and a
+> Windows build. What it added and fixed: [`docs/shura-log.md`](docs/shura-log.md) · Setup:
 > [`docs/shura-setup.md`](docs/shura-setup.md) · Arabic work queue: [`docs/arabic-gaps.md`](docs/arabic-gaps.md) ·
 > Signing: [`docs/code-signing.md`](docs/code-signing.md). The rest of this README is upstream PdfCraft's.
 
-**Code signing and privacy.** Free code signing for the Windows builds is provided by [SignPath.io](https://signpath.io/), with a certificate from the [SignPath Foundation](https://signpath.org/). Windows shows "SignPath Foundation" as the publisher of signed releases ([details](docs/code-signing.md)). ShuraPDF works on the files on your computer. It collects no personal data and sends none anywhere; the only network request it makes by itself is the update check (Help ▸ Check for updates, and the check when it starts), which asks this repository's releases on GitHub for the latest version and sends no document or personal data.
-> As the ArtCraft brand terms require of forks, its logos are removed here; the names are kept only to credit the origin.
+**Privacy.** ShuraPDF works on the files on your computer. It collects no personal data and sends none anywhere; the only network request it makes by itself is the update check (Help ▸ Check for updates, and the check when it starts), which asks this repository's releases on GitHub for the latest version and sends no document or personal data.
 
 <h1 align="center">PdfCraft</h1>
 

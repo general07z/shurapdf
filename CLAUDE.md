@@ -4,7 +4,7 @@
 This fork of PdfCraft targets an Arabic-first Acrobat Pro replacement. Upstream rules below still apply in full. Where they conflict, this section wins only on **priorities**, never on safety (never-panic, clean-room, assets, layering).
 
 ## Start every session here (in addition to upstream's list)
-1. Read `docs/arabic-gaps.md` and take the **first unchecked item in the work queue**. Do not pick upstream P2/P3 features unless that item needs them.
+1. Read `docs/arabic-gaps.md` and `docs/shura-log.md`, then take the **first unchecked item in the work queue**. Do not pick upstream P2/P3 features unless that item needs them.
 2. Before starting, check whether upstream already fixed it: `git fetch upstream && git log upstream/main --oneline -i --grep "<terms>"`. If upstream fixed it, merge upstream instead of re-implementing.
 
 ## Fork-specific rules
@@ -20,6 +20,7 @@ This fork of PdfCraft targets an Arabic-first Acrobat Pro replacement. Upstream 
 
 ## After every item
 - Tick it in `docs/arabic-gaps.md` and update the matching `parity/acrobat-features.toml` entry, with honest notes.
+- **Record it in `docs/shura-log.md`, in the same PR** (owner's rule, 2026-11-19): every feature added, every problem fixed (cause, the test that proves it, PR) and every problem found but not yet fixed (Known problems, without any real document's content). When a known problem is fixed, move it to Fixes. Read the log before an upstream merge and run its after-merge checklist after one.
 - Run `cargo xtask parity --partial` and paste the changed lines in the PR description.
 
 @AGENTS.md
