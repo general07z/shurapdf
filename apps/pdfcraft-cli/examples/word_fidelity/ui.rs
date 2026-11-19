@@ -237,6 +237,7 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
             };
             for press in 1..=2 {
                 let (was, was_rects) = shape(&h);
+                let before_rows = was.and_then(|b| was_rects.get(b)).map(|r| split_numbers(&h, *r)).unwrap_or_default();
                 h.get_by_label("Bold").click();
                 settle(&mut h);
                 if open_paragraph(&h).as_deref() != Some(expected.as_str()) {
@@ -253,6 +254,7 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
                         was_rects.len(),
                         now_rects.len()
                     ));
+                    outcome.wrong_details.extend(before_rows.iter().map(|r| format!("  before{}", r.trim_start_matches(' '))));
                     if let Some(old) = was.and_then(|b| was_rects.get(b)).copied() {
                         outcome.wrong_details.extend(split_numbers(&h, old));
                     }
@@ -292,7 +294,7 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
 
 /// Numbers only (never text) about the paragraphs now covering `old`, the open paragraph's box
 /// before the press: per paragraph its box and, per row, the top of its first line, the size,
-/// bold, and the class of the row's first character (digit, Latin, Arabic, bullet, other) with
+/// bold, its left and right edges and number of characters, and the class of the row's first character (digit, Latin, Arabic, bullet, other) with
 /// whether the row opens like a list marker ("12)", "a.", "•").
 fn split_numbers(h: &Harness<'static, PdfCraftApp>, old: [f64; 4]) -> Vec<String> {
     let state = h.state();
@@ -326,7 +328,18 @@ fn split_numbers(h: &Harness<'static, PdfCraftApp>, old: [f64; 4]) -> Vec<String
                 .filter_map(|row| {
                     let first = row.first().and_then(|n| lines.get(*n))?;
                     let text: String = row.iter().filter_map(|n| lines.get(*n)).map(|l| l.text.as_str()).collect();
-                    Some(format!("y{:.1} s{:.1}{} {}", first.rect[1], first.size, if first.bold { " b" } else { "" }, class(&text)))
+                    let left = row.iter().filter_map(|n| lines.get(*n)).map(|l| l.rect[0]).fold(f64::INFINITY, f64::min);
+                    let right = row.iter().filter_map(|n| lines.get(*n)).map(|l| l.rect[2]).fold(f64::NEG_INFINITY, f64::max);
+                    Some(format!(
+                        "y{:.1} x{:.0}-{:.0} c{} s{:.1}{} {}",
+                        first.rect[1],
+                        left,
+                        right,
+                        text.chars().count(),
+                        first.size,
+                        if first.bold { " b" } else { "" },
+                        class(&text)
+                    ))
                 })
                 .collect();
             format!("  now #{i} box {:.0},{:.0},{:.0},{:.0} rows [{}]", b.rect[0], b.rect[1], b.rect[2], b.rect[3], rows.join("; "))
