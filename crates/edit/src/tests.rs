@@ -8722,6 +8722,27 @@ fn an_arabic_paragraph_edited_twice_reads_back_whole() {
     assert!(!content.contains("BDC\nEMC"), "no span is left with nothing in it: {content}");
 }
 
+/// Found by the Word fidelity matrix (merged-table-page-break): Word squeezes the run after a
+/// number in a table cell with negative character spacing. Digits typed into that run inherited
+/// it and were drawn over each other, and the row, measured that narrow, did not wrap.
+#[test]
+fn text_typed_into_a_squeezed_run_is_not_squeezed() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 494 700 Td -3 Tc ( 1) Tj ET");
+    let typed = format!("{} 12 21 12", text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+    let joined: String = lines.iter().map(|l| l.text.as_str()).collect();
+    assert!(joined.contains("12 21 12"), "{joined}");
+    // Nine typed characters at 12 pt: squeezed by 3 pt each they took about half their width.
+    let (left, right) = (lines.iter().map(|l| l.rect[0]).fold(f64::MAX, f64::min), lines.iter().map(|l| l.rect[2]).fold(f64::MIN, f64::max));
+    assert!(right - left > 50.0, "the typed digits keep their width: {left}–{right}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
