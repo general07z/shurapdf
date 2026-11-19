@@ -445,7 +445,28 @@ fn glyphs_at_breaks(work: &Path, page: usize, tail: &str) -> String {
         ));
     }
     out.truncate(4);
-    if out.is_empty() { "no break inside the words".to_owned() } else { format!("at the breaks: {}", out.join("; ")) }
+    if out.is_empty() {
+        return "no break inside the words".to_owned();
+    }
+    // Every glyph drawn from the first matched one to the last, in drawing order: its kind (a
+    // blank by its code point) and its box's left and right edges and bottom, from the first
+    // glyph's left edge and bottom, in its height.
+    let (Some(first), Some(last)) = (chars.get(at).map(|c| c.0), chars.get(at + want.len() - 1).map(|c| c.0)) else { return out.join("; ") };
+    let (lo, hi) = (first.min(last), first.max(last));
+    let origin = text.glyphs.get(first).map_or([0.0; 4], |g| g.rect);
+    let h = (origin[3] - origin[1]).max(0.01);
+    let drawn: Vec<String> = (lo..=hi.min(lo + 40))
+        .filter_map(|i| text.glyphs.get(i))
+        .map(|g| {
+            let kind = match g.text.chars().next() {
+                Some(c) if c.is_whitespace() || c.is_control() => format!("U+{:04X}", u32::from(c)),
+                Some(c) => class_of(c).to_owned(),
+                None => "empty".to_owned(),
+            };
+            format!("{kind} {:.2}..{:.2}@{:.2}", (g.rect[0] - origin[0]) / h, (g.rect[2] - origin[0]) / h, (g.rect[3] - origin[3]) / h)
+        })
+        .collect();
+    format!("at the breaks: {}; drawn: {}", out.join("; "), drawn.join(", "))
 }
 
 /// The spacing the edit drew with, from the shaped runs it wrote into `out.pdf` (the content
