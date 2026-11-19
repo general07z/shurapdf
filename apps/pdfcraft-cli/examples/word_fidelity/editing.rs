@@ -7,8 +7,11 @@
 //! Each edit runs once keeping the paragraph's own font and once in each installed Arabic face
 //! found on the machine ([`faces`]), through the same automation tools as the app's Edit tool.
 //!
-//! A real document's failures are reported by kind and count only: its text never reaches the
-//! summary.
+//! A real document's failures are reported by kind and count, and each with where it happened
+//! (page, paragraph number, font, kind of edit) and, for a search failure, which kinds of
+//! character the searched words hold, whether the unedited document finds them, how often each
+//! word is found alone and how the edited page reads them (other spacing, reversed, characters
+//! missing by kind): its text never reaches the summary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +29,8 @@ const CHAINS: usize = 4;
 const FACES: usize = 3;
 /// Failures of a synthetic document described in the summary, per kind.
 const SHOWN: usize = 4;
+/// Failures of a real document listed by where they happened, per kind.
+const SHOWN_PRIVATE: usize = 25;
 
 /// An installed face that can be embedded: family name and file.
 pub struct Face {
@@ -208,12 +213,379 @@ fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bo
     }
 }
 
+/// The last two words typed on the last line of `new`, as a reader would search for them.
+fn searched(new: &str) -> String {
+    let last_line = norm(new.rsplit('\n').next().unwrap_or(new));
+    let words: Vec<&str> = last_line.split(' ').collect();
+    words.get(words.len().saturating_sub(2)..).map(|w| w.join(" ")).unwrap_or_default()
+}
+
+/// What a search failure can say about a real document without quoting it: the kinds of
+/// character in the searched words, in order, each run of one kind named once (`Arabic, space,
+/// digit`), and whether the unedited document (`in.pdf` in `work`) finds them.
+fn search_note(work: &Path, page: usize, new: &str) -> String {
+    let tail = searched(new);
+    let kind = |c: char| match c {
+        ' ' => "space",
+        '0'..='9' => "digit",
+        '\u{0660}'..='\u{0669}' | '\u{06F0}'..='\u{06F9}' => "Arabic-Indic digit",
+        '\u{064B}'..='\u{065F}' | '\u{0670}' => "Arabic mark",
+        '\u{0600}'..='\u{06FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' if c.is_alphabetic() => "Arabic",
+        c if c.is_alphabetic() => "Latin",
+        c if c.is_whitespace() => "other space",
+        c if c.is_control() || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}') => "control",
+        _ => "punctuation",
+    };
+    let mut kinds: Vec<&str> = Vec::new();
+    for c in tail.chars() {
+        let k = kind(c);
+        if kinds.last() != Some(&k) {
+            kinds.push(k);
+        }
+    }
+    let before = open(work, "in.pdf")
+        .and_then(|(mut auto, doc, _)| tool(&mut auto, "text_find", json!({ "doc": doc, "query": tail })))
+        .map(|found| found.get("count").and_then(Value::as_u64).unwrap_or(0));
+    let unedited = match before {
+        Ok(0) => "not found in the unedited document either".to_owned(),
+        Ok(n) => format!("found {n} times in the unedited document"),
+        Err(_) => "the unedited document could not be searched".to_owned(),
+    };
+    format!("searched {}; {unedited}; {}", kinds.join(", "), after_edit(work, page, new, &tail))
+}
+
+/// The kind of character `c` is, as the summary names it.
+fn class_of(c: char) -> &'static str {
+    if c.is_ascii_digit() {
+        "digit"
+    } else if ('\u{0660}'..='\u{0669}').contains(&c) || ('\u{06F0}'..='\u{06F9}').contains(&c) {
+        "Arabic-Indic digit"
+    } else if c.is_alphabetic() && c.is_ascii() {
+        "Latin"
+    } else if c.is_alphabetic() {
+        "Arabic"
+    } else {
+        "punctuation"
+    }
+}
+
+/// Where `read`, which holds `want` once spaces are left out, spaces it differently: each
+/// difference as the kinds of character on either side, with no text. At most four.
+fn spacing_diff(read: &str, want: &str) -> String {
+    let squeezed: Vec<(usize, char)> = read.char_indices().filter(|(_, c)| !c.is_whitespace()).collect();
+    let target: Vec<char> = want.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(at) = (0..=squeezed.len().saturating_sub(target.len()))
+        .find(|&i| squeezed.get(i..i + target.len()).is_some_and(|w| w.iter().map(|(_, c)| *c).eq(target.iter().copied())))
+    else {
+        return "not placed".to_owned();
+    };
+    // Whether a space comes before the k-th non-space character, in the page text and as typed.
+    let read_gap = |k: usize| match (squeezed.get(at + k - 1), squeezed.get(at + k)) {
+        (Some((a, ca)), Some((b, _))) => read.get(a + ca.len_utf8()..*b).is_some_and(|g| !g.is_empty()),
+        _ => false,
+    };
+    let want_chars: Vec<char> = want.chars().collect();
+    let mut want_gap = vec![false; target.len()];
+    let mut k = 0;
+    for (i, c) in want_chars.iter().enumerate() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if i > 0
+            && want_chars.get(i - 1).is_some_and(|p| p.is_whitespace())
+            && k > 0
+            && let Some(g) = want_gap.get_mut(k)
+        {
+            *g = true;
+        }
+        k += 1;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for k in 1..target.len() {
+        let (r, w) = (read_gap(k), want_gap.get(k).copied().unwrap_or(false));
+        if r != w {
+            let (a, b) = (target.get(k - 1).copied().map_or("?", class_of), target.get(k).copied().map_or("?", class_of));
+            out.push(format!("space {} between {a} and {b}", if r { "added" } else { "missing" }));
+        }
+    }
+    out.truncate(4);
+    if out.is_empty() { "same spacing".to_owned() } else { out.join(", ") }
+}
+
+/// How the edited page (`out.pdf` in `work`) reads where the edited paragraph is, against the
+/// searched words `tail`, in counts and yes or no only: how often each searched word is found
+/// alone, and whether the page's text over the paragraph holds the words with other spacing,
+/// reversed, or which kinds of character it lacks.
+fn after_edit(work: &Path, page: usize, new: &str, tail: &str) -> String {
+    let Ok((mut auto, doc, _)) = open(work, "out.pdf") else { return "the edited document could not be opened".to_owned() };
+    let words: Vec<String> = tail
+        .split(' ')
+        .map(|w| {
+            let n = tool(&mut auto, "text_find", json!({ "doc": doc, "query": w }))
+                .ok()
+                .and_then(|f| f.get("count").and_then(Value::as_u64))
+                .unwrap_or(0);
+            n.to_string()
+        })
+        .collect();
+    let want = norm(new);
+    let rect = tool(&mut auto, "text_paragraphs", json!({ "doc": doc, "page": page })).ok().and_then(|listed| {
+        listed.get("paragraphs")?.as_array()?.iter().find_map(|p| {
+            let text = norm(p.get("editor_text")?.as_str()?);
+            (text == want || text.contains(&want)).then(|| p.get("rect").cloned()).flatten()
+        })
+    });
+    let Some(rect) = rect else { return format!("each word found {} times; the paragraph is not listed", words.join(", ")) };
+    let read = tool(&mut auto, "text_extract", json!({ "doc": doc, "pages": [page], "rect": rect }))
+        .ok()
+        .and_then(|e| e.get("pages")?.as_array()?.first()?.get("text")?.as_str().map(norm))
+        .unwrap_or_default();
+    let squeeze = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let reversed: String = tail.chars().rev().collect();
+    let how = if read.contains(tail) {
+        "the page text over the paragraph holds them".to_owned()
+    } else if squeeze(&read).contains(&squeeze(tail)) {
+        format!("the page text over the paragraph holds them with other spacing ({})", spacing_diff(&read, tail))
+    } else if read.contains(&reversed) || squeeze(&read).contains(&squeeze(&reversed)) {
+        "the page text over the paragraph holds them reversed".to_owned()
+    } else {
+        let mut have: Vec<char> = read.chars().collect();
+        let mut missing: Vec<&str> = Vec::new();
+        for c in tail.chars().filter(|c| !c.is_whitespace()) {
+            match have.iter().position(|h| *h == c) {
+                Some(i) => {
+                    have.swap_remove(i);
+                }
+                None => {
+                    let k = if c.is_ascii_digit() {
+                        "digit"
+                    } else if c.is_alphabetic() && c.is_ascii() {
+                        "Latin"
+                    } else if c.is_alphabetic() {
+                        "Arabic"
+                    } else {
+                        "punctuation"
+                    };
+                    if !missing.contains(&k) {
+                        missing.push(k);
+                    }
+                }
+            }
+        }
+        if missing.is_empty() {
+            "the page text over the paragraph holds their characters in another order".to_owned()
+        } else {
+            format!("the page text over the paragraph lacks some {} characters", missing.join(", "))
+        }
+    };
+    format!("each word found {} times; {how}; {}; {}", words.join(", "), drawn_spacing(work), glyphs_at_breaks(work, page, tail))
+}
+
+/// The two glyphs on either side of each word break the page reader puts inside the searched
+/// words `tail` on the edited page, in numbers only, as fractions of the second glyph's height:
+/// the horizontal gap between their boxes (negative where they overlap), the step between their
+/// bottoms, and the ratio of their heights. At most four.
+fn glyphs_at_breaks(work: &Path, page: usize, tail: &str) -> String {
+    let Ok(bytes) = std::fs::read(work.join("out.pdf")) else { return "no glyphs".to_owned() };
+    let mut renderer = PageRenderer::new(Arc::new(bytes), RenderConfig::default());
+    let request = RenderRequest { page: page.saturating_sub(1), kind: RequestKind::Text, tile: None, scale: 1.0, tag: 0, preview: false };
+    let Some(text) = renderer.render(request).text else { return "no glyphs".to_owned() };
+    // The page's glyphs that are not blank, with whether the reader breaks a word before each.
+    let mut seq: Vec<(usize, bool)> = Vec::new();
+    let mut pending = false;
+    for (i, g) in text.glyphs.iter().enumerate() {
+        let brk = text.space_before.get(i).copied().unwrap_or(false) || (i > 0 && text.line_of.get(i) != text.line_of.get(i - 1));
+        if g.text.chars().all(char::is_whitespace) {
+            pending = true;
+            continue;
+        }
+        seq.push((i, brk || pending));
+        pending = false;
+    }
+    let want: Vec<char> = tail.chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<(usize, char, bool)> = seq
+        .iter()
+        .flat_map(|&(i, brk)| {
+            text.glyphs.get(i).map(|g| g.text.chars().enumerate().map(move |(k, c)| (i, c, brk && k == 0)).collect::<Vec<_>>()).unwrap_or_default()
+        })
+        .collect();
+    let Some(at) = (0..=chars.len().saturating_sub(want.len()))
+        .find(|&s| chars.get(s..s + want.len()).is_some_and(|w| w.iter().map(|x| x.1).eq(want.iter().copied())))
+    else {
+        return "the glyphs are not in reading order".to_owned();
+    };
+    let mut typed_gap = vec![false; want.len()];
+    let (mut k, mut space) = (0, false);
+    for c in tail.chars() {
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if let Some(g) = typed_gap.get_mut(k) {
+            *g = space && k > 0;
+        }
+        space = false;
+        k += 1;
+    }
+    let mut out = Vec::new();
+    for k in 1..want.len() {
+        let (Some(&(pi, _, _)), Some(&(ci, _, brk))) = (chars.get(at + k - 1), chars.get(at + k)) else { continue };
+        if !brk || typed_gap.get(k).copied().unwrap_or(false) || pi == ci {
+            continue;
+        }
+        let (Some(p), Some(c)) = (text.glyphs.get(pi), text.glyphs.get(ci)) else { continue };
+        let h = (c.rect[3] - c.rect[1]).max(0.01);
+        let gap = if c.rect[0] >= p.rect[0] { c.rect[0] - p.rect[2] } else { p.rect[0] - c.rect[2] };
+        out.push(format!(
+            "gap {:.2}, step {:.2}, height ratio {:.2}, drawn {} apart",
+            gap / h,
+            (c.rect[3] - p.rect[3]) / h,
+            h / (p.rect[3] - p.rect[1]).max(0.01),
+            ci.abs_diff(pi)
+        ));
+    }
+    out.truncate(4);
+    if out.is_empty() {
+        return "no break inside the words".to_owned();
+    }
+    // Every glyph drawn from the first matched one to the last, in drawing order: its kind (a
+    // blank by its code point) and its box's left and right edges and bottom, from the first
+    // glyph's left edge and bottom, in its height.
+    let (Some(first), Some(last)) = (chars.get(at).map(|c| c.0), chars.get(at + want.len() - 1).map(|c| c.0)) else { return out.join("; ") };
+    let (lo, hi) = (first.min(last), first.max(last));
+    let origin = text.glyphs.get(first).map_or([0.0; 4], |g| g.rect);
+    let h = (origin[3] - origin[1]).max(0.01);
+    let drawn: Vec<String> = (lo..=hi.min(lo + 40))
+        .filter_map(|i| text.glyphs.get(i))
+        .map(|g| {
+            let kind = match g.text.chars().next() {
+                Some(c) if c.is_whitespace() || c.is_control() => format!("U+{:04X}", u32::from(c)),
+                Some(c) => class_of(c).to_owned(),
+                None => "empty".to_owned(),
+            };
+            format!("{kind} {:.2}..{:.2}@{:.2}", (g.rect[0] - origin[0]) / h, (g.rect[2] - origin[0]) / h, (g.rect[3] - origin[3]) / h)
+        })
+        .collect();
+    format!("at the breaks: {}; drawn: {}", out.join("; "), drawn.join(", "))
+}
+
+/// The spacing the edit drew with, from the shaped runs it wrote into `out.pdf` (the content
+/// streams that mark text with `/ActualText`), in numbers only: each character spacing (`Tc`) and
+/// word spacing (`Tw`) set, and the widest gap a `TJ` adjustment opens between two glyphs, in
+/// thousandths of the font size. Text, glyph codes and fonts are left out.
+fn drawn_spacing(work: &Path) -> String {
+    use pdfcraft_cos::{DecodeBudget, Document, Object};
+    let Ok(bytes) = std::fs::read(work.join("out.pdf")) else { return "no edited file".to_owned() };
+    let Ok(doc) = Document::open(Arc::new(bytes)) else { return "the edited file does not open".to_owned() };
+    let mut budget = DecodeBudget::page();
+    let (mut tc, mut tw, mut widest, mut wide) = (Vec::<String>::new(), Vec::<String>::new(), 0.0_f64, 0usize);
+    for num in doc.object_numbers().into_iter().take(20_000) {
+        let Ok(o) = doc.try_get(num) else { continue };
+        let Object::Stream(st) = &*o else { continue };
+        let Ok(data) = budget.decode(st) else { continue };
+        if !data.windows(11).any(|w| w == b"/ActualText") {
+            continue;
+        }
+        let mut operands: Vec<f64> = Vec::new();
+        let (mut i, mut in_array, mut array_gaps) = (0usize, false, Vec::<f64>::new());
+        while let Some(&b) = data.get(i) {
+            match b {
+                b'(' => {
+                    // A string: skip it, with its escapes and nested brackets.
+                    let mut depth = 0usize;
+                    while let Some(&c) = data.get(i) {
+                        match c {
+                            b'\\' => i += 1,
+                            b'(' => depth += 1,
+                            b')' => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                b'<' if data.get(i + 1) != Some(&b'<') => {
+                    while data.get(i).is_some_and(|c| *c != b'>') {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                b'[' => {
+                    in_array = true;
+                    array_gaps.clear();
+                    i += 1;
+                }
+                b']' => {
+                    in_array = false;
+                    i += 1;
+                }
+                b'-' | b'+' | b'.' | b'0'..=b'9' => {
+                    let start = i;
+                    while data.get(i).is_some_and(|c| matches!(c, b'-' | b'+' | b'.' | b'0'..=b'9')) {
+                        i += 1;
+                    }
+                    let n = std::str::from_utf8(data.get(start..i).unwrap_or_default()).ok().and_then(|t| t.parse::<f64>().ok());
+                    if let Some(n) = n {
+                        if in_array {
+                            array_gaps.push(n);
+                        } else {
+                            operands.push(n);
+                        }
+                    }
+                }
+                b'a'..=b'z' | b'A'..=b'Z' | b'\'' | b'"' => {
+                    let start = i;
+                    while data.get(i).is_some_and(|c| c.is_ascii_alphabetic() || *c == b'*' || *c == b'\'' || *c == b'"') {
+                        i += 1;
+                    }
+                    let op = data.get(start..i).unwrap_or_default();
+                    let last = operands.last().copied();
+                    match (op, last) {
+                        (b"Tc", Some(v)) if !tc.contains(&format!("{v}")) => tc.push(format!("{v}")),
+                        (b"Tw", Some(v)) if !tw.contains(&format!("{v}")) => tw.push(format!("{v}")),
+                        (b"TJ", _) => {
+                            for g in &array_gaps {
+                                // A negative adjustment moves the next glyph right: a gap.
+                                if -g > widest {
+                                    widest = -g;
+                                }
+                                if -g > 250.0 {
+                                    wide += 1;
+                                }
+                            }
+                            array_gaps.clear();
+                        }
+                        _ => {}
+                    }
+                    operands.clear();
+                }
+                b'/' => {
+                    i += 1;
+                    while data.get(i).is_some_and(|c| !c.is_ascii_whitespace() && !b"/[]()<>".contains(c)) {
+                        i += 1;
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    tc.truncate(8);
+    tw.truncate(8);
+    format!("drawn with Tc {}, Tw {}, widest TJ gap {widest:.0}, gaps over 250: {wide}", tc.join("/"), tw.join("/"))
+}
+
 /// One document's result.
 pub struct Outcome {
     pub name: String,
     pub edits: usize,
-    /// Kind of failure and, for a synthetic document, what happened.
-    pub failures: Vec<(&'static str, String)>,
+    /// Kind of failure, what happened (shown for a synthetic document only) and where, with no
+    /// text of the document (shown for every document).
+    pub failures: Vec<(&'static str, String, String)>,
     pub error: Option<String>,
 }
 
@@ -306,10 +678,7 @@ fn edit(work: &Path, page: usize, paragraph: i64, new: &str, face: bool, others:
     if let Some(gone) = others.iter().find(|o| !joined.contains(o.as_str())) {
         return Err(("another paragraph changed", format!("“{gone}”")));
     }
-    // The last two words typed on the last line, as a reader would search for them.
-    let last_line = norm(new.rsplit('\n').next().unwrap_or(new));
-    let words: Vec<&str> = last_line.split(' ').collect();
-    let tail = words.get(words.len().saturating_sub(2)..).map(|w| w.join(" ")).unwrap_or_default();
+    let tail = searched(new);
     let found = tool(&mut auto, "text_find", json!({ "doc": doc, "query": tail })).map_err(|e| ("search fails", e))?;
     if found.get("count").and_then(Value::as_u64).unwrap_or(0) == 0 {
         return Err(("not found by search", format!("“{tail}”")));
@@ -358,9 +727,8 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                             let _ = std::fs::copy(bold, work.join("bold.ttf"));
                         }
                         if let Err((kind, detail)) = chain(work, *page, *number, text, mode.is_some(), with_bold, &others) {
-                            outcome
-                                .failures
-                                .push((kind, format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold: {detail}")));
+                            let place = format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold");
+                            outcome.failures.push((kind, format!("{place}: {detail}"), place));
                         }
                     }
                     for (variant, new) in variants(text) {
@@ -372,7 +740,11 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                                 }
                             }
                             Err((kind, detail)) => {
-                                outcome.failures.push((kind, format!("page {page}, paragraph {number}, {label}, {variant}: {detail}")));
+                                let mut place = format!("page {page}, paragraph {number}, {label}, {variant}");
+                                if kind == "not found by search" {
+                                    place = format!("{place}: {}", search_note(work, *page, &new));
+                                }
+                                outcome.failures.push((kind, format!("{place}: {detail}"), place));
                             }
                         }
                     }
@@ -393,7 +765,7 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
         "\n### Arabic text editing\n\nEach Arabic paragraph edited, saved and reopened, with its own font{}.\n\n| Document | Edits | Passed | Failed | Failures by kind |\n|---|---|---|---|---|\n",
         if names.is_empty() { String::new() } else { format!(" and in {}", names.join(", ")) }
     );
-    let mut details = String::new();
+    let (mut details, mut private) = (String::new(), String::new());
     for o in outcomes {
         if let Some(e) = &o.error {
             // A real document's error could quote it: only a synthetic one's is shown.
@@ -402,7 +774,7 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
             continue;
         }
         let mut kinds: Vec<(&str, usize)> = Vec::new();
-        for (kind, _) in &o.failures {
+        for (kind, _, _) in &o.failures {
             match kinds.iter_mut().find(|(k, _)| k == kind) {
                 Some((_, n)) => *n += 1,
                 None => kinds.push((kind, 1)),
@@ -417,21 +789,28 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
             o.failures.len(),
             if by_kind.is_empty() { "–".to_owned() } else { by_kind.join("; ") }
         ));
-        // A real document's failure is described only when it is numbers (where a paragraph went,
-        // where its edge went) with its page, paragraph number and font: no text of it.
+        // A real document's failure is described in full only when it is numbers (where a
+        // paragraph went, where its edge went); otherwise by where it happened alone, with no
+        // text of it.
         const NUMBERS_ONLY: [&str; 2] = ["moved to the wrong place", "widening changed the text or moved it"];
         let open = public(&o.name);
-        {
-            for (kind, _) in kinds.iter().filter(|(k, _)| open || NUMBERS_ONLY.contains(k)) {
-                for (_, detail) in o.failures.iter().filter(|(k, _)| k == kind).take(SHOWN) {
-                    details.push_str(&format!("- {}: {kind}: {}\n", o.name, detail.replace('\n', " ⏎ ")));
-                }
+        for (kind, _) in &kinds {
+            let full = open || NUMBERS_ONLY.contains(kind);
+            let shown = if open { SHOWN } else { SHOWN_PRIVATE };
+            for (_, detail, place) in o.failures.iter().filter(|(k, _, _)| k == kind).take(shown) {
+                let text = if full { detail } else { place };
+                let list = if open { &mut details } else { &mut private };
+                list.push_str(&format!("- {}: {kind}: {}\n", o.name, text.replace('\n', " ⏎ ")));
             }
         }
     }
     if !details.is_empty() {
         md.push_str("\nFailures in the synthetic documents:\n\n");
         md.push_str(&details);
+    }
+    if !private.is_empty() {
+        md.push_str("\nWhere the real documents failed (no text of them):\n\n");
+        md.push_str(&private);
     }
     md
 }
