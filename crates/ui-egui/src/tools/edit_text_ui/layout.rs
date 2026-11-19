@@ -82,6 +82,10 @@ pub(crate) struct SourceFonts {
     /// The installed bold face of each paragraph font that has one (Arial → Arial Bold): Bold
     /// draws the paragraph in it, as Word's own bold does, where a standard bold has no Arabic.
     pub(crate) bold_faces: BTreeMap<String, Arc<Vec<u8>>>,
+    /// The installed regular face of each bold paragraph font that has one (Arial Bold → Arial):
+    /// taking Bold off a paragraph Word set in bold draws it in that face, keeping the document's
+    /// font, where a standard regular font has no Arabic letters.
+    pub(crate) regular_faces: BTreeMap<String, Arc<Vec<u8>>>,
 }
 
 impl SourceFonts {
@@ -147,6 +151,25 @@ fn installed_bold_face(ctx: &egui::Context, name: &str) -> Option<Vec<u8>> {
         .find(|f| exact.contains(&key(f)))
         .or_else(|| regular.and_then(|r| files.iter().filter(|f| f.family == r.family).find(plain_bold)))
         .or_else(|| files.iter().filter(|f| key(f).starts_with(&base)).find(plain_bold))?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&file.path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
+    pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok().then_some(bytes)
+}
+
+/// The installed regular face of the bold font `name` (`Arial-BoldMT` → Arial, `Tajawal-Bold` →
+/// `Tajawal-Regular`), read whole; `None` for a font that is not bold.
+#[cfg(not(target_arch = "wasm32"))]
+fn installed_regular_face(ctx: &egui::Context, name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let key = pdfcraft_fonts::embedding::face_key(name);
+    if !key.contains("bold") {
+        return None;
+    }
+    let files = crate::files::installed_font_files(ctx, false)?;
+    let face_key = |f: &pdfcraft_engine::text_fonts::FontFile| pdfcraft_fonts::embedding::face_key(&f.face);
+    let base = family_key(name);
+    let exact = [base.clone(), format!("{base}regular"), format!("{base}mt"), format!("{base}regularmt")];
+    let file = files.iter().find(|f| exact.contains(&face_key(f)))?;
     let mut bytes = Vec::new();
     std::fs::File::open(&file.path).ok()?.take(16 << 20).read_to_end(&mut bytes).ok()?;
     pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok().then_some(bytes)
@@ -223,6 +246,10 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(bold) = installed_bold_face(ctx, &program.face) {
             out.bold_faces.insert(program.resource.clone(), Arc::new(bold));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(regular) = installed_regular_face(ctx, &program.face) {
+            out.regular_faces.insert(program.resource.clone(), Arc::new(regular));
         }
         let joining_name = format!("pdf-source-{index}-joining");
         definitions.families.insert(FontFamily::Name(joining_name.clone().into()), joining);
