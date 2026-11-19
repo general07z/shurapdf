@@ -254,6 +254,64 @@ fn search_note(work: &Path, page: usize, new: &str) -> String {
     format!("searched {}; {unedited}; {}", kinds.join(", "), after_edit(work, page, new, &tail))
 }
 
+/// The kind of character `c` is, as the summary names it.
+fn class_of(c: char) -> &'static str {
+    if c.is_ascii_digit() {
+        "digit"
+    } else if ('\u{0660}'..='\u{0669}').contains(&c) || ('\u{06F0}'..='\u{06F9}').contains(&c) {
+        "Arabic-Indic digit"
+    } else if c.is_alphabetic() && c.is_ascii() {
+        "Latin"
+    } else if c.is_alphabetic() {
+        "Arabic"
+    } else {
+        "punctuation"
+    }
+}
+
+/// Where `read`, which holds `want` once spaces are left out, spaces it differently: each
+/// difference as the kinds of character on either side, with no text. At most four.
+fn spacing_diff(read: &str, want: &str) -> String {
+    let squeezed: Vec<(usize, char)> = read.char_indices().filter(|(_, c)| !c.is_whitespace()).collect();
+    let target: Vec<char> = want.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(at) = (0..=squeezed.len().saturating_sub(target.len()))
+        .find(|&i| squeezed.get(i..i + target.len()).is_some_and(|w| w.iter().map(|(_, c)| *c).eq(target.iter().copied())))
+    else {
+        return "not placed".to_owned();
+    };
+    // Whether a space comes before the k-th non-space character, in the page text and as typed.
+    let read_gap = |k: usize| match (squeezed.get(at + k - 1), squeezed.get(at + k)) {
+        (Some((a, ca)), Some((b, _))) => read.get(a + ca.len_utf8()..*b).is_some_and(|g| !g.is_empty()),
+        _ => false,
+    };
+    let want_chars: Vec<char> = want.chars().collect();
+    let mut want_gap = vec![false; target.len()];
+    let mut k = 0;
+    for (i, c) in want_chars.iter().enumerate() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if i > 0
+            && want_chars.get(i - 1).is_some_and(|p| p.is_whitespace())
+            && k > 0
+            && let Some(g) = want_gap.get_mut(k)
+        {
+            *g = true;
+        }
+        k += 1;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for k in 1..target.len() {
+        let (r, w) = (read_gap(k), want_gap.get(k).copied().unwrap_or(false));
+        if r != w {
+            let (a, b) = (target.get(k - 1).copied().map_or("?", class_of), target.get(k).copied().map_or("?", class_of));
+            out.push(format!("space {} between {a} and {b}", if r { "added" } else { "missing" }));
+        }
+    }
+    out.truncate(4);
+    if out.is_empty() { "same spacing".to_owned() } else { out.join(", ") }
+}
+
 /// How the edited page (`out.pdf` in `work`) reads where the edited paragraph is, against the
 /// searched words `tail`, in counts and yes or no only: how often each searched word is found
 /// alone, and whether the page's text over the paragraph holds the words with other spacing,
@@ -287,7 +345,7 @@ fn after_edit(work: &Path, page: usize, new: &str, tail: &str) -> String {
     let how = if read.contains(tail) {
         "the page text over the paragraph holds them".to_owned()
     } else if squeeze(&read).contains(&squeeze(tail)) {
-        "the page text over the paragraph holds them with other spacing".to_owned()
+        format!("the page text over the paragraph holds them with other spacing ({})", spacing_diff(&read, tail))
     } else if read.contains(&reversed) || squeeze(&read).contains(&squeeze(&reversed)) {
         "the page text over the paragraph holds them reversed".to_owned()
     } else {
