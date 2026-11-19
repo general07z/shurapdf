@@ -267,6 +267,34 @@ fn reads_rtl(row: &[usize], lines: &[TextLine]) -> bool {
     row.iter().filter_map(|i| lines.get(*i)).any(|l| l.text.chars().any(crate::bidi::is_rtl))
 }
 
+/// Whether run `index` of the right-to-left row `row` holds only spaces and punctuation, drawn in
+/// visual order, between right-to-left text or numbers (or the row's edge) on both sides. Word
+/// draws such a run on its own, left to right as it shows: `1:` followed by a space is drawn as
+/// ` :` after the `1`, with the colon pulled back over the space. Read as drawn, it came out as
+/// `1 :`, which no search for the real text finds. Between them it reads right to left, as the
+/// right-to-left letters around it do (UAX #9 N1); beside a left-to-right word it stays as drawn.
+/// A run that carries `/ActualText` is in logical order already.
+fn neutral_in_rtl(row: &[usize], lines: &[TextLine], index: usize) -> bool {
+    let Some(line) = lines.get(index) else { return false };
+    let neutral = |c: char| !c.is_alphanumeric() && !crate::bidi::is_rtl(c);
+    if line.logical_order || line.text.chars().count() < 2 || !line.text.chars().all(neutral) {
+        return false;
+    }
+    let Some(at) = row.iter().position(|i| *i == index) else { return false };
+    // The direction of the nearest letter or digit: true for right-to-left letters and digits
+    // (numbers count as right-to-left beside neutrals), and for the row's edge.
+    let side = |runs: &mut dyn Iterator<Item = &usize>, from_end: bool| {
+        for l in runs.filter_map(|i| lines.get(*i)) {
+            let found = if from_end { l.text.chars().rev().find(|c| !neutral(*c)) } else { l.text.chars().find(|c| !neutral(*c)) };
+            if let Some(c) = found {
+                return crate::bidi::is_rtl(c) || c.is_numeric();
+            }
+        }
+        true
+    };
+    side(&mut row.get(..at).unwrap_or_default().iter().rev(), true) && side(&mut row.get(at + 1..).unwrap_or_default().iter(), false)
+}
+
 /// The gap along the baseline from `prev` to `line`, the next run in content order. Usually
 /// `line` starts after `prev` ends. In a right-to-left row (`rtl`), Microsoft Word's Save as PDF
 /// draws each run of a line (a word, its spaces, a number) in its own text object, each one to
@@ -444,9 +472,10 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 block.editor_text.push(' ');
             }
             let start = block.editor_text.len();
-            block.editor_text.push_str(&line.text);
+            let text = if rtl && neutral_in_rtl(row, lines, index) { line.text.chars().rev().collect() } else { line.text.clone() };
+            block.editor_text.push_str(&text);
             block.spans.push((start..block.editor_text.len(), index));
-            row_text.push_str(&line.text);
+            row_text.push_str(&text);
             block.invisible &= line.origin.state.render_mode == 3;
             block.lines.push(index);
             prev_in_row = Some(line);

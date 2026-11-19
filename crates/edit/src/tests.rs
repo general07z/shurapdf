@@ -8481,8 +8481,8 @@ fn multi_glyph_rtl_actual_text_keeps_its_own_reading_order() {
 /// the shape drawn), A س, B م, C ل, D ا, E ن, Y لأ, 1 and 2.
 fn word_arabic_page(content: &str) -> Document {
     let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapType 2 def \
-                1 begincodespacerange <00> <FF> endcodespacerange 11 beginbfchar \
-                <20> <0020> <28> <0028> <29> <0029> <31> <0031> <32> <0032> <41> <0633> <42> <0645> <43> <0644> <44> <0627> <45> <0646> <59> <06440623> \
+                1 begincodespacerange <00> <FF> endcodespacerange 12 beginbfchar \
+                <20> <0020> <28> <0028> <29> <0029> <31> <0031> <32> <0032> <3A> <003A> <41> <0633> <42> <0645> <43> <0644> <44> <0627> <45> <0646> <59> <06440623> \
                 endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
     let widths: Vec<_> = (32..=89).map(|c| if c == 32 { "250" } else { "500" }).collect();
     build(&[
@@ -8741,6 +8741,45 @@ fn text_typed_into_a_squeezed_run_is_not_squeezed() {
     // Nine typed characters at 12 pt: squeezed by 3 pt each they took about half their width.
     let (left, right) = (lines.iter().map(|l| l.rect[0]).fold(f64::MAX, f64::min), lines.iter().map(|l| l.rect[2]).fold(f64::MIN, f64::max));
     assert!(right - left > 50.0, "the typed digits keep their width: {left}–{right}");
+}
+
+/// Word's squeezed number label, as its table cells draw `سم 1:` and the space after it: the
+/// space and colon in a run of their own left of the number, the colon pulled back over the space.
+const SQUEEZED_LABEL: &str = "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 490 700 Td (1) Tj ET BT /F1 12 Tf 484 700 Td -3.2 Tc ( :) Tj ET";
+
+/// Found by the Word fidelity matrix (merged-table-page-break): the run of a space and a colon
+/// that Word draws left of a number in a right-to-left cell read as drawn, `1 :`, though the
+/// cell says `1:`. Neither the page's search nor a search for the text typed back found it.
+#[test]
+fn a_punctuation_run_in_an_arabic_row_reads_right_to_left() {
+    let doc = word_arabic_page(SQUEEZED_LABEL);
+    for doc in [&doc, &reopen(&doc)] {
+        assert_eq!(text::text_blocks(doc, 0).unwrap()[0].editor_text.trim_end(), "سم 1:");
+    }
+    // Beside a left-to-right word, a run of punctuation stays as drawn.
+    let doc = word_arabic_page(
+        "BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 470 700 Td (21) Tj ET BT /F1 12 Tf 440 700 Td ( :) Tj ET BT /F1 12 Tf 420 700 Td (A) Tj ET",
+    );
+    assert!(!text::text_blocks(&doc, 0).unwrap()[0].editor_text.contains(": "), "{}", text::text_blocks(&doc, 0).unwrap()[0].editor_text);
+}
+
+/// The same label edited: the colon kept Word's squeeze, measured narrower than nothing, and was
+/// drawn over the number instead of left of it.
+#[test]
+fn a_squeezed_colon_is_drawn_left_of_its_number_after_an_edit() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = word_arabic_page(SQUEEZED_LABEL);
+    let typed = format!("نس {}", text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim_end(), typed);
+    // Drawn over the number, the colon broke the row in two (or read before the number).
+    let lines: Vec<String> = text::text_lines(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, [typed.as_str()], "the row reads as typed, the colon left of the number");
 }
 
 /// How many paragraphs `content` makes on [`word_arabic_page`].
