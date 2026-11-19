@@ -253,6 +253,9 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
                         was_rects.len(),
                         now_rects.len()
                     ));
+                    if let Some(old) = was.and_then(|b| was_rects.get(b)).copied() {
+                        outcome.wrong_details.extend(split_numbers(&h, old));
+                    }
                 }
             }
             let bolded = h.render()?;
@@ -285,6 +288,50 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, keep: Option<&Path>) -> Outcome 
     })();
     outcome.error = result.err();
     outcome
+}
+
+/// Numbers only (never text) about the paragraphs now covering `old`, the open paragraph's box
+/// before the press: per paragraph its box and, per row, the top of its first line, the size,
+/// bold, and the class of the row's first character (digit, Latin, Arabic, bullet, other) with
+/// whether the row opens like a list marker ("12)", "a.", "•").
+fn split_numbers(h: &Harness<'static, PdfCraftApp>, old: [f64; 4]) -> Vec<String> {
+    let state = h.state();
+    let Some(doc) = state.views.first().and_then(|v| state.session.get(v.id)) else { return Vec::new() };
+    let lines = doc.text_lines(0);
+    let overlaps = |r: &[f64; 4]| r[0] < old[2] && r[2] > old[0] && r[1] < old[3] && r[3] > old[1];
+    let class = |text: &str| -> String {
+        let t = text.trim_start();
+        let first = t.chars().next();
+        let kind = match first {
+            None => "empty",
+            Some(c) if c.is_ascii_digit() => "digit",
+            Some(c) if c.is_ascii_alphabetic() => "latin",
+            Some(c) if ('\u{0600}'..='\u{06FF}').contains(&c) => "arabic",
+            Some('•' | '◦' | '▪' | '‣' | '⁃' | '*' | '-' | '–' | '—') => "bullet",
+            Some(_) => "other",
+        };
+        let lead: String = t.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        let after = t.chars().nth(lead.chars().count());
+        let marker = !lead.is_empty() && lead.len() <= 3 && matches!(after, Some('.' | ')'));
+        format!("{kind}{}", if marker { "+marker" } else { "" })
+    };
+    doc.text_blocks(0)
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| overlaps(&b.rect))
+        .map(|(i, b)| {
+            let rows: Vec<String> = b
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    let first = row.first().and_then(|n| lines.get(*n))?;
+                    let text: String = row.iter().filter_map(|n| lines.get(*n)).map(|l| l.text.as_str()).collect();
+                    Some(format!("y{:.1} s{:.1}{} {}", first.rect[1], first.size, if first.bold { " b" } else { "" }, class(&text)))
+                })
+                .collect();
+            format!("  now #{i} box {:.0},{:.0},{:.0},{:.0} rows [{}]", b.rect[0], b.rect[1], b.rect[2], b.rect[3], rows.join("; "))
+        })
+        .collect()
 }
 
 fn percentile(values: &[f64], p: f64) -> f64 {
