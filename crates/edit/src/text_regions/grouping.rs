@@ -374,7 +374,9 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 let same = same_plane(first, nfirst)
                     && (mixed || same_style(first, nfirst))
                     && first.size.min(nfirst.size) >= first.size.max(nfirst.size) * 0.4
-                    && (nframe[0] - frame[0]).abs() < tol;
+                    // The rows start at one edge: the left, or the right of right-aligned text
+                    // (Arabic, whose ragged rows each end at a different left).
+                    && ((nframe[0] - frame[0]).abs() < tol || (nframe[2] - frame[2]).abs() < tol);
                 let scale = gap.abs().max(ngap.abs());
                 if same && ngap > tol * 0.8 && scale < tol * 4.0 && (ngap - gap).abs() <= scale * 0.08 + 0.5 { Some(gap) } else { None }
             });
