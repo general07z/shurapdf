@@ -67,9 +67,16 @@ PR numbers are `general07z/shurapdf` pull requests.
   Word's squeezed space as `1:`. In the shared page-text reader (`crates/render/src/text.rs`);
   worth an upstream PR.
 - Arabic OCR: the built-in engine reads Latin only. Recommended: Windows OCR.
-- Fidelity runner (2026-11-19, before #57 and #58): private-1 has 25 editing failures (search 22,
-  lost paragraph 2, second edit 1); private-pdf-1 has 2 (lost paragraph). To recheck after #57
-  and #58.
+- Fidelity runner, editing stage (run 44543440607, `main` after #57–#59, compared with run
+  44509927620 before them):
+  - merged-table-page-break: 78 → 20 failures. The 20 left are all "add a word at the start"
+    (`1 :`), the page-text reader problem above.
+  - justified-arabic: the widen failure is gone; the chain now reaches bold and fails there in
+    Tahoma ("the bold face was not loaded"). Not yet diagnosed.
+  - arabic-labels: still 1 (paragraph 4, Arial, chain: the paragraph was lost). Passes locally
+    with DejaVu Sans, so it depends on Arial's metrics. Not yet diagnosed.
+  - private-1: still 25 (search 22, lost paragraph 2, second edit 1); private-pdf-1: still 2 (lost
+    paragraph). #57 and #58 did not reach their causes. Not yet diagnosed.
 - The runner lacks Simplified Arabic and Traditional Arabic, so they are not measured.
 - Not yet: kashida justification, joining across a style change inside a word, reflow of the
   paragraphs below an edit.
