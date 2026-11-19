@@ -7,8 +7,10 @@
 //! Each edit runs once keeping the paragraph's own font and once in each installed Arabic face
 //! found on the machine ([`faces`]), through the same automation tools as the app's Edit tool.
 //!
-//! A real document's failures are reported by kind and count only: its text never reaches the
-//! summary.
+//! A real document's failures are reported by kind and count, and each with where it happened
+//! (page, paragraph number, font, kind of edit) and, for a search failure, which kinds of
+//! character the searched words hold and whether the unedited document finds them: its text
+//! never reaches the summary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +28,8 @@ const CHAINS: usize = 4;
 const FACES: usize = 3;
 /// Failures of a synthetic document described in the summary, per kind.
 const SHOWN: usize = 4;
+/// Failures of a real document listed by where they happened, per kind.
+const SHOWN_PRIVATE: usize = 25;
 
 /// An installed face that can be embedded: family name and file.
 pub struct Face {
@@ -208,12 +212,54 @@ fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bo
     }
 }
 
+/// The last two words typed on the last line of `new`, as a reader would search for them.
+fn searched(new: &str) -> String {
+    let last_line = norm(new.rsplit('\n').next().unwrap_or(new));
+    let words: Vec<&str> = last_line.split(' ').collect();
+    words.get(words.len().saturating_sub(2)..).map(|w| w.join(" ")).unwrap_or_default()
+}
+
+/// What a search failure can say about a real document without quoting it: the kinds of
+/// character in the searched words, in order, each run of one kind named once (`Arabic, space,
+/// digit`), and whether the unedited document (`in.pdf` in `work`) finds them.
+fn search_note(work: &Path, new: &str) -> String {
+    let tail = searched(new);
+    let kind = |c: char| match c {
+        ' ' => "space",
+        '0'..='9' => "digit",
+        '\u{0660}'..='\u{0669}' | '\u{06F0}'..='\u{06F9}' => "Arabic-Indic digit",
+        '\u{064B}'..='\u{065F}' | '\u{0670}' => "Arabic mark",
+        '\u{0600}'..='\u{06FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' if c.is_alphabetic() => "Arabic",
+        c if c.is_alphabetic() => "Latin",
+        c if c.is_whitespace() => "other space",
+        c if c.is_control() || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}') => "control",
+        _ => "punctuation",
+    };
+    let mut kinds: Vec<&str> = Vec::new();
+    for c in tail.chars() {
+        let k = kind(c);
+        if kinds.last() != Some(&k) {
+            kinds.push(k);
+        }
+    }
+    let before = open(work, "in.pdf")
+        .and_then(|(mut auto, doc, _)| tool(&mut auto, "text_find", json!({ "doc": doc, "query": tail })))
+        .map(|found| found.get("count").and_then(Value::as_u64).unwrap_or(0));
+    let unedited = match before {
+        Ok(0) => "not found in the unedited document either".to_owned(),
+        Ok(n) => format!("found {n} times in the unedited document"),
+        Err(_) => "the unedited document could not be searched".to_owned(),
+    };
+    format!("searched {}; {unedited}", kinds.join(", "))
+}
+
 /// One document's result.
 pub struct Outcome {
     pub name: String,
     pub edits: usize,
-    /// Kind of failure and, for a synthetic document, what happened.
-    pub failures: Vec<(&'static str, String)>,
+    /// Kind of failure, what happened (shown for a synthetic document only) and where, with no
+    /// text of the document (shown for every document).
+    pub failures: Vec<(&'static str, String, String)>,
     pub error: Option<String>,
 }
 
@@ -306,10 +352,7 @@ fn edit(work: &Path, page: usize, paragraph: i64, new: &str, face: bool, others:
     if let Some(gone) = others.iter().find(|o| !joined.contains(o.as_str())) {
         return Err(("another paragraph changed", format!("“{gone}”")));
     }
-    // The last two words typed on the last line, as a reader would search for them.
-    let last_line = norm(new.rsplit('\n').next().unwrap_or(new));
-    let words: Vec<&str> = last_line.split(' ').collect();
-    let tail = words.get(words.len().saturating_sub(2)..).map(|w| w.join(" ")).unwrap_or_default();
+    let tail = searched(new);
     let found = tool(&mut auto, "text_find", json!({ "doc": doc, "query": tail })).map_err(|e| ("search fails", e))?;
     if found.get("count").and_then(Value::as_u64).unwrap_or(0) == 0 {
         return Err(("not found by search", format!("“{tail}”")));
@@ -358,9 +401,8 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                             let _ = std::fs::copy(bold, work.join("bold.ttf"));
                         }
                         if let Err((kind, detail)) = chain(work, *page, *number, text, mode.is_some(), with_bold, &others) {
-                            outcome
-                                .failures
-                                .push((kind, format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold: {detail}")));
+                            let place = format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold");
+                            outcome.failures.push((kind, format!("{place}: {detail}"), place));
                         }
                     }
                     for (variant, new) in variants(text) {
@@ -372,7 +414,11 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                                 }
                             }
                             Err((kind, detail)) => {
-                                outcome.failures.push((kind, format!("page {page}, paragraph {number}, {label}, {variant}: {detail}")));
+                                let mut place = format!("page {page}, paragraph {number}, {label}, {variant}");
+                                if kind == "not found by search" {
+                                    place = format!("{place}: {}", search_note(work, &new));
+                                }
+                                outcome.failures.push((kind, format!("{place}: {detail}"), place));
                             }
                         }
                     }
@@ -393,7 +439,7 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
         "\n### Arabic text editing\n\nEach Arabic paragraph edited, saved and reopened, with its own font{}.\n\n| Document | Edits | Passed | Failed | Failures by kind |\n|---|---|---|---|---|\n",
         if names.is_empty() { String::new() } else { format!(" and in {}", names.join(", ")) }
     );
-    let mut details = String::new();
+    let (mut details, mut private) = (String::new(), String::new());
     for o in outcomes {
         if let Some(e) = &o.error {
             // A real document's error could quote it: only a synthetic one's is shown.
@@ -402,7 +448,7 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
             continue;
         }
         let mut kinds: Vec<(&str, usize)> = Vec::new();
-        for (kind, _) in &o.failures {
+        for (kind, _, _) in &o.failures {
             match kinds.iter_mut().find(|(k, _)| k == kind) {
                 Some((_, n)) => *n += 1,
                 None => kinds.push((kind, 1)),
@@ -417,21 +463,28 @@ pub fn table(outcomes: &[Outcome], faces: &[Face], public: impl Fn(&str) -> bool
             o.failures.len(),
             if by_kind.is_empty() { "–".to_owned() } else { by_kind.join("; ") }
         ));
-        // A real document's failure is described only when it is numbers (where a paragraph went,
-        // where its edge went) with its page, paragraph number and font: no text of it.
+        // A real document's failure is described in full only when it is numbers (where a
+        // paragraph went, where its edge went); otherwise by where it happened alone, with no
+        // text of it.
         const NUMBERS_ONLY: [&str; 2] = ["moved to the wrong place", "widening changed the text or moved it"];
         let open = public(&o.name);
-        {
-            for (kind, _) in kinds.iter().filter(|(k, _)| open || NUMBERS_ONLY.contains(k)) {
-                for (_, detail) in o.failures.iter().filter(|(k, _)| k == kind).take(SHOWN) {
-                    details.push_str(&format!("- {}: {kind}: {}\n", o.name, detail.replace('\n', " ⏎ ")));
-                }
+        for (kind, _) in &kinds {
+            let full = open || NUMBERS_ONLY.contains(kind);
+            let shown = if open { SHOWN } else { SHOWN_PRIVATE };
+            for (_, detail, place) in o.failures.iter().filter(|(k, _, _)| k == kind).take(shown) {
+                let text = if full { detail } else { place };
+                let list = if open { &mut details } else { &mut private };
+                list.push_str(&format!("- {}: {kind}: {}\n", o.name, text.replace('\n', " ⏎ ")));
             }
         }
     }
     if !details.is_empty() {
         md.push_str("\nFailures in the synthetic documents:\n\n");
         md.push_str(&details);
+    }
+    if !private.is_empty() {
+        md.push_str("\nWhere the real documents failed (no text of them):\n\n");
+        md.push_str(&private);
     }
     md
 }
