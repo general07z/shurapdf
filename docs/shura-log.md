@@ -67,8 +67,8 @@ PR numbers are `general07z/shurapdf` pull requests.
 - Arabic OCR: the built-in engine reads Latin only. Recommended: Windows OCR.
 - Fidelity runner, editing stage (run 44543440607, `main` after #57–#59, compared with run
   44509927620 before them):
-  - merged-table-page-break: 78 → 20 failures, all "add a word at the start" (`1 :`): fixed
-    by #61, to recheck on the runner.
+  - merged-table-page-break: 78 → 20 failures, all "add a word at the start" (`1 :`); 0 after
+    #61 (run 44566311034).
   - justified-arabic: the widen failure is gone; the chain now reaches bold and fails there in
     Tahoma ("the bold face was not loaded"). Not yet diagnosed.
   - arabic-labels: still 1 (paragraph 4, Arial, chain: the paragraph was lost). Passes locally
