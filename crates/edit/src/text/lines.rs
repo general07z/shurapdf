@@ -260,6 +260,44 @@ pub(crate) fn joined(streams: &[ContentStream]) -> Pieces {
     Pieces::join(&streams.iter().map(|s| s.data.as_slice()).collect::<Vec<_>>())
 }
 
+/// The `BDC`/`EMC` pairs of `/ActualText` spans whose shows are all dropped. A span left
+/// behind with nothing inside would wrap the new paragraph spliced into it, and a reader
+/// takes the span's old text instead of the new rows (an Arabic paragraph retyped twice read
+/// back as its first row only). A span still showing a kept glyph stays.
+pub(crate) fn emptied_spans(ops: &[Op], drop: &std::collections::HashSet<usize>) -> std::collections::HashSet<usize> {
+    // (BDC index, carries ActualText, shows any glyph, shows a kept glyph)
+    let mut open: Vec<(usize, bool, bool, bool)> = Vec::new();
+    let mut emptied = std::collections::HashSet::new();
+    for (i, op) in ops.iter().enumerate() {
+        match op.op.as_slice() {
+            b"BDC" => {
+                let actual = op.operands.get(1).is_some_and(|o| matches!(o, Object::Dict(d) if d.get(b"ActualText").is_some()));
+                open.push((i, actual, false, false));
+            }
+            b"BMC" => open.push((i, false, false, false)),
+            b"EMC" => {
+                let Some((start, actual, shows, kept)) = open.pop() else { continue };
+                if actual && shows && !kept {
+                    emptied.insert(start);
+                    emptied.insert(i);
+                }
+                if let Some(outer) = open.last_mut() {
+                    outer.2 |= shows;
+                    outer.3 |= kept;
+                }
+            }
+            b"Tj" | b"TJ" | b"'" | b"\"" => {
+                if let Some(inner) = open.last_mut() {
+                    inner.2 = true;
+                    inner.3 |= !drop.contains(&i);
+                }
+            }
+            _ => {}
+        }
+    }
+    emptied
+}
+
 /// Rewrite a page's content (its streams joined, see [`Pieces`]): `edit(i)` gives the operators
 /// to insert before operator `i` of `ops` (parsed from the joined pieces) and whether to keep it.
 /// Everything else is copied byte for byte. A page's streams are one stream in pieces, split

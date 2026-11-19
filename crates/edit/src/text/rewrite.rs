@@ -6,7 +6,7 @@ use super::fallback::{
 };
 use super::interp::{Carry, Origin, TextState, interpret};
 use super::lines::{
-    ContentStream, content_streams, dropped_advances, dropped_side_effects, joined, page_dict, reopen_text_object, rewritten_contents,
+    ContentStream, content_streams, dropped_advances, dropped_side_effects, emptied_spans, joined, page_dict, reopen_text_object, rewritten_contents,
     show_side_effects, splice, text_lines,
 };
 use super::{
@@ -1215,8 +1215,12 @@ fn rewrite_block_from_with(
         block_ops.extend(reopen_text_object(emit.tlm, emit.tm, after.font.as_ref().map(|(_, size)| *size), after.scale));
     }
     let mut advances = dropped_advances(doc, &ops, &res, &dropped);
+    let emptied = emptied_spans(&ops, &dropped);
     let new_data = splice(&pieces, &ops, |i| {
         let mut insert = if i == at { std::mem::take(&mut block_ops) } else { Vec::new() };
+        if emptied.contains(&i) {
+            return (insert, false);
+        }
         let keep = !dropped.contains(&i);
         insert.extend(dropped_side_effects(&ops, i, keep, split.then_some(start)));
         insert.extend(advances.remove(&i));
