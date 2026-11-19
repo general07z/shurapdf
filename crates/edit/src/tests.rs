@@ -8782,6 +8782,31 @@ fn a_squeezed_colon_is_drawn_left_of_its_number_after_an_edit() {
     assert_eq!(lines, [typed.as_str()], "the row reads as typed, the colon left of the number");
 }
 
+/// Found by the Word fidelity matrix (a real document, numbers only): Word draws the space after
+/// a paragraph's last word as a run of its own, left of a right-to-left row. A rewrite in a wider
+/// face left it there and drew the row over it, and the page reader read the space inside the
+/// typed number: `2026` was found only as `20 26`.
+#[test]
+fn a_rewritten_row_takes_its_trailing_space_run_with_it() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // سم at 500–512, Word's trailing space run at 497–500.
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET");
+    let typed = format!("{} (21) 2026 12", text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(!content.contains("( ) Tj"), "the trailing space run goes with the row: {content}");
+    let bytes = write_incremental(&doc, &SaveOptions::default()).unwrap();
+    let mut renderer = pdfcraft_render::PageRenderer::new(Arc::new(bytes), pdfcraft_render::RenderConfig::default());
+    let page =
+        renderer.render(pdfcraft_render::RenderRequest { page: 0, kind: pdfcraft_render::RequestKind::Text, scale: 1.0, ..Default::default() });
+    let read = page.text.map(|t| t.plain_text()).unwrap_or_default();
+    assert!(read.contains("2026"), "the page reads the typed number whole: {read:?}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()

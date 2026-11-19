@@ -1970,7 +1970,10 @@ pub(crate) fn rewrite_styled_block(
     // The rewrite is placed after the last rewritten row unless a text-show operator there
     // would make a kept following row depend on that position.
     let anchor = rewrite_anchor(block, lines, first, &ops, &kept_lines, &mut kept);
-    let RewriteAnchor { lead, drop, start, split } = anchor;
+    let RewriteAnchor { lead, mut drop, start, split } = anchor;
+    // Word's space after the paragraph goes with it (`trailing_blank`).
+    let members: Vec<&TextLine> = block.lines.iter().filter_map(|i| lines.get(*i)).collect();
+    drop.extend(crate::text::trailing_blank_ops(&crate::text::blank_lines(doc, page).unwrap_or_default(), &members));
     let o = &lead.origin;
     // What is in force where the rewrite is drawn, and what the text after it expects.
     let after = if split { &o.state } else { &o.bt_state };

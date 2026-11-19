@@ -6,8 +6,8 @@ use super::fallback::{
 };
 use super::interp::{Carry, Origin, TextState, interpret};
 use super::lines::{
-    ContentStream, content_streams, dropped_advances, dropped_side_effects, emptied_spans, joined, page_dict, reopen_text_object, rewritten_contents,
-    show_side_effects, splice, text_lines,
+    ContentStream, blank_lines, content_streams, dropped_advances, dropped_side_effects, emptied_spans, joined, page_dict, reopen_text_object,
+    rewritten_contents, show_side_effects, splice, text_lines,
 };
 use super::{
     Dict, Document, EditError, HashMap, HashSet, Matrix, Metrics, Object, Op, PdfString, TextLine, TextSession, alignment_frame, group_blocks,
@@ -283,6 +283,24 @@ pub(crate) fn coincident_ops(lines: &[TextLine], targets: &[&TextLine]) -> std::
         }
     }
     drop
+}
+
+/// The operators of the runs of blanks alone among `blanks` ([`blank_lines`]) that sit beside one
+/// of `members` ([`trailing_blank`]): a rewrite of those members takes them with it.
+pub(crate) fn trailing_blank_ops(blanks: &[TextLine], members: &[&TextLine]) -> std::collections::HashSet<usize> {
+    blanks.iter().filter(|b| members.iter().any(|m| trailing_blank(b, m))).flat_map(|b| b.ops.iter().copied()).collect()
+}
+
+/// Whether `line` is a run of blanks alone, drawn on `target`'s baseline beside it (no further
+/// than its size away): the space Word draws in a font of its own after a paragraph's last word
+/// or a cell's text. It belongs to no paragraph, so a rewrite kept it where it was; the rewritten
+/// row, wider in another face, then grew over it, and the page reader took that space inside a
+/// word for a word break (`2026` read as `20 26`, a web address split in two).
+fn trailing_blank(line: &TextLine, target: &TextLine) -> bool {
+    let blank = !line.text.is_empty() && line.text.chars().all(char::is_whitespace);
+    let (a, b) = (line.rect, target.rect);
+    let apart = (a[0] - b[2]).max(b[0] - a[2]);
+    blank && !target.text.trim().is_empty() && apart <= target.size.max(1.0) && on_same_baseline(line, target)
 }
 
 fn overlaps_half(a: [f64; 4], b: [f64; 4], area: impl Fn([f64; 4]) -> f64) -> bool {
@@ -1028,6 +1046,8 @@ fn rewrite_block_from_with(
     // One clipping run is enough: rewriting the paragraph would drop its mask with the rest.
     let mut dropped = coincident_ops(&lines, &members);
     dropped.extend(members.iter().flat_map(|l| l.ops.iter().copied()));
+    // Word's space after the paragraph goes with it ([`trailing_blank`]).
+    dropped.extend(trailing_blank_ops(&blank_lines(doc, page).unwrap_or_default(), &members));
     refuse_clipping_text(&lines, &dropped)?;
     let first = members.first().copied().ok_or_else(|| EditError::Invalid("the paragraph has no source runs".into()))?;
     members.iter().try_for_each(|line| line.ensure_editable())?;
