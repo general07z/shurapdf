@@ -1785,6 +1785,27 @@ fn splice_with_marker(
 
 /// The source run each part of the draft is styled from: the ones given, which must cover the draft
 /// in order, on character boundaries, from the block's runs, or else the edit's own.
+/// Word squeezes a short run, such as the colon after a number in a table cell, with negative
+/// character spacing. Text typed into that run must not inherit it: each new glyph would draw
+/// over the one before, and the row, measured that narrow, would not wrap in its cell. A run
+/// that now holds more characters than it showed draws them at no extra spacing.
+fn unsqueeze_typed_runs(lines: &mut [TextLine], spans: &[(std::ops::Range<usize>, usize)], draft: &str) {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for (range, index) in spans {
+        let n = draft.get(range.clone()).map_or(0, |t| t.chars().count());
+        let count = counts.entry(*index).or_default();
+        *count = count.saturating_add(n);
+    }
+    for (index, count) in counts {
+        if let Some(line) = lines.get_mut(index)
+            && line.origin.state.char_spacing < 0.0
+            && count > line.text.chars().count()
+        {
+            line.origin.state.char_spacing = 0.0;
+        }
+    }
+}
+
 fn draft_sources(block: &TextBlock, draft: &str, style: &BlockStyle) -> Result<Vec<(std::ops::Range<usize>, usize)>, EditError> {
     if style.sources.is_empty() {
         return Ok(block.edited_spans(draft));
@@ -1821,7 +1842,8 @@ pub(crate) fn rewrite_styled_block(
     let ranges = validated_ranges(draft, style)?;
     let source_count = lines.len();
     let sources = draft_sources(block, draft, style)?;
-    let styled = apply_range_styles(first, lines, sources, &ranges, style);
+    let mut styled = apply_range_styles(first, lines, sources, &ranges, style);
+    unsqueeze_typed_runs(&mut styled.lines, &styled.spans, draft);
     let lines = styled.lines.as_slice();
     let styled_spans = styled.spans;
     let underlines = styled.underlines;
