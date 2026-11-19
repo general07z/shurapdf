@@ -378,7 +378,117 @@ fn after_edit(work: &Path, page: usize, new: &str, tail: &str) -> String {
             format!("the page text over the paragraph lacks some {} characters", missing.join(", "))
         }
     };
-    format!("each word found {} times; {how}", words.join(", "))
+    format!("each word found {} times; {how}; {}", words.join(", "), drawn_spacing(work))
+}
+
+/// The spacing the edit drew with, from the shaped runs it wrote into `out.pdf` (the content
+/// streams that mark text with `/ActualText`), in numbers only: each character spacing (`Tc`) and
+/// word spacing (`Tw`) set, and the widest gap a `TJ` adjustment opens between two glyphs, in
+/// thousandths of the font size. Text, glyph codes and fonts are left out.
+fn drawn_spacing(work: &Path) -> String {
+    use pdfcraft_cos::{DecodeBudget, Document, Object};
+    let Ok(bytes) = std::fs::read(work.join("out.pdf")) else { return "no edited file".to_owned() };
+    let Ok(doc) = Document::open(Arc::new(bytes)) else { return "the edited file does not open".to_owned() };
+    let mut budget = DecodeBudget::page();
+    let (mut tc, mut tw, mut widest, mut wide) = (Vec::<String>::new(), Vec::<String>::new(), 0.0_f64, 0usize);
+    for num in doc.object_numbers().into_iter().take(20_000) {
+        let Ok(o) = doc.try_get(num) else { continue };
+        let Object::Stream(st) = &*o else { continue };
+        let Ok(data) = budget.decode(st) else { continue };
+        if !data.windows(11).any(|w| w == b"/ActualText") {
+            continue;
+        }
+        let mut operands: Vec<f64> = Vec::new();
+        let (mut i, mut in_array, mut array_gaps) = (0usize, false, Vec::<f64>::new());
+        while let Some(&b) = data.get(i) {
+            match b {
+                b'(' => {
+                    // A string: skip it, with its escapes and nested brackets.
+                    let mut depth = 0usize;
+                    while let Some(&c) = data.get(i) {
+                        match c {
+                            b'\\' => i += 1,
+                            b'(' => depth += 1,
+                            b')' => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                b'<' if data.get(i + 1) != Some(&b'<') => {
+                    while data.get(i).is_some_and(|c| *c != b'>') {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                b'[' => {
+                    in_array = true;
+                    array_gaps.clear();
+                    i += 1;
+                }
+                b']' => {
+                    in_array = false;
+                    i += 1;
+                }
+                b'-' | b'+' | b'.' | b'0'..=b'9' => {
+                    let start = i;
+                    while data.get(i).is_some_and(|c| matches!(c, b'-' | b'+' | b'.' | b'0'..=b'9')) {
+                        i += 1;
+                    }
+                    let n = std::str::from_utf8(data.get(start..i).unwrap_or_default()).ok().and_then(|t| t.parse::<f64>().ok());
+                    if let Some(n) = n {
+                        if in_array {
+                            array_gaps.push(n);
+                        } else {
+                            operands.push(n);
+                        }
+                    }
+                }
+                b'a'..=b'z' | b'A'..=b'Z' | b'\'' | b'"' => {
+                    let start = i;
+                    while data.get(i).is_some_and(|c| c.is_ascii_alphabetic() || *c == b'*' || *c == b'\'' || *c == b'"') {
+                        i += 1;
+                    }
+                    let op = data.get(start..i).unwrap_or_default();
+                    let last = operands.last().copied();
+                    match (op, last) {
+                        (b"Tc", Some(v)) if !tc.contains(&format!("{v}")) => tc.push(format!("{v}")),
+                        (b"Tw", Some(v)) if !tw.contains(&format!("{v}")) => tw.push(format!("{v}")),
+                        (b"TJ", _) => {
+                            for g in &array_gaps {
+                                // A negative adjustment moves the next glyph right: a gap.
+                                if -g > widest {
+                                    widest = -g;
+                                }
+                                if -g > 250.0 {
+                                    wide += 1;
+                                }
+                            }
+                            array_gaps.clear();
+                        }
+                        _ => {}
+                    }
+                    operands.clear();
+                }
+                b'/' => {
+                    i += 1;
+                    while data.get(i).is_some_and(|c| !c.is_ascii_whitespace() && !b"/[]()<>".contains(c)) {
+                        i += 1;
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    tc.truncate(8);
+    tw.truncate(8);
+    format!("drawn with Tc {}, Tw {}, widest TJ gap {widest:.0}, gaps over 250: {wide}", tc.join("/"), tw.join("/"))
 }
 
 /// One document's result.
