@@ -1787,8 +1787,11 @@ fn splice_with_marker(
 /// in order, on character boundaries, from the block's runs, or else the edit's own.
 /// Word squeezes a short run, such as the colon after a number in a table cell, with negative
 /// character spacing. Text typed into that run must not inherit it: each new glyph would draw
-/// over the one before, and the row, measured that narrow, would not wrap in its cell. A run
-/// that now holds more characters than it showed draws them at no extra spacing.
+/// over the one before, and the row, measured that narrow, would not wrap in its cell. Nor must a
+/// run that lost characters: Word's spacing fits the glyphs it drew, and the colon left of a
+/// squeezed ` :` would measure narrower than nothing and land on the number before it. A run that
+/// now holds more or fewer characters than it showed draws them at no extra spacing, and so does
+/// one squeezed by a fifth of an em or more, which is no tracking but glyphs drawn over each other.
 fn unsqueeze_typed_runs(lines: &mut [TextLine], spans: &[(std::ops::Range<usize>, usize)], draft: &str) {
     let mut counts: HashMap<usize, usize> = HashMap::new();
     for (range, index) in spans {
@@ -1799,7 +1802,7 @@ fn unsqueeze_typed_runs(lines: &mut [TextLine], spans: &[(std::ops::Range<usize>
     for (index, count) in counts {
         if let Some(line) = lines.get_mut(index)
             && line.origin.state.char_spacing < 0.0
-            && count > line.text.chars().count()
+            && (count != line.text.chars().count() || line.origin.state.char_spacing <= -0.2 * line.size)
         {
             line.origin.state.char_spacing = 0.0;
         }
