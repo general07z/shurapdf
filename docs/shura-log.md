@@ -60,17 +60,15 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #56 | Bold off a bold Arabic paragraph changed its font and leading | it fell back to the standard font, not the installed regular face | `bold_off_uses_the_installed_regular_face_of_the_paragraph_font` |
 | #57 | A paragraph edited twice read back as its first row (justified-arabic) | the paragraph marker opened inside the first row's `/ActualText` span | `an_arabic_paragraph_edited_twice_reads_back_whole` |
 | #58 | Digits typed into a table cell drawn on top of each other (merged-table-page-break) | typed text inherited Word's negative character spacing | `text_typed_into_a_squeezed_run_is_not_squeezed` |
+| #61 | `1:` in a Word table cell opened for editing as `1 :`, and after an edit the colon was drawn over the number, so search failed (merged-table-page-break) | the space and colon Word draws left of the number, in visual order and squeezed, were read as drawn and kept their squeeze | `a_punctuation_run_in_an_arabic_row_reads_right_to_left`, `a_squeezed_colon_is_drawn_left_of_its_number_after_an_edit` |
 
 ## Known problems
 
-- Search for `1 :` in a Word table cell fails, also in the unedited Word PDF: page text reads
-  Word's squeezed space as `1:`. In the shared page-text reader (`crates/render/src/text.rs`);
-  worth an upstream PR.
 - Arabic OCR: the built-in engine reads Latin only. Recommended: Windows OCR.
 - Fidelity runner, editing stage (run 44543440607, `main` after #57–#59, compared with run
   44509927620 before them):
-  - merged-table-page-break: 78 → 20 failures. The 20 left are all "add a word at the start"
-    (`1 :`), the page-text reader problem above.
+  - merged-table-page-break: 78 → 20 failures, all "add a word at the start" (`1 :`): fixed
+    by #61, to recheck on the runner.
   - justified-arabic: the widen failure is gone; the chain now reaches bold and fails there in
     Tahoma ("the bold face was not loaded"). Not yet diagnosed.
   - arabic-labels: still 1 (paragraph 4, Arial, chain: the paragraph was lost). Passes locally
