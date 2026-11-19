@@ -335,9 +335,15 @@ impl LineEditor {
         let bold_face = (l.bold && !o.bold && l.family == o.family && !self.family_chosen && l.italic == o.italic && self.font_resource.is_none())
             .then(|| self.source_font().and_then(|font| self.fonts.bold_faces.get(&font).cloned()))
             .flatten();
+        // Bold off a paragraph Word set in bold: the installed regular face of its font draws it
+        // (Arial Bold → Arial), as the bold face does the other way, rather than a standard font.
+        let regular_face = (!l.bold && o.bold && l.family == o.family && !self.family_chosen && l.italic == o.italic && self.font_resource.is_none())
+            .then(|| self.source_font().and_then(|font| self.fonts.regular_faces.get(&font).cloned()))
+            .flatten();
+        let weight_face = bold_face.or(regular_face);
         let mut style = pdfcraft_engine::BlockStyle {
             resource: self.font_resource.clone(),
-            family: (l.family != o.family || self.family_chosen || (l.bold != o.bold && bold_face.is_none()) || l.italic != o.italic)
+            family: (l.family != o.family || self.family_chosen || (l.bold != o.bold && weight_face.is_none()) || l.italic != o.italic)
                 .then_some((l.family, l.bold, l.italic)),
             size: (self.size_chosen || l.size != o.size).then_some(l.size),
             color: (l.color != o.color).then_some(l.color),
@@ -362,12 +368,12 @@ impl LineEditor {
         // Retyped Arabic in a font Word subset without its joining rules: draw it with the
         // installed copy of that font, so it keeps the document's look, unless another font was
         // chosen. Only for a change: an untouched paragraph stays no edit at all.
-        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default() || bold_face.is_some())
+        if (self.text != self.original || style != pdfcraft_engine::BlockStyle::default() || weight_face.is_some())
             && style.resource.is_none()
             && style.family.is_none()
-            && (bold_face.is_some() || self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
+            && (weight_face.is_some() || self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic) || self.has_new_characters())
         {
-            style.face = bold_face.or_else(|| self.source_font().and_then(|font| self.fonts.faces.get(&font).cloned()));
+            style.face = weight_face.or_else(|| self.source_font().and_then(|font| self.fonts.faces.get(&font).cloned()));
         }
         if let Some(range) = &self.selection
             && (style.family.is_some()
@@ -1632,6 +1638,30 @@ C", &picked
         assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
         // No installed bold face: the standard bold, as before.
         ed.fonts.bold_faces.clear();
+        assert!(ed.style().family.is_some());
+    }
+
+    /// Bold off a paragraph Word set in bold draws it in the installed regular face of its font,
+    /// not in a standard regular font, which has no Arabic letters and drew the paragraph again
+    /// in a stand-in face with another line spacing (it then read back as three paragraphs).
+    #[test]
+    fn bold_off_uses_the_installed_regular_face_of_the_paragraph_font() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        let regular = Arc::new(b"stand-in for an installed regular face".to_vec());
+        ed.fonts.regular_faces.insert(font, regular.clone());
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        ed.look0.bold = true;
+        ed.look.bold = false;
+        let style = ed.style();
+        assert!(style.family.is_none(), "no standard family is asked for");
+        assert!(style.face.is_some_and(|f| Arc::ptr_eq(&f, &regular)), "the installed regular face draws it");
+        // No installed regular face: the standard regular, as before.
+        ed.fonts.regular_faces.clear();
         assert!(ed.style().family.is_some());
     }
 
