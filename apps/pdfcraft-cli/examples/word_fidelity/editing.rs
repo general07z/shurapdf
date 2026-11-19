@@ -9,8 +9,9 @@
 //!
 //! A real document's failures are reported by kind and count, and each with where it happened
 //! (page, paragraph number, font, kind of edit) and, for a search failure, which kinds of
-//! character the searched words hold and whether the unedited document finds them: its text
-//! never reaches the summary.
+//! character the searched words hold, whether the unedited document finds them, how often each
+//! word is found alone and how the edited page reads them (other spacing, reversed, characters
+//! missing by kind): its text never reaches the summary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -222,7 +223,7 @@ fn searched(new: &str) -> String {
 /// What a search failure can say about a real document without quoting it: the kinds of
 /// character in the searched words, in order, each run of one kind named once (`Arabic, space,
 /// digit`), and whether the unedited document (`in.pdf` in `work`) finds them.
-fn search_note(work: &Path, new: &str) -> String {
+fn search_note(work: &Path, page: usize, new: &str) -> String {
     let tail = searched(new);
     let kind = |c: char| match c {
         ' ' => "space",
@@ -250,7 +251,76 @@ fn search_note(work: &Path, new: &str) -> String {
         Ok(n) => format!("found {n} times in the unedited document"),
         Err(_) => "the unedited document could not be searched".to_owned(),
     };
-    format!("searched {}; {unedited}", kinds.join(", "))
+    format!("searched {}; {unedited}; {}", kinds.join(", "), after_edit(work, page, new, &tail))
+}
+
+/// How the edited page (`out.pdf` in `work`) reads where the edited paragraph is, against the
+/// searched words `tail`, in counts and yes or no only: how often each searched word is found
+/// alone, and whether the page's text over the paragraph holds the words with other spacing,
+/// reversed, or which kinds of character it lacks.
+fn after_edit(work: &Path, page: usize, new: &str, tail: &str) -> String {
+    let Ok((mut auto, doc, _)) = open(work, "out.pdf") else { return "the edited document could not be opened".to_owned() };
+    let words: Vec<String> = tail
+        .split(' ')
+        .map(|w| {
+            let n = tool(&mut auto, "text_find", json!({ "doc": doc, "query": w }))
+                .ok()
+                .and_then(|f| f.get("count").and_then(Value::as_u64))
+                .unwrap_or(0);
+            n.to_string()
+        })
+        .collect();
+    let want = norm(new);
+    let rect = tool(&mut auto, "text_paragraphs", json!({ "doc": doc, "page": page })).ok().and_then(|listed| {
+        listed.get("paragraphs")?.as_array()?.iter().find_map(|p| {
+            let text = norm(p.get("editor_text")?.as_str()?);
+            (text == want || text.contains(&want)).then(|| p.get("rect").cloned()).flatten()
+        })
+    });
+    let Some(rect) = rect else { return format!("each word found {} times; the paragraph is not listed", words.join(", ")) };
+    let read = tool(&mut auto, "text_extract", json!({ "doc": doc, "pages": [page], "rect": rect }))
+        .ok()
+        .and_then(|e| e.get("pages")?.as_array()?.first()?.get("text")?.as_str().map(norm))
+        .unwrap_or_default();
+    let squeeze = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let reversed: String = tail.chars().rev().collect();
+    let how = if read.contains(tail) {
+        "the page text over the paragraph holds them".to_owned()
+    } else if squeeze(&read).contains(&squeeze(tail)) {
+        "the page text over the paragraph holds them with other spacing".to_owned()
+    } else if read.contains(&reversed) || squeeze(&read).contains(&squeeze(&reversed)) {
+        "the page text over the paragraph holds them reversed".to_owned()
+    } else {
+        let mut have: Vec<char> = read.chars().collect();
+        let mut missing: Vec<&str> = Vec::new();
+        for c in tail.chars().filter(|c| !c.is_whitespace()) {
+            match have.iter().position(|h| *h == c) {
+                Some(i) => {
+                    have.swap_remove(i);
+                }
+                None => {
+                    let k = if c.is_ascii_digit() {
+                        "digit"
+                    } else if c.is_alphabetic() && c.is_ascii() {
+                        "Latin"
+                    } else if c.is_alphabetic() {
+                        "Arabic"
+                    } else {
+                        "punctuation"
+                    };
+                    if !missing.contains(&k) {
+                        missing.push(k);
+                    }
+                }
+            }
+        }
+        if missing.is_empty() {
+            "the page text over the paragraph holds their characters in another order".to_owned()
+        } else {
+            format!("the page text over the paragraph lacks some {} characters", missing.join(", "))
+        }
+    };
+    format!("each word found {} times; {how}", words.join(", "))
 }
 
 /// One document's result.
@@ -416,7 +486,7 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                             Err((kind, detail)) => {
                                 let mut place = format!("page {page}, paragraph {number}, {label}, {variant}");
                                 if kind == "not found by search" {
-                                    place = format!("{place}: {}", search_note(work, &new));
+                                    place = format!("{place}: {}", search_note(work, *page, &new));
                                 }
                                 outcome.failures.push((kind, format!("{place}: {detail}"), place));
                             }
