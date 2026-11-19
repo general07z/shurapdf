@@ -378,7 +378,74 @@ fn after_edit(work: &Path, page: usize, new: &str, tail: &str) -> String {
             format!("the page text over the paragraph lacks some {} characters", missing.join(", "))
         }
     };
-    format!("each word found {} times; {how}; {}", words.join(", "), drawn_spacing(work))
+    format!("each word found {} times; {how}; {}; {}", words.join(", "), drawn_spacing(work), glyphs_at_breaks(work, page, tail))
+}
+
+/// The two glyphs on either side of each word break the page reader puts inside the searched
+/// words `tail` on the edited page, in numbers only, as fractions of the second glyph's height:
+/// the horizontal gap between their boxes (negative where they overlap), the step between their
+/// bottoms, and the ratio of their heights. At most four.
+fn glyphs_at_breaks(work: &Path, page: usize, tail: &str) -> String {
+    let Ok(bytes) = std::fs::read(work.join("out.pdf")) else { return "no glyphs".to_owned() };
+    let mut renderer = PageRenderer::new(Arc::new(bytes), RenderConfig::default());
+    let request = RenderRequest { page: page.saturating_sub(1), kind: RequestKind::Text, tile: None, scale: 1.0, tag: 0, preview: false };
+    let Some(text) = renderer.render(request).text else { return "no glyphs".to_owned() };
+    // The page's glyphs that are not blank, with whether the reader breaks a word before each.
+    let mut seq: Vec<(usize, bool)> = Vec::new();
+    let mut pending = false;
+    for (i, g) in text.glyphs.iter().enumerate() {
+        let brk = text.space_before.get(i).copied().unwrap_or(false) || (i > 0 && text.line_of.get(i) != text.line_of.get(i - 1));
+        if g.text.chars().all(char::is_whitespace) {
+            pending = true;
+            continue;
+        }
+        seq.push((i, brk || pending));
+        pending = false;
+    }
+    let want: Vec<char> = tail.chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<(usize, char, bool)> = seq
+        .iter()
+        .flat_map(|&(i, brk)| {
+            text.glyphs.get(i).map(|g| g.text.chars().enumerate().map(move |(k, c)| (i, c, brk && k == 0)).collect::<Vec<_>>()).unwrap_or_default()
+        })
+        .collect();
+    let Some(at) = (0..=chars.len().saturating_sub(want.len()))
+        .find(|&s| chars.get(s..s + want.len()).is_some_and(|w| w.iter().map(|x| x.1).eq(want.iter().copied())))
+    else {
+        return "the glyphs are not in reading order".to_owned();
+    };
+    let mut typed_gap = vec![false; want.len()];
+    let (mut k, mut space) = (0, false);
+    for c in tail.chars() {
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if let Some(g) = typed_gap.get_mut(k) {
+            *g = space && k > 0;
+        }
+        space = false;
+        k += 1;
+    }
+    let mut out = Vec::new();
+    for k in 1..want.len() {
+        let (Some(&(pi, _, _)), Some(&(ci, _, brk))) = (chars.get(at + k - 1), chars.get(at + k)) else { continue };
+        if !brk || typed_gap.get(k).copied().unwrap_or(false) || pi == ci {
+            continue;
+        }
+        let (Some(p), Some(c)) = (text.glyphs.get(pi), text.glyphs.get(ci)) else { continue };
+        let h = (c.rect[3] - c.rect[1]).max(0.01);
+        let gap = if c.rect[0] >= p.rect[0] { c.rect[0] - p.rect[2] } else { p.rect[0] - c.rect[2] };
+        out.push(format!(
+            "gap {:.2}, step {:.2}, height ratio {:.2}, drawn {} apart",
+            gap / h,
+            (c.rect[3] - p.rect[3]) / h,
+            h / (p.rect[3] - p.rect[1]).max(0.01),
+            ci.abs_diff(pi)
+        ));
+    }
+    out.truncate(4);
+    if out.is_empty() { "no break inside the words".to_owned() } else { format!("at the breaks: {}", out.join("; ")) }
 }
 
 /// The spacing the edit drew with, from the shaped runs it wrote into `out.pdf` (the content
