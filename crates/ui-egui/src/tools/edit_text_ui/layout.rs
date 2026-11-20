@@ -471,36 +471,48 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
 /// an OCR layer whose every word has its own size), and stretching each run to its width still let
 /// every word boundary drift, so a drag over one word selected another two words along.
 ///
-/// A word takes its `ink` box when the run's words and boxes pair up, else the run's box spans all
-/// its words. Within a word the stand-in's proportions are kept; spaces fill the gaps between
-/// words. A row with a character this can't place, or with boxes out of reading order, is left as
-/// laid out.
+/// Words and characters are paired with the page's boxes in the order they are seen, left to
+/// right: the order the galley's own layout put them in, right-to-left runs included. (Pairing
+/// them in typing order laid an Arabic line out mirrored: a click on its first word, on the right,
+/// selected its last.) A word takes its `ink` box when the run's words and boxes pair up, else the
+/// run's box spans all its words. Within a word the stand-in's proportions are kept; spaces fill
+/// the gaps between words. A row with a character this can't place is left as laid out.
 fn place_on_source_words(g: &mut egui::Galley, block: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine], text: &str, scale: f32) {
     let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
     let chars: Vec<char> = text.chars().collect();
     let x = |user: f64| ((user - block.rect[0]) * f64::from(scale)) as f32;
-    // Each character's glyph advance, in the galley's character order (a newline has no glyph).
+    // Each character's glyph advance and where the galley's layout put it, in the galley's
+    // character order (a newline has no glyph).
     let mut advance = vec![0.0f32; chars.len()];
+    let mut laid = vec![0.0f32; chars.len()];
     let mut at = 0usize;
     for placed in &g.rows {
-        for (glyph, slot) in placed.row.glyphs.iter().zip(advance.iter_mut().skip(at)) {
-            *slot = glyph.advance_width.max(0.0);
+        for (i, glyph) in placed.row.glyphs.iter().enumerate() {
+            if let (Some(a), Some(l)) = (advance.get_mut(at + i), laid.get_mut(at + i)) {
+                *a = glyph.advance_width.max(0.0);
+                *l = placed.pos.x + glyph.pos.x;
+            }
         }
         at = at.saturating_add(placed.row.glyphs.len()).saturating_add(usize::from(placed.ends_with_newline));
     }
     if at != chars.len() {
         return;
     }
+    // Characters in the order they are seen, left to right.
+    let seen = |mut range: Vec<usize>| {
+        range.sort_by(|p, q| laid.get(*p).copied().unwrap_or(0.0).total_cmp(&laid.get(*q).copied().unwrap_or(0.0)));
+        range
+    };
     // Where each character goes: its left edge and width, in galley coordinates.
     let mut target: Vec<Option<(f32, f32)>> = vec![None; chars.len()];
-    let place = |range: std::ops::Range<usize>, left: f32, right: f32, target: &mut [Option<(f32, f32)>]| {
-        let natural: f32 = advance.get(range.clone()).map_or(0.0, |a| a.iter().sum());
-        let count = range.len().max(1) as f32;
+    let place = |order: &[usize], left: f32, right: f32, target: &mut [Option<(f32, f32)>]| {
+        let natural: f32 = order.iter().filter_map(|i| advance.get(*i)).sum();
+        let count = order.len().max(1) as f32;
         let mut pos = left;
-        for i in range {
-            let share = if natural > 0.0 { advance.get(i).copied().unwrap_or(0.0) / natural } else { 1.0 / count };
+        for i in order {
+            let share = if natural > 0.0 { advance.get(*i).copied().unwrap_or(0.0) / natural } else { 1.0 / count };
             let width = ((right - left) * share).max(0.0);
-            if let Some(slot) = target.get_mut(i) {
+            if let Some(slot) = target.get_mut(*i) {
                 *slot = Some((pos, width));
             }
             pos += width;
@@ -524,11 +536,17 @@ fn place_on_source_words(g: &mut egui::Galley, block: &pdfcraft_engine::TextBloc
         }
         let (Some(head), Some(tail)) = (words.first().cloned(), words.last().cloned()) else { continue };
         if line.ink.len() == words.len() {
-            for (word, ink) in words.iter().zip(&line.ink) {
-                place(word.clone(), x(ink[0]), x(ink[2]), &mut target);
+            // Words left to right, by where the layout put their leftmost character.
+            let leftmost = |w: &std::ops::Range<usize>| w.clone().filter_map(|i| laid.get(i).copied()).fold(f32::INFINITY, f32::min);
+            let mut by_x: Vec<&std::ops::Range<usize>> = words.iter().collect();
+            by_x.sort_by(|p, q| leftmost(p).total_cmp(&leftmost(q)));
+            let mut boxes: Vec<&[f64; 4]> = line.ink.iter().collect();
+            boxes.sort_by(|p, q| p[0].total_cmp(&q[0]));
+            for (word, ink) in by_x.into_iter().zip(boxes) {
+                place(&seen(word.clone().collect()), x(ink[0]), x(ink[2]), &mut target);
             }
         } else {
-            place(head.start..tail.end, x(line.rect[0]), x(line.rect[2]), &mut target);
+            place(&seen((head.start..tail.end).collect()), x(line.rect[0]), x(line.rect[2]), &mut target);
         }
     }
     let mut first = 0usize;
@@ -538,8 +556,8 @@ fn place_on_source_words(g: &mut egui::Galley, block: &pdfcraft_engine::TextBloc
         first = range.end.saturating_add(usize::from(placed.ends_with_newline));
         let Some(mut spots) = target.get(range.clone()).map(<[_]>::to_vec) else { continue };
         let row_chars = chars.get(range).unwrap_or_default();
-        // Spaces between two placed characters share the gap between them; at the row's ends
-        // they sit against the nearest placed character.
+        // Spaces between two placed characters share the gap between them, whichever side each
+        // is on; at the row's ends they sit against the nearest placed character.
         let mut i = 0;
         while i < spots.len() {
             if spots.get(i).is_some_and(Option::is_some) {
@@ -553,22 +571,26 @@ fn place_on_source_words(g: &mut egui::Galley, block: &pdfcraft_engine::TextBloc
             if row_chars.get(from..i).is_none_or(|c| !c.iter().all(|c| c.is_whitespace())) {
                 break;
             }
-            let left = from.checked_sub(1).and_then(|p| spots.get(p).copied().flatten()).map(|(at, w)| at + w);
-            let right = spots.get(i).copied().flatten().map(|(at, _)| at);
-            let (left, right) = match (left, right) {
-                (Some(l), Some(r)) => (l, r.max(l)),
-                (Some(l), None) => (l, l),
-                (None, Some(r)) => (r, r),
+            let before = from.checked_sub(1).and_then(|p| spots.get(p).copied().flatten());
+            let after = spots.get(i).copied().flatten();
+            // The gap and the way the spaces run across it: left to right when the character
+            // before them is on the left.
+            let (left, right, rightwards) = match (before, after) {
+                (Some(b), Some(a)) if b.0 <= a.0 => (b.0 + b.1, a.0.max(b.0 + b.1), true),
+                (Some(b), Some(a)) => (a.0 + a.1, b.0.max(a.0 + a.1), false),
+                (Some(b), None) => (b.0 + b.1, b.0 + b.1, true),
+                (None, Some(a)) => (a.0, a.0, true),
                 (None, None) => break,
             };
             let width = (right - left) / (i - from) as f32;
             for (k, spot) in spots.iter_mut().enumerate().take(i).skip(from) {
-                *spot = Some((left + width * (k - from) as f32, width));
+                let n = if rightwards { k - from } else { i - 1 - k };
+                *spot = Some((left + width * n as f32, width));
             }
         }
         let placed_all: Option<Vec<(f32, f32)>> = spots.into_iter().collect();
         let Some(spots) = placed_all else { continue };
-        if spots.iter().any(|(at, w)| !at.is_finite() || !w.is_finite()) || spots.windows(2).any(|p| p[1].0 + 0.01 < p[0].0) {
+        if spots.iter().any(|(at, w)| !at.is_finite() || !w.is_finite()) {
             continue;
         }
         for (glyph, (at, width)) in row.glyphs.iter_mut().zip(spots) {

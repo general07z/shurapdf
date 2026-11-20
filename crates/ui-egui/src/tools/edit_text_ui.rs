@@ -246,20 +246,37 @@ impl Default for Extras {
     }
 }
 
+/// The family a PDF font name or face name names, as the font list shows it: no subset tag, style
+/// or `MT` ending (`BCDFEE+Arial-BoldMT` → `Arial`, `Tajawal-Bold` → `Tajawal`,
+/// `TraditionalArabic,Bold` → `TraditionalArabic`, `Arial Bold` → `Arial`). Bold and italic are
+/// the format buttons' to show: a paragraph made bold keeps the name of its font.
+pub(crate) fn family_shown(name: &str) -> String {
+    let name = pdfcraft_engine::strip_subset_tag(name);
+    let mut base = name.split(',').next().unwrap_or(name).trim();
+    const ENDINGS: [&str; 12] = ["psmt", "mt", "bolditalic", "boldoblique", "bold", "italic", "oblique", "regular", "-", " ", "_", ","];
+    while let Some(shorter) = ENDINGS.iter().find_map(|e| {
+        let cut = base.len().checked_sub(e.len())?;
+        (base.is_char_boundary(cut) && base.get(cut..)?.eq_ignore_ascii_case(e)).then(|| base.get(..cut)).flatten().filter(|b| !b.trim().is_empty())
+    }) {
+        base = shorter;
+    }
+    base.to_string()
+}
+
 impl LineEditor {
     /// What Format text's font list shows: the chosen page font, a standard family picked
     /// instead, or the paragraph's own font (its `/BaseFont` without the subset tag).
     pub(crate) fn font_shown(&self, sources: &[(String, String)]) -> String {
         if let Some(face) = self.font_resource.as_ref().and_then(|r| sources.iter().find(|(res, _)| res == r)).map(|(_, face)| face) {
-            return face.clone();
+            return family_shown(face);
         }
         if self.look.family != self.look0.family || self.family_chosen {
             return self.look.family.label().to_string();
         }
         let base = self.source.as_ref().map(|(block, _)| block.base_font.as_str()).unwrap_or_default();
         // "ABCDEF+Calibri" is a subset of Calibri.
-        let name = pdfcraft_engine::strip_subset_tag(base);
-        if name.is_empty() { tl!("Keep source fonts").to_string() } else { name.to_string() }
+        let name = family_shown(base);
+        if name.is_empty() { tl!("Keep source fonts").to_string() } else { name }
     }
 
     /// A standard family picked from the font list, replacing the paragraph's font even when it
@@ -487,19 +504,19 @@ impl LineEditor {
 
         let line_font = |l: &pdfcraft_engine::TextLine| -> String {
             if let Some((_, face)) = sources.iter().find(|(res, _)| res == &l.font) {
-                return face.clone();
+                return family_shown(face);
             }
             let base = l.base_font.as_str();
             let name = pdfcraft_engine::strip_subset_tag(base);
             if let Some((_, face)) = sources.iter().find(|(_, face)| face.as_str() == name) {
-                return face.clone();
+                return family_shown(face);
             }
             let look = look_of_line(l);
             let lower = name.to_ascii_lowercase();
             if ["times", "serif", "roman", "courier", "helvetica", "arial"].iter().any(|s| lower.contains(s)) {
                 return look.family.label().to_string();
             }
-            if name.is_empty() { tl!("Keep source fonts").to_string() } else { name.to_string() }
+            if name.is_empty() { tl!("Keep source fonts").to_string() } else { family_shown(name) }
         };
 
         let first_font = line_font(first);
@@ -1600,6 +1617,59 @@ C", &picked
         (app, ed)
     }
 
+    /// The report: in an Arabic paragraph opened for editing, selecting a word selected another.
+    /// The unseen galley that takes the clicks was laid over the page's words in typing order,
+    /// left to right, so it mirrored a right-to-left row: a click on the first word, at the right,
+    /// landed on the last.
+    #[test]
+    fn a_click_on_an_arabic_word_lands_on_that_word() {
+        if pdfcraft_fonts::ui_arabic_fonts().is_empty() {
+            eprintln!("skipping: no Arabic interface face (set CRAFT_FONTS_DIR)");
+            return;
+        }
+        let (mut app, mut ed) = preview_app();
+        let id = app.views[0].id;
+        let typed = "سلام عليكم يا صديقي العزيز";
+        app.session.apply(id, pdfcraft_engine::Edit::EditTextBlock { page: 0, block: 0, text: typed.into(), style: Default::default() }).unwrap();
+        let doc = app.session.get(id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        ed.text = block.editor_text.clone();
+        ed.original = ed.text.clone();
+        ed.look = look_of(&block);
+        ed.look0 = ed.look.clone();
+        ed.source = Some((block.clone(), lines.clone()));
+        let row = lines.iter().find(|l| l.text.starts_with("سلام")).expect("the first row").rect;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::font_definitions());
+        let scale = 2.0f32;
+        let width = ((block.rect[2] - block.rect[0]) as f32) * scale + 4.0;
+        let mut hits = Vec::new();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let galley = layout::editor_galley(ui, &ed, &ed.text, scale, width);
+            let y = galley.rows.first().map_or(0.0, |r| r.pos.y + r.size.y / 2.0);
+            for user_x in [row[2] - 2.0, row[0] + 2.0] {
+                let x = (user_x - block.rect[0]) as f32 * scale;
+                let index: usize = galley.cursor_from_pos(egui::vec2(x, y)).index.into();
+                hits.push(index);
+            }
+        })
+        .drop_without_applying_deltas();
+        let word = |i: usize| {
+            ed.text
+                .chars()
+                .collect::<Vec<_>>()
+                .split(|c| c.is_whitespace())
+                .scan(0usize, |at, w| {
+                    let r = *at..*at + w.len();
+                    *at += w.len() + 1;
+                    Some(r)
+                })
+                .position(|r| r.start <= i && i <= r.end)
+        };
+        assert_eq!(word(hits[0]), Some(0), "the right edge of the row is its first word: {hits:?} in {:?}", ed.text);
+        assert_eq!(word(hits[1]), Some(3), "the left edge of the first row is its last word: {hits:?} in {:?}", ed.text);
+    }
+
     /// Retyped Arabic carries the installed copy of the paragraph's font, so the rewrite keeps the
     /// document's look, as does text with characters its font never drew; an untouched paragraph, text it can already draw or another chosen font don't.
     #[test]
@@ -1626,6 +1696,30 @@ C", &picked
         ed.text = "الموضوع".into();
         ed.choose_family(pdfcraft_engine::FontFamily::Times);
         assert_eq!(ed.style().face, None, "a chosen font wins");
+    }
+
+    /// The report: Bold changed the font list from Arial to `Arial-BoldMT`, as if another font had
+    /// been chosen. The list names the family; the Bold button shows the weight.
+    #[test]
+    fn the_font_list_names_the_family_whatever_its_weight() {
+        for (name, family) in [
+            ("BCDFEE+ArialMT", "Arial"),
+            ("Arial-BoldMT", "Arial"),
+            ("Arial Bold", "Arial"),
+            ("Tajawal-Bold", "Tajawal"),
+            ("Tajawal-Regular", "Tajawal"),
+            ("TraditionalArabic,Bold", "TraditionalArabic"),
+            ("TimesNewRomanPS-BoldItalicMT", "TimesNewRomanPS"),
+            ("Sakkal Majalla", "Sakkal Majalla"),
+            ("Regular", "Regular"),
+            ("", ""),
+        ] {
+            assert_eq!(family_shown(name), family, "{name}");
+        }
+        let (_, mut ed) = preview_app();
+        ed.font_resource = Some("PCFull3".into());
+        let sources = [("PCFull3".to_string(), "Arial-BoldMT".to_string())];
+        assert_eq!(ed.font_shown(&sources), "Arial");
     }
 
     /// Bold on a paragraph whose font has an installed bold face draws it in that face, and does
