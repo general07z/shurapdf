@@ -64,7 +64,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #64 | Searching after an edit in an installed face failed in paragraphs with an email or web address (private-1: 21 of its 22 search failures) | Word draws the space after a paragraph as a run of its own, which belonged to no paragraph: the rewrite kept it, the wider row was drawn over it, and the page reader read it inside a word (`20 26`) | `a_rewritten_row_takes_its_trailing_space_run_with_it` |
 | #66 | A blank run on a rewritten row's baseline but more than one em away, or at another size, stayed under the wider row | #64 took only a blank within one em and at the same size; now any blank on the row's baseline goes with it unless other text lies between. It did not reach private-1's 7 failures it was aimed at (run 44682679636: unchanged) | `a_rewritten_row_takes_a_far_trailing_space_run_with_it`, `a_space_run_beside_other_text_stays_when_a_row_is_rewritten` |
 | #67 | Search after an edit in Arial or Tahoma failed in two private-1 paragraphs (7 of its 9 search failures): a blank glyph lay inside the typed words (`2026` read as `2 026`) | Found with this PR's new fidelity detail (run 44688480324): the blank was on the page before the edit, in no paragraph, at the middle of the row the edit added. The paragraph grew a row over the line below, where Word draws an empty paragraph's mark as a blank at its alignment point, and the rewrite kept it. Now the styled rewrite drops every blank-only run its drawn rows cover | `a_new_row_takes_the_blank_it_is_drawn_over` |
-| this PR | Bold in a chain of edits "did not load" its Bold face (justified-arabic in Tahoma on the runner; locally in FreeSerif) | every shaped edit adds a font resource for its own glyph map, sharing the face's program; the editor's font list decoded and counted that program once per resource against its 32 MiB allowance, so after a few edits in a large face the Bold no longer fit and was left out of the list. Now a `PCFull` resource sharing a program already listed reuses its bytes, uncounted | `a_face_loaded_after_many_edits_is_listed` |
+| #70 | Bold in a chain of edits "did not load" its Bold face (justified-arabic in Tahoma on the runner; locally in FreeSerif) | every shaped edit adds a font resource for its own glyph map, sharing the face's program; the editor's font list decoded and counted that program once per resource against its 32 MiB allowance, so after a few edits in a large face the Bold no longer fit and was left out of the list. Now a `PCFull` resource sharing a program already listed reuses its bytes, uncounted | `a_face_loaded_after_many_edits_is_listed` |
 
 ## Known problems
 
@@ -74,7 +74,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   - merged-table-page-break: 78 → 20 failures, all "add a word at the start" (`1 :`); 0 after
     #61 (run 44566311034).
   - justified-arabic: the widen failure is gone; the chain now reaches bold and fails there in
-    Tahoma ("the bold face was not loaded"): the font list's allowance, fixed in this PR (to
+    Tahoma ("the bold face was not loaded"): the font list's allowance, fixed in #70 (to
     confirm on the runner).
   - arabic-labels: still 1 (paragraph 4, Arial, chain): lost after the second edit, which
     leaves the paragraph without its leading Latin label "Site:" (run 44714354245). Passes
