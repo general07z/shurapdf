@@ -29,26 +29,55 @@ pub(super) fn builtin_thai_choice(fonts: &Dict) -> String {
 }
 
 pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFont>, EditError> {
+    text_editor_fonts_within(doc, page, 32 << 20)
+}
+
+/// The full program a font this app embedded (`PCFull…`) draws with: the `/FontFile2` or
+/// `/FontFile3` reference its descriptor holds. Each shaped edit adds such a resource for its own
+/// glyph map, all sharing the one program (`pdfcraft_fonts::embedding`).
+fn shared_program(doc: &Document, name: &[u8], font: &Dict) -> Option<Object> {
+    if !name.starts_with(b"PCFull") {
+        return None;
+    }
+    let descendant = font.get(b"DescendantFonts").and_then(|o| doc.resolve(o).as_array().and_then(|a| a.first()).cloned())?;
+    let descriptor = doc.dict(&descendant).and_then(|d| d.get(b"FontDescriptor").and_then(|o| doc.dict(o)))?;
+    descriptor.get(b"FontFile2").or_else(|| descriptor.get(b"FontFile3")).filter(|p| matches!(p, Object::Ref(_))).cloned()
+}
+
+/// [`text_editor_fonts`] with `budget` bytes of programs to list.
+pub(crate) fn text_editor_fonts_within(doc: &Document, page: usize, budget: usize) -> Result<Vec<TextEditorFont>, EditError> {
     let p = page_dict(doc, page)?;
     let resources = p.dict.get(b"Resources").and_then(|o| doc.dict(o)).unwrap_or_default();
     let fonts = resources.get(b"Font").and_then(|o| doc.dict(o)).unwrap_or_default();
-    let mut budget = 32_usize << 20;
+    let mut budget = budget;
     // Every program decoded counts, usable or not, so aliases of one program can't repeat the work.
     let mut decode = DecodeBudget::new(2 * budget, 0);
-    let mut result = Vec::new();
+    let mut result: Vec<TextEditorFont> = Vec::new();
+    // The programs already listed, with the entry that holds their bytes. A resource sharing one
+    // is listed with those bytes, neither decoded nor counted again: counted once per resource,
+    // the edits of one paragraph in a large face used the whole allowance, and a face loaded
+    // after them (its Bold) was left out of the list as if it had never loaded.
+    let mut listed: Vec<(Object, usize)> = Vec::new();
     for (name, font) in fonts.iter().take(128) {
         let Some(font) = doc.dict(font) else { continue };
+        let program = shared_program(doc, name, &font);
+        let face = pdfcraft_fonts::pdf::base_font_name(doc, &font).rsplit('+').next().unwrap_or_default().to_owned();
+        let resource = String::from_utf8_lossy(name).into_owned();
+        if let Some(bytes) =
+            program.as_ref().and_then(|p| listed.iter().find(|(q, _)| q == p)).and_then(|(_, i)| result.get(*i)).map(|f| f.bytes.clone())
+        {
+            result.push(TextEditorFont { resource, face, bytes, choice_only: false });
+            continue;
+        }
         let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt_within(doc, &font, &mut decode) else { continue };
         if bytes.len() > budget {
             continue;
         }
         budget -= bytes.len();
-        result.push(TextEditorFont {
-            resource: String::from_utf8_lossy(name).into_owned(),
-            face: pdfcraft_fonts::pdf::base_font_name(doc, &font).rsplit('+').next().unwrap_or_default().to_owned(),
-            bytes,
-            choice_only: false,
-        });
+        if let Some(program) = program {
+            listed.push((program, result.len()));
+        }
+        result.push(TextEditorFont { resource, face, bytes, choice_only: false });
     }
     // The approved full face follows all source subsets in the editor's font stack. It can
     // display newly inserted glyphs before Apply without changing the source text's face.

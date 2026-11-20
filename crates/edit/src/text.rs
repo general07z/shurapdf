@@ -44,6 +44,8 @@ pub use blocks::{
     replace_block, text_blocks,
 };
 use blocks::{kept_words, paragraph_separator, row_break};
+#[cfg(test)]
+pub(crate) use editor::text_editor_fonts_within;
 pub use editor::{TextEditLayout, TextEditorFont, register_text_font, text_edit_layout, text_editor_fonts};
 use editor::{builtin_thai_choice, layout_draft};
 use fallback::{

@@ -8861,6 +8861,38 @@ fn a_new_row_takes_the_blank_it_is_drawn_over() {
     assert!(!content.contains("( ) Tj"), "the blank under the new row goes: {content}");
 }
 
+/// Fidelity runs (justified-arabic, Tahoma; locally FreeSerif): after a paragraph was edited a few
+/// times in an installed face, loading its Bold "did not load". Each edit adds a resource sharing
+/// the face's program, and the editor's font list counted the program once per resource, until
+/// the Bold no longer fit in its allowance.
+#[test]
+fn a_face_loaded_after_many_edits_is_listed() {
+    let Some(regular) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // A second face loaded afterwards, as a Bold is.
+    let bold = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET");
+    let face = text::register_text_font(&mut doc, 0, &regular).unwrap();
+    // Edit until the resources sharing the face, counted once each, hold more than both faces.
+    let aliases = |doc: &Document| text::text_editor_fonts(doc, 0).unwrap().iter().filter(|f| f.bytes.len() == regular.len()).count();
+    let mut n = 0;
+    while aliases(&doc) * regular.len() <= regular.len() + bold.len() + 1024 && n < 60 {
+        n += 1;
+        let typed = format!("سم {}", "١".repeat(n));
+        let style = text::BlockStyle { resource: Some(face.clone()), ..Default::default() };
+        text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    }
+    let aliases = aliases(&doc);
+    assert!(aliases * regular.len() > regular.len() + bold.len() + 1024, "the edits added resources sharing the face: {aliases}");
+    let loaded = text::register_text_font(&mut doc, 0, bold).unwrap();
+    // Room for each program once, not once per resource.
+    let listed = text::text_editor_fonts_within(&doc, 0, regular.len() + bold.len() + 1024).unwrap();
+    assert!(listed.iter().any(|f| f.resource == loaded), "the Bold is listed: {:?}", listed.iter().map(|f| &f.resource).collect::<Vec<_>>());
+    assert_eq!(listed.iter().filter(|f| f.bytes.len() == regular.len()).count(), aliases, "every alias is still listed");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
