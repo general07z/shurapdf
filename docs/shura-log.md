@@ -74,11 +74,14 @@ PR numbers are `general07z/shurapdf` pull requests.
     Tahoma ("the bold face was not loaded"). Not yet diagnosed.
   - arabic-labels: still 1 (paragraph 4, Arial, chain: the paragraph was lost). Passes locally
     with DejaVu Sans, so it depends on Arial's metrics. Not yet diagnosed.
-  - private-1: still 25 (search 22, lost paragraph 2, second edit 1); private-pdf-1: still 2 (lost
-    paragraph). #57 and #58 did not reach their causes. Diagnosed with #63's content-free details:
-    21 search failures fixed by #64 (to confirm on the runner); one (page 2, paragraph 4, Tahoma,
-    punctuation) reads the typed characters in another order, and one (own font) is not yet
-    diagnosed.
+  - private-1: 25 before #64; 12 after it (run 44642509383: search 9, lost paragraph 2, second
+    edit 1). private-pdf-1: still 2 (lost paragraph). Of the 9 search failures, 7 (Arial and
+    Tahoma, a paragraph with brackets and digits and one with an email address) still show a
+    blank glyph drawn inside the typed words, so #64 did not catch every trailing space run;
+    one (page 2, paragraph 4, Tahoma, punctuation) reads the typed characters in another order;
+    one (page 2, paragraph 10, own font) has its glyphs out of reading order. Lost paragraphs
+    (page 1, paragraph 4, Arial and Sakkal Majalla, chain) and the second edit (same paragraph,
+    own font) not yet diagnosed.
 - The runner lacks Simplified Arabic and Traditional Arabic, so they are not measured.
 - Not yet: kashida justification, joining across a style change inside a word, reflow of the
   paragraphs below an edit.
