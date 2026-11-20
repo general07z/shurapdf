@@ -668,14 +668,19 @@ fn card_general(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut 
     ui.horizontal(|ui| {
         ctx.label_primary(ui, tl!("Diagnostic log"), t);
         let mut level = crate::diag::level();
-        if ctx.pill_choice(
+        let (off, numbers, text) =
+            (tl_ctx!("diagnostic log", "Off"), tl_ctx!("diagnostic log", "Without document text"), tl_ctx!("diagnostic log", "With document text"));
+        // Each choice is named with its setting for screen readers: Animation effects has an Off too.
+        let a11y = |choice: &str| format!("{}: {choice}", tl!("Diagnostic log"));
+        let (off_a11y, numbers_a11y, text_a11y) = (a11y(off), a11y(numbers), a11y(text));
+        if ctx.pill_choice_a11y(
             ui,
             t,
             &mut level,
             &[
-                (crate::diag::Level::Off, tl_ctx!("diagnostic log", "Off")),
-                (crate::diag::Level::Numbers, tl_ctx!("diagnostic log", "Without document text")),
-                (crate::diag::Level::Text, tl_ctx!("diagnostic log", "With document text")),
+                (crate::diag::Level::Off, off, &off_a11y),
+                (crate::diag::Level::Numbers, numbers, &numbers_a11y),
+                (crate::diag::Level::Text, text, &text_a11y),
             ],
         ) {
             crate::diag::set(level);
