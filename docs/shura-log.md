@@ -62,7 +62,8 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #58 | Digits typed into a table cell drawn on top of each other (merged-table-page-break) | typed text inherited Word's negative character spacing | `text_typed_into_a_squeezed_run_is_not_squeezed` |
 | #61 | `1:` in a Word table cell opened for editing as `1 :`, and after an edit the colon was drawn over the number, so search failed (merged-table-page-break) | the space and colon Word draws left of the number, in visual order and squeezed, were read as drawn and kept their squeeze | `a_punctuation_run_in_an_arabic_row_reads_right_to_left`, `a_squeezed_colon_is_drawn_left_of_its_number_after_an_edit` |
 | #64 | Searching after an edit in an installed face failed in paragraphs with an email or web address (private-1: 21 of its 22 search failures) | Word draws the space after a paragraph as a run of its own, which belonged to no paragraph: the rewrite kept it, the wider row was drawn over it, and the page reader read it inside a word (`20 26`) | `a_rewritten_row_takes_its_trailing_space_run_with_it` |
-| #66 | Search after an edit in Arial or Tahoma still failed in two private-1 paragraphs (7 of its 9 search failures, run 44642509383): a blank glyph lay inside the typed words | Word's space run after the paragraph can sit more than one em from the row, past a tab or a justified gap, and at the paragraph mark's size, not the text's: #64 took only a blank within one em and at the same size. Now a blank on the row's baseline goes with the row unless other text lies between them | `a_rewritten_row_takes_a_far_trailing_space_run_with_it`, `a_space_run_beside_other_text_stays_when_a_row_is_rewritten` |
+| #66 | A blank run on a rewritten row's baseline but more than one em away, or at another size, stayed under the wider row | #64 took only a blank within one em and at the same size; now any blank on the row's baseline goes with it unless other text lies between. It did not reach private-1's 7 failures it was aimed at (run 44682679636: unchanged) | `a_rewritten_row_takes_a_far_trailing_space_run_with_it`, `a_space_run_beside_other_text_stays_when_a_row_is_rewritten` |
+| this PR | Search after an edit in Arial or Tahoma failed in two private-1 paragraphs (7 of its 9 search failures): a blank glyph lay inside the typed words (`2026` read as `2 026`) | Found with this PR's new fidelity detail (run 44688480324): the blank was on the page before the edit, in no paragraph, at the middle of the row the edit added. The paragraph grew a row over the line below, where Word draws an empty paragraph's mark as a blank at its alignment point, and the rewrite kept it. Now the styled rewrite drops every blank-only run its drawn rows cover | `a_new_row_takes_the_blank_it_is_drawn_over` |
 
 ## Known problems
 
@@ -78,8 +79,8 @@ PR numbers are `general07z/shurapdf` pull requests.
   - private-1: 25 before #64; 12 after it (run 44642509383: search 9, lost paragraph 2, second
     edit 1). private-pdf-1: still 2 (lost paragraph). Of the 9 search failures, 7 (Arial and
     Tahoma, a paragraph with brackets and digits and one with an email address) still show a
-    blank glyph drawn inside the typed words, so #64 did not catch every trailing space run (#66, to
-    confirm on the runner);
+    blank glyph drawn inside the typed words: an empty paragraph's blank under a row the edit
+    added (this PR, to confirm on the runner);
     one (page 2, paragraph 4, Tahoma, punctuation) reads the typed characters in another order;
     one (page 2, paragraph 10, own font) has its glyphs out of reading order. Lost paragraphs
     (page 1, paragraph 4, Arial and Sakkal Majalla, chain) and the second edit (same paragraph,

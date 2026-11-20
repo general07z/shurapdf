@@ -297,6 +297,27 @@ pub(crate) fn trailing_blank_ops(blanks: &[TextLine], members: &[&TextLine], lin
         .collect()
 }
 
+/// The operators of the runs of blanks alone among `blanks` ([`blank_lines`]) that a rewritten
+/// paragraph's upright rows, `[baseline, left, right, size]` in user space, are drawn over. A
+/// paragraph that grows a row covers the line below, where Word draws an empty paragraph's mark
+/// as a blank at its alignment point (the middle of a centred one): kept, the page reader took
+/// that blank inside the new row's words (`2026` read as `2 026`). A blank draws nothing, so
+/// taking it costs nothing on the page.
+pub(crate) fn blanks_under(blanks: &[TextLine], rows: &[[f64; 4]]) -> std::collections::HashSet<usize> {
+    blanks
+        .iter()
+        .filter(|b| b.text.chars().all(char::is_whitespace))
+        .filter(|b| {
+            let middle = (b.rect[0] + b.rect[2]) / 2.0;
+            rows.iter().any(|&[baseline, left, right, size]| {
+                let near = (b.origin.baseline - baseline).abs() < size.max(b.size).max(1.0) * 0.3;
+                near && middle > left && middle < right
+            })
+        })
+        .flat_map(|b| b.ops.iter().copied())
+        .collect()
+}
+
 /// Whether `line` is a run of blanks alone, drawn on `target`'s baseline: the space Word draws
 /// after a paragraph's last word or a cell's text, in the paragraph mark's font and size,
 /// sometimes past a tab or a justified gap. It belongs to no paragraph, so a rewrite kept it
