@@ -114,29 +114,66 @@ pub fn font_report() -> String {
 }
 
 /// A paragraph found again by the start of its text: its number, text and box (top-left origin).
-fn find_paragraph(auto: &mut Automation, doc: i64, page: usize, anchor: &str) -> Result<(i64, String, [f64; 4]), (&'static str, String)> {
-    let listed = tool(auto, "text_paragraphs", json!({ "doc": doc, "page": page })).map_err(|e| ("the edit failed", e))?;
-    listed
-        .get("paragraphs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find_map(|p| {
-            let text = p.get("editor_text")?.as_str()?;
-            norm(text).starts_with(anchor).then_some(())?;
-            let rect = p.get("rect")?.as_array()?;
-            let at = |i: usize| rect.get(i).and_then(Value::as_f64);
-            Some((p.get("paragraph")?.as_i64()?, text.to_owned(), [at(0)?, at(1)?, at(2)?, at(3)?]))
-        })
-        .ok_or(("the paragraph was lost", format!("no paragraph starts “{anchor}”")))
+/// A chain failure: its kind, its detail (which may quote a synthetic document) and a note with
+/// no text of the document, for a real one.
+type ChainError = (&'static str, String, String);
+
+fn plain(kind: &'static str) -> impl Fn(String) -> ChainError + Copy {
+    move |e| (kind, e, String::new())
+}
+
+fn find_paragraph(auto: &mut Automation, doc: i64, page: usize, anchor: &str, after: &str) -> Result<(i64, String, [f64; 4]), ChainError> {
+    let listed = tool(auto, "text_paragraphs", json!({ "doc": doc, "page": page })).map_err(plain("the edit failed"))?;
+    let all: Vec<&Value> = listed.get("paragraphs").and_then(Value::as_array).into_iter().flatten().collect();
+    let found = all.iter().find_map(|p| {
+        let text = p.get("editor_text")?.as_str()?;
+        norm(text).starts_with(anchor).then_some(())?;
+        let rect = p.get("rect")?.as_array()?;
+        let at = |i: usize| rect.get(i).and_then(Value::as_f64);
+        Some((p.get("paragraph")?.as_i64()?, text.to_owned(), [at(0)?, at(1)?, at(2)?, at(3)?]))
+    });
+    if let Some(found) = found {
+        return Ok(found);
+    }
+    // The paragraph sharing most of the anchor's characters, wherever they are.
+    let texts: Vec<String> = all.iter().filter_map(|p| p.get("editor_text")?.as_str().map(norm)).collect();
+    let shared = |t: &str| {
+        let mut have: Vec<char> = t.chars().collect();
+        anchor.chars().filter(|c| have.iter().position(|h| h == c).map(|i| have.swap_remove(i)).is_some()).count()
+    };
+    let closest = texts.iter().max_by_key(|t| shared(t)).cloned().unwrap_or_default();
+    let kinds = |t: &str| {
+        let mut out: Vec<&str> = Vec::new();
+        for c in t.chars() {
+            let k = if c.is_whitespace() { "space" } else { class_of(c) };
+            if out.last() != Some(&k) {
+                out.push(k);
+            }
+        }
+        out.join(" ")
+    };
+    let head: String = closest.chars().take(anchor.chars().count()).collect();
+    let where_ = match closest.find(anchor) {
+        Some(at) => format!("it holds the anchor {} characters in", closest[..at].chars().count()),
+        None if shared(&closest) == anchor.chars().count() => "it holds the anchor's characters, not in a row".to_owned(),
+        None => format!("it holds {} of the anchor's {} characters", shared(&closest), anchor.chars().count()),
+    };
+    let note = format!(
+        "lost after {after}; {} paragraphs on the page; the anchor reads {}; the closest paragraph starts {} ({} characters long); {where_}",
+        texts.len(),
+        kinds(anchor),
+        kinds(&head),
+        closest.chars().count()
+    );
+    Err(("the paragraph was lost", format!("after {after}, no paragraph starts “{anchor}”; closest: “{closest}”"), note))
 }
 
 /// What people do to one paragraph in a row, in one session, then save, reopen and check:
 /// type at its end, type again (the second edit of a paragraph), move it, widen its box from the
 /// left (the right edge of Arabic text stays), make it bold in the family's Bold, and reopen.
 /// `face`: the first edit loads the installed face, as the app's installed-font choice does.
-fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bool, others: &[String]) -> Result<(), (&'static str, String)> {
-    let step = |e: String| ("the edit failed", e);
+fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bool, others: &[String]) -> Result<(), ChainError> {
+    let step = plain("the edit failed");
     let anchor: String = norm(text).chars().take(12).collect();
     let (mut auto, doc, _) = open(work, "in.pdf").map_err(step)?;
     let mut args = json!({ "doc": doc, "page": page, "paragraph": number, "text": format!("{} جديد", text.trim_end()) });
@@ -146,12 +183,12 @@ fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bo
     }
     tool(&mut auto, "text_edit", args).map_err(step)?;
     // The second edit of the same paragraph, as the app sends it (no font of its own).
-    let (n, current, _) = find_paragraph(&mut auto, doc, page, &anchor)?;
+    let (n, current, _) = find_paragraph(&mut auto, doc, page, &anchor, "the first edit")?;
     let second = current.trim_end().replace(" جديد", " ثاني ٢");
-    tool(&mut auto, "text_edit", json!({ "doc": doc, "page": page, "paragraph": n, "text": second })).map_err(|e| ("the second edit failed", e))?;
+    tool(&mut auto, "text_edit", json!({ "doc": doc, "page": page, "paragraph": n, "text": second })).map_err(plain("the second edit failed"))?;
     // Move it 20 pt right and 30 pt down.
-    let (_, _, before) = find_paragraph(&mut auto, doc, page, &anchor)?;
-    let listed = tool(&mut auto, "object_list", json!({ "doc": doc, "page": page })).map_err(|e| ("moving failed", e))?;
+    let (_, _, before) = find_paragraph(&mut auto, doc, page, &anchor, "the second edit")?;
+    let listed = tool(&mut auto, "object_list", json!({ "doc": doc, "page": page })).map_err(plain("moving failed"))?;
     // The paragraph's object: the text object, or the added item an edit redrew it as, whose box
     // covers its box (the tightest one) (its text may read in another order than the paragraph's).
     let boxed = |o: &Value| o.get("rect").and_then(Value::as_array).map(|r| [0, 1, 2, 3].map(|i| r.get(i).and_then(Value::as_f64).unwrap_or(0.0)));
@@ -169,47 +206,47 @@ fn chain(work: &Path, page: usize, number: i64, text: &str, face: bool, bold: bo
         .filter(|o| matches!(o.get("kind").and_then(Value::as_str), Some("text" | "added")) && covers(o))
         .min_by(|a, b| area(boxed(a).unwrap_or([0.0; 4])).total_cmp(&area(boxed(b).unwrap_or([0.0; 4]))))
         .and_then(|o| Some((o.get("kind")?.as_str()?.to_owned(), o.get("index")?.clone())))
-        .ok_or(("moving failed", "the paragraph is not an object".to_owned()))?;
+        .ok_or(("moving failed", "the paragraph is not an object".to_owned(), String::new()))?;
     let mut mv = json!({ "doc": doc, "page": page, "objects": [{ "kind": kind, "index": object }], "offset": [20.0, 30.0] });
     if let Some(g) = listed.get("generation") {
         mv["generation"] = g.clone();
     }
-    tool(&mut auto, "object_move", mv).map_err(|e| ("moving failed", e))?;
-    let (n, current, moved) = find_paragraph(&mut auto, doc, page, &anchor)?;
+    tool(&mut auto, "object_move", mv).map_err(plain("moving failed"))?;
+    let (n, current, moved) = find_paragraph(&mut auto, doc, page, &anchor, "the move")?;
     if (moved[0] - before[0] - 20.0).abs() > 3.0 || (moved[1] - before[1] - 30.0).abs() > 3.0 {
-        return Err(("moved to the wrong place", format!("by {:.1}, {:.1}", moved[0] - before[0], moved[1] - before[1])));
+        return Err(("moved to the wrong place", format!("by {:.1}, {:.1}", moved[0] - before[0], moved[1] - before[1]), String::new()));
     }
     // Widen the box 40 pt to the left (what the left handle does).
     tool(&mut auto, "text_edit", json!({ "doc": doc, "page": page, "paragraph": n, "width": moved[2] - moved[0] + 40.0, "dx": -40.0 }))
-        .map_err(|e| ("widening failed", e))?;
-    let (n, current2, widened) = find_paragraph(&mut auto, doc, page, &anchor)?;
+        .map_err(plain("widening failed"))?;
+    let (n, current2, widened) = find_paragraph(&mut auto, doc, page, &anchor, "widening")?;
     if norm(&current2) != norm(&current) || widened[2] > moved[2] + 3.0 {
-        return Err(("widening changed the text or moved it", format!("right edge {:.1} → {:.1}", moved[2], widened[2])));
+        return Err(("widening changed the text or moved it", format!("right edge {:.1} → {:.1}", moved[2], widened[2]), String::new()));
     }
     let mut expected = norm(&current2);
     if bold {
-        let font = tool(&mut auto, "text_font_import", json!({ "doc": doc, "page": page, "path": "bold.ttf" })).map_err(|e| ("bold failed", e))?;
-        let resource = font.get("resource").cloned().ok_or(("bold failed", "the bold face was not loaded".to_owned()))?;
+        let font = tool(&mut auto, "text_font_import", json!({ "doc": doc, "page": page, "path": "bold.ttf" })).map_err(plain("bold failed"))?;
+        let resource = font.get("resource").cloned().ok_or(("bold failed", "the bold face was not loaded".to_owned(), String::new()))?;
         tool(&mut auto, "text_edit", json!({ "doc": doc, "page": page, "paragraph": n, "text": current2, "font_resource": resource }))
-            .map_err(|e| ("bold failed", e))?;
-        let (_, after, _) = find_paragraph(&mut auto, doc, page, &anchor)?;
+            .map_err(plain("bold failed"))?;
+        let (_, after, _) = find_paragraph(&mut auto, doc, page, &anchor, "bold")?;
         expected = norm(&after);
     }
     tool(&mut auto, "doc_save", json!({ "doc": doc, "path": "out.pdf" })).map_err(step)?;
     drop(auto);
-    let (mut auto, doc, _) = open(work, "out.pdf").map_err(|e| ("the saved file does not reopen", e))?;
+    let (mut auto, doc, _) = open(work, "out.pdf").map_err(plain("the saved file does not reopen"))?;
     let texts: Vec<String> =
-        paragraphs(&mut auto, doc, page).map_err(|e| ("the saved file does not reopen", e))?.iter().map(|(_, t)| norm(t)).collect();
+        paragraphs(&mut auto, doc, page).map_err(plain("the saved file does not reopen"))?.iter().map(|(_, t)| norm(t)).collect();
     let joined = texts.join(" ");
     if !joined.contains(&expected) {
-        return Err(("reads back differently after the chain", format!("wanted “{expected}”")));
+        return Err(("reads back differently after the chain", format!("wanted “{expected}”"), String::new()));
     }
     if let Some(gone) = others.iter().find(|o| !joined.contains(o.as_str())) {
-        return Err(("another paragraph changed", format!("“{gone}”")));
+        return Err(("another paragraph changed", format!("“{gone}”"), String::new()));
     }
     match std::fs::read(work.join("out.pdf")) {
         Ok(bytes) if renders(&bytes, page) => Ok(()),
-        _ => Err(("the page does not render", String::new())),
+        _ => Err(("the page does not render", String::new(), String::new())),
     }
 }
 
@@ -808,9 +845,13 @@ pub fn run(name: &str, pdf: &[u8], work: &Path, faces: &[Face], keep: Option<&Pa
                         if let Some(bold) = mode.and_then(|f| f.bold.as_ref()) {
                             let _ = std::fs::copy(bold, work.join("bold.ttf"));
                         }
-                        if let Err((kind, detail)) = chain(work, *page, *number, text, mode.is_some(), with_bold, &others) {
-                            let place = format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold");
-                            outcome.failures.push((kind, format!("{place}: {detail}"), place));
+                        if let Err((kind, detail, note)) = chain(work, *page, *number, text, mode.is_some(), with_bold, &others) {
+                            let mut place = format!("page {page}, paragraph {number}, {label}, edit twice, move, widen, bold");
+                            let full = format!("{place}: {detail}");
+                            if !note.is_empty() {
+                                place = format!("{place}: {note}");
+                            }
+                            outcome.failures.push((kind, full, place));
                         }
                     }
                     for (variant, new) in variants(text) {
