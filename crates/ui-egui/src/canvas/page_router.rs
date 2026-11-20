@@ -209,7 +209,12 @@ impl PageRouter {
         }
         let hits: Vec<Hit> = hits.into_iter().collect();
         let under_objects = top(hits.iter().filter(|h| !matches!(h.owner, Owner::Objects { .. })).cloned(), tool).map(|h| h.owner);
+        if crate::diag::on() {
+            let all: Vec<String> = hits.iter().map(|h| format!("{:?}", h.owner)).collect();
+            crate::diag::diag!("press on page {}: tool {tool:?}, under it [{}]", page + 1, all.join(", "));
+        }
         self.capture = top(hits, tool).map(|h| Capture { owner: h.owner, declines_drag: h.declines_drag, under_objects });
+        crate::diag::diag!("press on page {}: taken by {:?}", page + 1, self.capture.as_ref().map(|c| c.owner));
         self.began = Some(Some(page));
     }
 

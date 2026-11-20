@@ -663,6 +663,41 @@ fn card_general(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut 
     ctx.checkbox(ui, &mut app.update_check_at_start, tl!("Check for updates when PdfCraft starts"), t);
     ctx.checkbox(ui, &mut app.show_secured_notice, tl!("Show a notice when a document is secured"), t);
 
+    // The diagnostic log (`crate::diag`), for a tester to send.
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ctx.label_primary(ui, tl!("Diagnostic log"), t);
+        let mut level = crate::diag::level();
+        let (off, numbers, text) =
+            (tl_ctx!("diagnostic log", "Off"), tl_ctx!("diagnostic log", "Without document text"), tl_ctx!("diagnostic log", "With document text"));
+        // Each choice is named with its setting for screen readers: Animation effects has an Off too.
+        let a11y = |choice: &str| format!("{}: {choice}", tl!("Diagnostic log"));
+        let (off_a11y, numbers_a11y, text_a11y) = (a11y(off), a11y(numbers), a11y(text));
+        if ctx.pill_choice_a11y(
+            ui,
+            t,
+            &mut level,
+            &[
+                (crate::diag::Level::Off, off, &off_a11y),
+                (crate::diag::Level::Numbers, numbers, &numbers_a11y),
+                (crate::diag::Level::Text, text, &text_a11y),
+            ],
+        ) {
+            crate::diag::set(level);
+        }
+    });
+    ctx.label_secondary(
+        ui,
+        tl!("Records what you do and what ShuraPDF does in reply, to send with a problem report. With document text, it includes the text of paragraphs you edit and file names."),
+        t,
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(file) = crate::diag::log_file()
+        && ui.button(tl!("Show the log file")).clicked()
+    {
+        app.reveal_path(&file);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         ui.horizontal(|ui| {

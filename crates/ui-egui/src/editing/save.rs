@@ -303,6 +303,7 @@ impl PdfCraftApp {
                 return false;
             }
         };
+        crate::diag::diag!("saving {} bytes to {}", bytes.len(), crate::diag::name(dest));
         if let Err(e) = write_atomically(dest, &bytes) {
             self.notify_fmt("Couldn't save {name}: {e}", &[("name", dest), ("e", &e.to_string())]);
             return false;

@@ -465,9 +465,11 @@ impl PdfCraftApp {
     /// Show `msg` in the toast now, in place of whatever it showed. Script messages still waiting
     /// show after it.
     pub fn notify(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        crate::diag::diag!("notice shown: {}", crate::diag::text(&msg));
         // A left-out count it replaces is said again once the toast is free.
         self.script_messages_dropped = self.script_messages_dropped.saturating_add(std::mem::take(&mut self.toast_dropped));
-        self.toast = Some((msg.into(), 0.0));
+        self.toast = Some((msg, 0.0));
         self.toast_script = None;
     }
 

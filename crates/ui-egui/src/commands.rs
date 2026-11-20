@@ -112,9 +112,15 @@ impl PdfCraftApp {
     /// Last-resort guard (AGENTS.md §4): a command that panics is reported and the app, with its
     /// open documents, keeps running. Edits are applied to a copy, so the document is unchanged.
     pub fn execute(&mut self, id: &str) -> bool {
+        let started = crate::diag::on().then(web_time::Instant::now);
+        if started.is_some() {
+            let page = self.active.and_then(|i| self.views.get(i)).map(|v| v.current + 1);
+            crate::diag::diag!("command {id}: tab {:?}, page {page:?}", self.active);
+        }
         let done = match pdfcraft_engine::guard(|| self.execute_unguarded(id)) {
             Ok(done) => done,
             Err(m) => {
+                crate::diag::diag!("command {id}: internal error: {m}");
                 // A command stopped part way through closing or replacing a tab must not leave
                 // the next frame pointing past the last one (#3914).
                 self.keep_active_valid();
@@ -123,6 +129,9 @@ impl PdfCraftApp {
             }
         };
         crate::dialogs::discard_inactive_password_drafts(self);
+        if let Some(started) = started {
+            crate::diag::diag!("command {id}: {} in {} ms", if done { "done" } else { "refused" }, started.elapsed().as_millis());
+        }
         done
     }
 

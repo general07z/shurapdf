@@ -403,6 +403,12 @@ impl PdfCraftApp {
                 None
             };
         }
+        crate::diag::diag!(
+            "opened {}: {pages} pages, producer {}, creator {}",
+            crate::diag::name(&doc.name),
+            doc.info.producer.as_deref().map(crate::diag::text).unwrap_or_else(|| "none".into()),
+            doc.info.creator.as_deref().map(crate::diag::text).unwrap_or_else(|| "none".into())
+        );
         let view = DocView::new(id, &doc.info, self.view_defaults);
         self.views.push(view);
         if activate {
@@ -823,6 +829,7 @@ impl PdfCraftApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open_path(&mut self, path: &str) -> OpenOutcome {
+        crate::diag::diag!("open requested: {}", crate::diag::name(path));
         self.open_path_then(path, None)
     }
 
