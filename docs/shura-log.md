@@ -49,7 +49,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   opened for editing (rows, font, size, box, text), each edit with the page's paragraphs before
   and after it, its result, time and notices, opens, saves and every notice shown. Without
   document text, text and file names become counts by kind of character. Never: passwords,
-  certificate data, the control token, font or image bytes (`crates/ui-egui/src/diag.rs`, this PR).
+  certificate data, the control token, font or image bytes (`crates/ui-egui/src/diag.rs`, #69).
   Testers send the file in the conversation; it never goes into the repository.
 
 ### Fidelity measurement (Council runner)
