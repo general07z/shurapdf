@@ -61,6 +61,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #57 | A paragraph edited twice read back as its first row (justified-arabic) | the paragraph marker opened inside the first row's `/ActualText` span | `an_arabic_paragraph_edited_twice_reads_back_whole` |
 | #58 | Digits typed into a table cell drawn on top of each other (merged-table-page-break) | typed text inherited Word's negative character spacing | `text_typed_into_a_squeezed_run_is_not_squeezed` |
 | #61 | `1:` in a Word table cell opened for editing as `1 :`, and after an edit the colon was drawn over the number, so search failed (merged-table-page-break) | the space and colon Word draws left of the number, in visual order and squeezed, were read as drawn and kept their squeeze | `a_punctuation_run_in_an_arabic_row_reads_right_to_left`, `a_squeezed_colon_is_drawn_left_of_its_number_after_an_edit` |
+| #64 | Searching after an edit in an installed face failed in paragraphs with an email or web address (private-1: 21 of its 22 search failures) | Word draws the space after a paragraph as a run of its own, which belonged to no paragraph: the rewrite kept it, the wider row was drawn over it, and the page reader read it inside a word (`20 26`) | `a_rewritten_row_takes_its_trailing_space_run_with_it` |
 
 ## Known problems
 
@@ -74,7 +75,10 @@ PR numbers are `general07z/shurapdf` pull requests.
   - arabic-labels: still 1 (paragraph 4, Arial, chain: the paragraph was lost). Passes locally
     with DejaVu Sans, so it depends on Arial's metrics. Not yet diagnosed.
   - private-1: still 25 (search 22, lost paragraph 2, second edit 1); private-pdf-1: still 2 (lost
-    paragraph). #57 and #58 did not reach their causes. Not yet diagnosed.
+    paragraph). #57 and #58 did not reach their causes. Diagnosed with #63's content-free details:
+    21 search failures fixed by #64 (to confirm on the runner); one (page 2, paragraph 4, Tahoma,
+    punctuation) reads the typed characters in another order, and one (own font) is not yet
+    diagnosed.
 - The runner lacks Simplified Arabic and Traditional Arabic, so they are not measured.
 - Not yet: kashida justification, joining across a style change inside a word, reflow of the
   paragraphs below an edit.

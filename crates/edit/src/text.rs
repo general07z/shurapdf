@@ -61,14 +61,14 @@ use interp::{Origin, Paint, union};
 #[cfg(test)]
 pub(crate) use lines::dropped_advances_within;
 pub(crate) use lines::{
-    ContentStream, FormBudget, Read, content_streams, content_streams_within, dict_in_place, drawn_before_damage, dropped_advances,
+    ContentStream, FormBudget, Read, blank_lines, content_streams, content_streams_within, dict_in_place, drawn_before_damage, dropped_advances,
     dropped_side_effects, emptied_spans, first_op_after_damage, form_call, joined, reopen_text_object, resource_dict, rewritten_contents, splice,
 };
 pub use lines::{MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text_lines, text_lines};
 use lines::{page_dict, word_lines};
 pub use rewrite::{LineEdit, replace_line, rewrite_block};
 use rewrite::{coincident_ops, rewrite_block_from};
-pub(crate) use rewrite::{paragraph_ops, reveal_ops, selectable_blocks, show_starts, translate_blocks};
+pub(crate) use rewrite::{paragraph_ops, reveal_ops, selectable_blocks, show_starts, trailing_blank_ops, translate_blocks};
 #[cfg(test)]
 pub(crate) use rewrite::{replace_line_with_limit, rewrite_block_with_limit};
 

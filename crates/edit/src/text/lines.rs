@@ -469,13 +469,19 @@ fn fill_color(fill: &[Op]) -> [f64; 3] {
 
 /// The lines of text on a page (0-based), in content order.
 pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, &page_dict(doc, page)?, true, false)
+    text_lines_in(doc, &page_dict(doc, page)?, true, false, false)
+}
+
+/// The lines of a page that [`text_lines`] leaves out because they show only blanks, with the
+/// same operator indices: Word's space drawn on its own after a paragraph's last word.
+pub(crate) fn blank_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditError> {
+    text_lines_in(doc, &page_dict(doc, page)?, true, false, true)
 }
 
 /// [`text_lines`] with every show of invisible text a line of its own, however alike its
 /// neighbours: an OCR layer's words, which an edit can keep or change one by one.
 pub(crate) fn word_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, &page_dict(doc, page)?, true, true)
+    text_lines_in(doc, &page_dict(doc, page)?, true, true, false)
 }
 
 /// The lines `page`'s glyphs show, in content order, without `/ActualText` replacements: what the
@@ -483,12 +489,19 @@ pub(crate) fn word_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, E
 /// not trust that metadata (the redaction audit). Takes the page itself, so a caller going
 /// through every page doesn't walk the page tree again for each.
 pub fn glyph_text_lines(doc: &Document, page: &pdfcraft_model::Page) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, page, false, false)
+    text_lines_in(doc, page, false, false, false)
 }
 
 /// [`text_lines`] of `p`; with `actual_text`, `/ActualText` replaces the glyphs it spans, and with
-/// `invisible_apart`, no show of invisible text joins the one before it.
-fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool, invisible_apart: bool) -> Result<Vec<TextLine>, EditError> {
+/// `invisible_apart`, no show of invisible text joins the one before it. With `blanks`, only the
+/// lines of blanks alone, which are otherwise left out.
+fn text_lines_in(
+    doc: &Document,
+    p: &pdfcraft_model::Page,
+    actual_text: bool,
+    invisible_apart: bool,
+    blanks: bool,
+) -> Result<Vec<TextLine>, EditError> {
     let res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut cache = HashMap::new();
     let mut lines: Vec<TextLine> = Vec::new();
@@ -612,7 +625,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool, in
         }
     }
     // Lines of only spaces aren't editable text.
-    lines.retain(|l| !l.text.trim().is_empty());
+    lines.retain(|l| l.text.trim().is_empty() == blanks);
     Ok(lines)
 }
 
