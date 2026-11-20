@@ -54,7 +54,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 - The log also records, in the paragraph editor, every caret move and selection (characters,
   text, press position), what typing removed and inserted, and Format text choices (font, look
   against the paragraph's own, font shown); fonts by name, family and size, never their bytes,
-  and any long list of numbers by its count (this PR).
+  and any long list of numbers by its count (#73).
 
 ### Fidelity measurement (Council runner)
 - `shura-word-fidelity.yml` scores the built-in engine against Microsoft Word, edits every Arabic
@@ -82,7 +82,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #70 | Bold in a chain of edits "did not load" its Bold face (justified-arabic in Tahoma on the runner; locally in FreeSerif) | every shaped edit adds a font resource for its own glyph map, sharing the face's program; the editor's font list decoded and counted that program once per resource against its 32 MiB allowance, so after a few edits in a large face the Bold no longer fit and was left out of the list. Now a `PCFull` resource sharing a program already listed reuses its bytes, uncounted | `a_face_loaded_after_many_edits_is_listed` |
 | #72 | Selecting a word in an Arabic paragraph opened for editing selected another word (owner's report, from the diagnostic log) | the unseen editor text that takes clicks was laid over the page's words in typing order, left to right, so a right-to-left row was mirrored: a click on the first word, at the right, landed on the last. Now words and characters are paired with the page's boxes in the order the layout shows them | `a_click_on_an_arabic_word_lands_on_that_word` |
 | #72 | Bold changed the font list's name from Arial to `Arial-BoldMT`, as if another font had been chosen (owner's report) | the list showed the embedded bold face's PostScript name; now it shows the family, and the Bold button the weight | `the_font_list_names_the_family_whatever_its_weight` |
-| this PR | "Show the log file" (and Reveal in File Explorer) said it could not show the file on Windows | Explorer exits with status 1 even when it opens the folder with the file selected; a started Explorer now counts as shown | `a_started_explorer_reveals_whatever_its_exit_status` |
+| #73 | "Show the log file" (and Reveal in File Explorer) said it could not show the file on Windows | Explorer exits with status 1 even when it opens the folder with the file selected; a started Explorer now counts as shown | `a_started_explorer_reveals_whatever_its_exit_status` |
 
 ## Known problems
 
