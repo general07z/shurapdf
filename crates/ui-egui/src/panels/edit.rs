@@ -289,6 +289,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         if let Some(script) = out.script {
             changed |= crate::edit_text_ui::toggle_script(&mut ed.text, &mut ed.selection, script);
         }
+        let chosen = crate::diag::on().then(|| crate::diag::debug(&out.font));
         match out.font {
             Some(FontChoice::Resource(resource)) => {
                 ed.font_resource = Some(resource);
@@ -305,6 +306,9 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             None => {}
         }
         if changed {
+            if let Some(chosen) = &chosen {
+                ed.diag_format(chosen, &sources);
+            }
             app.apply_line_format(i, ed, Some(ui.ctx()));
         }
         return;

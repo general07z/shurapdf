@@ -183,10 +183,50 @@ pub fn debug(value: &impl std::fmt::Debug) -> String {
         }
     }
     let mut out = Bounded(String::new());
-    if write!(out, "{value:?}").is_err() {
-        out.0.push('…');
+    let cut = write!(out, "{value:?}").is_err();
+    let mut out = collapse_numbers(&out.0);
+    if cut {
+        out.push('…');
     }
-    out.0
+    out
+}
+
+/// `s` with each bracketed list of more than 16 numbers (a font's or a file's bytes) replaced by
+/// its count: `[37, 80, 68, …]` → `[1500 numbers]`, `[37, 80, …` cut short → `[at least 400 numbers`.
+fn collapse_numbers(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        out.push_str(rest.get(..open).unwrap_or(""));
+        let after = rest.get(open + 1..).unwrap_or("");
+        let body_len = after.find(|c: char| !(c.is_ascii_digit() || matches!(c, ',' | ' ' | '-' | '.'))).unwrap_or(after.len());
+        let body = after.get(..body_len).unwrap_or("");
+        let count = body.split(',').filter(|n| !n.trim().is_empty()).count();
+        let closed = after.get(body_len..).is_some_and(|t| t.starts_with(']'));
+        if count > 16 {
+            if closed {
+                let _ = write!(out, "[{count} numbers]");
+                rest = after.get(body_len + 1..).unwrap_or("");
+            } else {
+                let _ = write!(out, "[at least {count} numbers");
+                rest = after.get(body_len..).unwrap_or("");
+            }
+        } else {
+            out.push('[');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A font program as the log names it: its PostScript and family names and its size, never its
+/// bytes.
+pub fn face(bytes: &[u8]) -> String {
+    match pdfcraft_fonts::embedding::names(bytes) {
+        Ok((family, postscript)) => format!("{postscript} (family {family}, {} bytes)", bytes.len()),
+        Err(e) => format!("an unreadable font of {} bytes ({e})", bytes.len()),
+    }
 }
 
 /// The name of an enum value's variant from its debug form (`EditTextBlock { .. }` →
@@ -291,6 +331,9 @@ mod tests {
         let out = debug(&big);
         assert!(out.len() <= MAX_DEBUG + '…'.len_utf8() && out.ends_with('…'), "{}", out.len());
         assert_eq!(variant(&Some(3)), "Some");
+        assert_eq!(debug(&vec![1u8; 40]), "[40 numbers]");
+        assert_eq!(debug(&(vec![1u8; 3], "x")), "([1, 1, 1], \"x\")");
+        assert!(debug(&big).starts_with("[at least "), "{}", debug(&big));
     }
 
     #[test]
