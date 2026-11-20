@@ -85,8 +85,8 @@ PR numbers are `general07z/shurapdf` pull requests.
   - merged-table-page-break: 78 → 20 failures, all "add a word at the start" (`1 :`); 0 after
     #61 (run 44566311034).
   - justified-arabic: the widen failure is gone; the chain now reaches bold and fails there in
-    Tahoma ("the bold face was not loaded"): the font list's allowance, fixed in #70 (to
-    confirm on the runner).
+    Tahoma ("the bold face was not loaded"): the font list's allowance, fixed in #70; 0 failures
+    after it (run 44729956957).
   - arabic-labels: still 1 (paragraph 4, Arial, chain): lost after the second edit, which
     leaves the paragraph without its leading Latin label "Site:" (run 44714354245). Passes
     locally with DejaVu Sans and other open faces, so it depends on Arial's metrics.
