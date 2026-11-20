@@ -862,6 +862,16 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
     view.image_selection = None;
     let source_lines = doc.text_lines(page);
     let text = l.editor_text.clone();
+    crate::diag::diag!(
+        "paragraph {} on page {} opened for editing: {} rows, font {}, size {:.2}, rect {:?}, text {}",
+        block + 1,
+        page + 1,
+        l.rows.len(),
+        crate::diag::text(&l.base_font),
+        l.size,
+        l.rect,
+        crate::diag::text(&text)
+    );
     // Screen pixels per point, from the box's width.
     let scale = (b.width() - 4.0) / ((l.rect[2] - l.rect[0]).max(1.0) as f32);
     // How far the editor box may grow: a single-line paragraph's rewrite grows to the

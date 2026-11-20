@@ -47,6 +47,9 @@ impl PdfCraftApp {
             ("show_page_edge_shadows", _) => {
                 self.show_page_edge_shadows = value.parse::<bool>().map_err(|_| "show_page_edge_shadows must be true or false")?;
             }
+            ("diagnostic_log", _) => {
+                crate::diag::set(crate::diag::Level::parse(value).ok_or("diagnostic_log must be off, numbers, or text")?);
+            }
             ("update_check_at_start", _) => {
                 self.update_check_at_start = value.parse::<bool>().map_err(|_| "update_check_at_start must be true or false")?;
             }

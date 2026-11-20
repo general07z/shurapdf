@@ -41,6 +41,17 @@ PR numbers are `general07z/shurapdf` pull requests.
   (`docs/code-signing.md`). SignPath Foundation signing is wired but inactive: SignPath declined
   the application (#49).
 
+### Diagnostic log
+- Preferences ▸ General ▸ Diagnostic log: Off (default), Without document text, With document
+  text, kept in the settings (`diagnostic_log`, also a `set_option`). It writes to the app's log
+  file (`<data dir>/logs/pdfcraft.log`; "Show the log file" opens its folder): every command with
+  its result and time, each press on a page with what lay under it and what took it, a paragraph
+  opened for editing (rows, font, size, box, text), each edit with the page's paragraphs before
+  and after it, its result, time and notices, opens, saves and every notice shown. Without
+  document text, text and file names become counts by kind of character. Never: passwords,
+  certificate data, the control token, font or image bytes (`crates/ui-egui/src/diag.rs`, this PR).
+  Testers send the file in the conversation; it never goes into the repository.
+
 ### Fidelity measurement (Council runner)
 - `shura-word-fidelity.yml` scores the built-in engine against Microsoft Word, edits every Arabic
   paragraph (twice, move, widen, bold) and drives the real interface; four stages, one job each

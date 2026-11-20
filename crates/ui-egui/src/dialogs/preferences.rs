@@ -663,6 +663,36 @@ fn card_general(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut 
     ctx.checkbox(ui, &mut app.update_check_at_start, tl!("Check for updates when PdfCraft starts"), t);
     ctx.checkbox(ui, &mut app.show_secured_notice, tl!("Show a notice when a document is secured"), t);
 
+    // The diagnostic log (`crate::diag`), for a tester to send.
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ctx.label_primary(ui, tl!("Diagnostic log"), t);
+        let mut level = crate::diag::level();
+        if ctx.pill_choice(
+            ui,
+            t,
+            &mut level,
+            &[
+                (crate::diag::Level::Off, tl_ctx!("diagnostic log", "Off")),
+                (crate::diag::Level::Numbers, tl_ctx!("diagnostic log", "Without document text")),
+                (crate::diag::Level::Text, tl_ctx!("diagnostic log", "With document text")),
+            ],
+        ) {
+            crate::diag::set(level);
+        }
+    });
+    ctx.label_secondary(
+        ui,
+        tl!("Records what you do and what ShuraPDF does in reply, to send with a problem report. With document text, it includes the text of paragraphs you edit and file names."),
+        t,
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(file) = crate::diag::log_file()
+        && ui.button(tl!("Show the log file")).clicked()
+    {
+        app.reveal_path(&file);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     {
         ui.horizontal(|ui| {

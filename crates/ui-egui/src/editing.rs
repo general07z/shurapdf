@@ -166,7 +166,81 @@ fn form_edit_pages(
     (changed_pages, unbaked)
 }
 
+/// The page whose paragraphs a text edit changes, for the diagnostic log.
+fn diag_text_page(edit: &Edit) -> Option<usize> {
+    match edit {
+        Edit::EditTextBlock { page, .. }
+        | Edit::EditTextLine { page, .. }
+        | Edit::PrepareText { page }
+        | Edit::MoveObjects { page, .. }
+        | Edit::DeleteObjects { page, .. } => Some(*page),
+        _ => None,
+    }
+}
+
 impl PdfCraftApp {
+    /// The diagnostic log's record of `edit` before it runs, and the paragraphs of the page it
+    /// changes, when it edits text ([`crate::diag`]).
+    fn diag_edit_before(&self, id: pdfcraft_engine::DocId, edit: &Edit) -> Option<(usize, Vec<String>)> {
+        let page = diag_text_page(edit);
+        let summary = match edit {
+            Edit::EditTextBlock { page, block, text, style } => format!(
+                "EditTextBlock page {} paragraph {}: text {}, style {}",
+                page + 1,
+                block + 1,
+                crate::diag::text(text),
+                crate::diag::debug(style)
+            ),
+            Edit::EditTextLine { page, line, text } => {
+                format!("EditTextLine page {} line {}: text {}", page + 1, line + 1, crate::diag::text(text))
+            }
+            other if crate::diag::level() == crate::diag::Level::Text => crate::diag::debug(other),
+            other => crate::diag::variant(other),
+        };
+        crate::diag::diag!("edit {}: {summary}", edit.label());
+        let doc = self.session.get(id)?;
+        let page = page?;
+        let blocks: Vec<String> = doc.text_blocks(page).into_iter().map(|b| b.editor_text).collect();
+        for (i, text) in blocks.iter().enumerate() {
+            crate::diag::diag!("  before, page {} paragraph {}: {}", page + 1, i + 1, crate::diag::text(text));
+        }
+        Some((page, blocks))
+    }
+
+    /// The diagnostic log's record of `edit` after it ran: its result, its time, the notices it
+    /// left, and the paragraphs of its page that changed, appeared or went.
+    fn diag_edit_after(
+        &self,
+        id: pdfcraft_engine::DocId,
+        edit: &Edit,
+        result: &Result<(), pdfcraft_engine::EditError>,
+        started: web_time::Instant,
+        before: Option<(usize, Vec<String>)>,
+    ) {
+        let ms = started.elapsed().as_millis();
+        match result {
+            Ok(()) => crate::diag::diag!("edit {}: done in {ms} ms", edit.label()),
+            Err(e) => crate::diag::diag!("edit {}: FAILED in {ms} ms: {}", edit.label(), crate::diag::text(&e.to_string())),
+        }
+        let Some(doc) = self.session.get(id) else { return };
+        for notice in &doc.edit_notices {
+            crate::diag::diag!("  notice: {}", crate::diag::text(&crate::diag::debug(notice)));
+        }
+        let Some((page, before)) = before else { return };
+        let after: Vec<String> = doc.text_blocks(page).into_iter().map(|b| b.editor_text).collect();
+        crate::diag::diag!("  page {} had {} paragraphs, now {}", page + 1, before.len(), after.len());
+        for (i, text) in after.iter().enumerate() {
+            if before.get(i) != Some(text) {
+                crate::diag::diag!("  after, page {} paragraph {}: {}", page + 1, i + 1, crate::diag::text(text));
+            }
+        }
+        for (i, text) in before.iter().enumerate() {
+            if !after.contains(text) {
+                crate::diag::diag!("  gone from page {}: paragraph {} of before", page + 1, i + 1);
+            }
+        }
+    }
+
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
@@ -215,7 +289,12 @@ impl PdfCraftApp {
             }
             _ => Vec::new(),
         };
-        match self.session.apply(id, edit.clone()) {
+        let diag = crate::diag::on().then(|| (web_time::Instant::now(), self.diag_edit_before(id, &edit)));
+        let applied = self.session.apply(id, edit.clone());
+        if let Some((started, before)) = diag {
+            self.diag_edit_after(id, &edit, &applied, started, before);
+        }
+        match applied {
             Ok(()) => {
                 let Some(doc) = self.session.get(id) else { return true };
                 let info = &doc.info;

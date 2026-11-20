@@ -112,6 +112,7 @@ use theme::{ThemeKind, ThemePreference};
 pub use workflows::ocr_verify::{OcrVerify, Phase};
 
 mod app;
+pub mod diag;
 mod frame_guard;
 mod hooks;
 mod persist;
