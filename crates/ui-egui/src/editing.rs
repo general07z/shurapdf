@@ -185,11 +185,12 @@ impl PdfCraftApp {
         let page = diag_text_page(edit);
         let summary = match edit {
             Edit::EditTextBlock { page, block, text, style } => format!(
-                "EditTextBlock page {} paragraph {}: text {}, style {}",
+                "EditTextBlock page {} paragraph {}: text {}, face {}, style {}",
                 page + 1,
                 block + 1,
                 crate::diag::text(text),
-                crate::diag::debug(style)
+                style.face.as_deref().map_or_else(|| "the paragraph's own".to_owned(), |f| crate::diag::face(f)),
+                crate::diag::debug(&pdfcraft_engine::BlockStyle { face: None, ..style.clone() })
             ),
             Edit::EditTextLine { page, line, text } => {
                 format!("EditTextLine page {} line {}: text {}", page + 1, line + 1, crate::diag::text(text))

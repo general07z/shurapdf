@@ -264,6 +264,63 @@ pub(crate) fn family_shown(name: &str) -> String {
 }
 
 impl LineEditor {
+    /// The diagnostic log's record of the caret or selection, characters `start..end` of the
+    /// editor's text, after a click at `at` (in the editor's text box) or a key.
+    fn diag_caret(&self, start: usize, end: usize, at: Option<egui::Vec2>) {
+        let chars: Vec<char> = self.text.chars().collect();
+        let span = |a: usize, b: usize| chars.get(a.min(chars.len())..b.min(chars.len())).map(|c| c.iter().collect::<String>()).unwrap_or_default();
+        let place = at.map_or_else(|| "by a key".to_owned(), |p| format!("by a press at {:.1}, {:.1}", p.x, p.y));
+        if start == end {
+            crate::diag::diag!(
+                "editor, paragraph {} on page {}: caret at character {start} {place}, between {} and {}",
+                self.block + 1,
+                self.page + 1,
+                crate::diag::text(&span(start.saturating_sub(8), start)),
+                crate::diag::text(&span(start, start + 8))
+            );
+        } else {
+            crate::diag::diag!(
+                "editor, paragraph {} on page {}: selected characters {start}..{end} {place}: {}",
+                self.block + 1,
+                self.page + 1,
+                crate::diag::text(&span(start, end))
+            );
+        }
+    }
+
+    /// The diagnostic log's record of a change from Format text: the font chosen (if any), the
+    /// selection it applies to, and the look now against the paragraph's own.
+    pub(crate) fn diag_format(&self, choice: &str, sources: &[(String, String)]) {
+        let look = |l: &pdfcraft_engine::AddedText| format!("family {:?}, bold {}, italic {}, size {}", l.family, l.bold, l.italic, l.size);
+        crate::diag::diag!(
+            "format panel, paragraph {} on page {}: font choice {}, selection {:?}, look now {} (paragraph's own {}), font shown {}",
+            self.block + 1,
+            self.page + 1,
+            choice,
+            self.selection,
+            look(&self.look),
+            look(&self.look0),
+            crate::diag::text(&self.font_shown(sources))
+        );
+    }
+
+    /// The diagnostic log's record of what typing changed from `before`: where, what went and
+    /// what came.
+    fn diag_typed(&self, before: &str) {
+        let (old, new): (Vec<char>, Vec<char>) = (before.chars().collect(), self.text.chars().collect());
+        let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        let tail = old.iter().rev().zip(new.iter().rev()).take_while(|(a, b)| a == b).count().min(old.len().min(new.len()) - head);
+        let gone: String = old.get(head..old.len() - tail).map(|c| c.iter().collect()).unwrap_or_default();
+        let came: String = new.get(head..new.len() - tail).map(|c| c.iter().collect()).unwrap_or_default();
+        crate::diag::diag!(
+            "editor, paragraph {} on page {}: typed at character {head}: removed {}, inserted {}",
+            self.block + 1,
+            self.page + 1,
+            crate::diag::text(&gone),
+            crate::diag::text(&came)
+        );
+    }
+
     /// What Format text's font list shows: the chosen page font, a standard family picked
     /// instead, or the paragraph's own font (its `/BaseFont` without the subset tag).
     pub(crate) fn font_shown(&self, sources: &[(String, String)]) -> String {
@@ -1338,13 +1395,20 @@ pub(crate) fn overlay(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, i
                     }
                     ed.focus = false;
                 } else if r.has_focus() {
+                    let earlier = ed.selection.clone();
                     if let Some(cursor) = output.cursor_range {
                         let selected = cursor.as_sorted_char_range();
                         let byte = |index| ed.text.char_indices().nth(index).map_or(ed.text.len(), |(at, _)| at);
                         ed.selection = (!selected.is_empty()).then(|| byte(selected.start.into())..byte(selected.end.into()));
+                        if crate::diag::on() && (ed.selection != earlier || r.clicked()) {
+                            ed.diag_caret(selected.start.into(), selected.end.into(), r.interact_pointer_pos().map(|p| p - output.galley_pos));
+                        }
                     } else {
                         ed.selection = None;
                     }
+                }
+                if r.changed() && crate::diag::on() {
+                    ed.diag_typed(&before);
                 }
                 if r.changed() {
                     ed.follow_typed_rows(ctx, &before, place);

@@ -129,7 +129,9 @@ fn reveal_via(
     mut run: impl FnMut(&str, &[std::ffi::OsString]) -> Result<bool, String>,
 ) -> Result<(), String> {
     let (program, args) = reveal_command(platform, path)?;
-    if run(program, &args).unwrap_or(false) {
+    // Explorer exits with status 1 even when it shows the file, so on Windows a started Explorer
+    // is the answer; only one that could not be started is an error.
+    if run(program, &args).is_ok_and(|ok| ok || platform == "windows") {
         return Ok(());
     }
     if matches!(platform, "linux" | "freebsd") {
@@ -191,6 +193,16 @@ fn reveal_command(platform: &str, path: &std::path::Path) -> Result<(&'static st
 mod tests {
     use super::*;
     const PDF: &[u8] = include_bytes!("../../tests/data/form.pdf");
+
+    /// The report: "Show the log file" said it could not reveal the file on Windows. Explorer exits
+    /// with status 1 even when it opens the folder with the file selected.
+    #[test]
+    fn a_started_explorer_reveals_whatever_its_exit_status() {
+        let path = std::path::Path::new("C:\\Users\\a\\logs\\pdfcraft.log");
+        assert!(reveal_via("windows", path, |_, _| Ok(false)).is_ok());
+        assert!(reveal_via("windows", path, |_, _| Err("not found".into())).is_err(), "Explorer that did not start");
+        assert!(reveal_via("macos", path, |_, _| Ok(false)).is_err(), "elsewhere the status still counts");
+    }
 
     #[test]
     fn confirmed_close_uses_id_and_cancel_keeps_history_empty() {
