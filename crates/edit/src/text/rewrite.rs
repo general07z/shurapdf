@@ -286,21 +286,36 @@ pub(crate) fn coincident_ops(lines: &[TextLine], targets: &[&TextLine]) -> std::
 }
 
 /// The operators of the runs of blanks alone among `blanks` ([`blank_lines`]) that sit beside one
-/// of `members` ([`trailing_blank`]): a rewrite of those members takes them with it.
-pub(crate) fn trailing_blank_ops(blanks: &[TextLine], members: &[&TextLine]) -> std::collections::HashSet<usize> {
-    blanks.iter().filter(|b| members.iter().any(|m| trailing_blank(b, m))).flat_map(|b| b.ops.iter().copied()).collect()
+/// of `members` ([`trailing_blank`]), with nothing of `lines` but members between: a rewrite of
+/// those members takes them with it.
+pub(crate) fn trailing_blank_ops(blanks: &[TextLine], members: &[&TextLine], lines: &[TextLine]) -> std::collections::HashSet<usize> {
+    let member = |l: &TextLine| members.iter().any(|m| std::ptr::eq(*m, l));
+    blanks
+        .iter()
+        .filter(|b| members.iter().any(|m| trailing_blank(b, m) && !lines.iter().any(|l| !member(l) && between(l, b, m))))
+        .flat_map(|b| b.ops.iter().copied())
+        .collect()
 }
 
-/// Whether `line` is a run of blanks alone, drawn on `target`'s baseline beside it (no further
-/// than its size away): the space Word draws in a font of its own after a paragraph's last word
-/// or a cell's text. It belongs to no paragraph, so a rewrite kept it where it was; the rewritten
-/// row, wider in another face, then grew over it, and the page reader took that space inside a
-/// word for a word break (`2026` read as `20 26`, a web address split in two).
+/// Whether `line` is a run of blanks alone, drawn on `target`'s baseline: the space Word draws
+/// after a paragraph's last word or a cell's text, in the paragraph mark's font and size,
+/// sometimes past a tab or a justified gap. It belongs to no paragraph, so a rewrite kept it
+/// where it was; the rewritten row, wider in another face, then grew over it, and the page reader
+/// took that space inside a word for a word break (`2026` read as `20 26`, a web address split in
+/// two). [`trailing_blank_ops`] leaves one that other text lies closer to. A blank draws nothing,
+/// so taking it costs nothing on the page.
 fn trailing_blank(line: &TextLine, target: &TextLine) -> bool {
     let blank = !line.text.is_empty() && line.text.chars().all(char::is_whitespace);
-    let (a, b) = (line.rect, target.rect);
-    let apart = (a[0] - b[2]).max(b[0] - a[2]);
-    blank && !target.text.trim().is_empty() && apart <= target.size.max(1.0) && on_same_baseline(line, target)
+    blank && !target.text.trim().is_empty() && on_baseline(line, target, 0.0)
+}
+
+/// Whether `line`, not blank, lies on `target`'s baseline in the gap between `target` and `blank`:
+/// the blank then belongs beside that text, not beside `target`.
+fn between(line: &TextLine, blank: &TextLine, target: &TextLine) -> bool {
+    let (a, b) = (blank.rect, target.rect);
+    let (lo, hi) = if a[0] >= b[2] { (b[2], a[0]) } else { (a[2], b[0]) };
+    let r = line.rect;
+    !line.text.trim().is_empty() && r[0] < hi && r[2] > lo && on_baseline(line, target, 0.0)
 }
 
 fn overlaps_half(a: [f64; 4], b: [f64; 4], area: impl Fn([f64; 4]) -> f64) -> bool {
@@ -313,9 +328,14 @@ fn overlaps_half(a: [f64; 4], b: [f64; 4], area: impl Fn([f64; 4]) -> f64) -> bo
 /// Perpendicular distance between baselines, in user space. Horizontal text compares height;
 /// turned text compares the distance across the writing direction.
 fn on_same_baseline(line: &TextLine, target: &TextLine) -> bool {
+    on_baseline(line, target, 0.8)
+}
+
+/// [`on_same_baseline`], with the smaller size at least `ratio` of the larger.
+fn on_baseline(line: &TextLine, target: &TextLine, ratio: f64) -> bool {
     let (dir, target_dir) = (line.direction(), target.direction());
     let same_dir = (dir.0 - target_dir.0).abs() < 1e-3 && (dir.1 - target_dir.1).abs() < 1e-3;
-    let same_size = line.size.min(target.size) >= line.size.max(target.size) * 0.8;
+    let same_size = line.size.min(target.size) >= line.size.max(target.size) * ratio;
     let angle = target.rotation().to_radians();
     let (sin, cos) = if angle.is_finite() { angle.sin_cos() } else { (0.0, 1.0) };
     let dx = line.origin.x - target.origin.x;
@@ -1047,7 +1067,7 @@ fn rewrite_block_from_with(
     let mut dropped = coincident_ops(&lines, &members);
     dropped.extend(members.iter().flat_map(|l| l.ops.iter().copied()));
     // Word's space after the paragraph goes with it ([`trailing_blank`]).
-    dropped.extend(trailing_blank_ops(&blank_lines(doc, page).unwrap_or_default(), &members));
+    dropped.extend(trailing_blank_ops(&blank_lines(doc, page).unwrap_or_default(), &members, &lines));
     refuse_clipping_text(&lines, &dropped)?;
     let first = members.first().copied().ok_or_else(|| EditError::Invalid("the paragraph has no source runs".into()))?;
     members.iter().try_for_each(|line| line.ensure_editable())?;
