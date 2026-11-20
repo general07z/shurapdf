@@ -8807,6 +8807,38 @@ fn a_rewritten_row_takes_its_trailing_space_run_with_it() {
     assert!(read.contains("2026"), "the page reads the typed number whole: {read:?}");
 }
 
+#[test]
+fn a_rewritten_row_takes_a_far_trailing_space_run_with_it() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // سم at 500–512; Word's trailing space run two ems to its left, at a larger size.
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 16 Tf 476 700 Td ( ) Tj ET");
+    let typed = format!("{} (21) 2026 12", text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(!content.contains("( ) Tj"), "the trailing space run goes with the row: {content}");
+}
+
+#[test]
+fn a_space_run_beside_other_text_stays_when_a_row_is_rewritten() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // سم at 500–512, another paragraph's ب at 300, and its space run beside it at 297.
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 300 700 Td (B) Tj ET BT /F1 12 Tf 297 700 Td ( ) Tj ET");
+    let blocks = text::text_blocks(&doc, 0).unwrap();
+    let index = blocks.iter().position(|b| b.editor_text.trim() == "سم").expect("the first paragraph stands alone");
+    let typed = format!("{} 12", blocks[index].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, index, Some(&typed), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("( ) Tj"), "the space run beside the other paragraph stays: {content}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
