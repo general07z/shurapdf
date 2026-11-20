@@ -8839,6 +8839,28 @@ fn a_space_run_beside_other_text_stays_when_a_row_is_rewritten() {
     assert!(content.contains("( ) Tj"), "the space run beside the other paragraph stays: {content}");
 }
 
+/// Fidelity run 44688480324 (private-1): a paragraph that grew a row was drawn over the blank
+/// Word draws for the empty paragraph below it, at that line's middle, and search read the typed
+/// number with a space inside it.
+#[test]
+fn a_new_row_takes_the_blank_it_is_drawn_over() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    // A two-row paragraph at 500–512, and an empty paragraph's blank on the line below.
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 500 686 Td (DE) Tj ET BT /F1 12 Tf 505 672 Td ( ) Tj ET");
+    let before = text::text_blocks(&doc, 0).unwrap();
+    assert_eq!(before.len(), 1, "the blank is no paragraph of its own");
+    let typed = format!("{} 12 12 12 12 12 12 12 12", before[0].editor_text.trim_end());
+    let style = text::BlockStyle { face: Some(Arc::new(program)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&typed), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    let rows = text::text_lines(&doc, 0).unwrap();
+    assert!(rows.len() >= 3, "the paragraph grew a row: {rows:?}");
+    assert!(!content.contains("( ) Tj"), "the blank under the new row goes: {content}");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()

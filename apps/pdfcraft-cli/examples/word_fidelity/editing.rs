@@ -466,7 +466,89 @@ fn glyphs_at_breaks(work: &Path, page: usize, tail: &str) -> String {
             format!("{kind} {:.2}..{:.2}@{:.2}", (g.rect[0] - origin[0]) / h, (g.rect[2] - origin[0]) / h, (g.rect[3] - origin[3]) / h)
         })
         .collect();
-    format!("at the breaks: {}; drawn: {}", out.join("; "), drawn.join(", "))
+    let blanks: Vec<String> = (lo..=hi.min(lo + 40))
+        .filter_map(|i| text.glyphs.get(i))
+        .filter(|g| g.text.chars().all(char::is_whitespace))
+        .take(3)
+        .map(|g| blank_source(work, page, g.rect, h))
+        .collect();
+    format!("at the breaks: {}; drawn: {}; blanks: {}", out.join("; "), drawn.join(", "), blanks.join("; "))
+}
+
+/// Where a blank glyph drawn at `rect` (view space) on the edited page comes from, in numbers and
+/// kinds only: whether the unedited page draws a blank at the same place (a run the edit kept) and
+/// the lines of each page that hold that place, by length, kinds of character, font (the edited
+/// paragraph's or another) and size against `h`, the line height of the typed words.
+fn blank_source(work: &Path, page: usize, rect: [f32; 4], h: f32) -> String {
+    let near = |r: &[f32; 4]| (r[0] - rect[0]).abs() < h * 0.05 && (r[3] - rect[3]).abs() < h * 0.2;
+    let before = std::fs::read(work.join("in.pdf")).ok().and_then(|bytes| {
+        let mut renderer = PageRenderer::new(Arc::new(bytes), RenderConfig::default());
+        let request = RenderRequest { page: page.saturating_sub(1), kind: RequestKind::Text, tile: None, scale: 1.0, tag: 0, preview: false };
+        renderer.render(request).text
+    });
+    let kept = match before {
+        Some(t) => match t.glyphs.iter().find(|g| near(&g.rect)) {
+            Some(g) if g.text.chars().all(char::is_whitespace) => "the unedited page draws a blank there",
+            Some(_) => "the unedited page draws a glyph there, not a blank",
+            None => "the unedited page draws nothing there",
+        },
+        None => "the unedited page was not read",
+    };
+    let lines = |file: &str| -> String {
+        let Ok((mut auto, doc, _)) = open(work, file) else { return "not opened".to_owned() };
+        let font = tool(&mut auto, "text_paragraphs", json!({ "doc": doc, "page": page }))
+            .ok()
+            .and_then(|p| {
+                p.get("paragraphs")?.as_array()?.iter().find_map(|p| {
+                    let r: Vec<f64> = p.get("rect")?.as_array()?.iter().filter_map(Value::as_f64).collect();
+                    let inside = r.len() == 4
+                        && f64::from(rect[0]) >= r[0] - 1.0
+                        && f64::from(rect[2]) <= r[2] + 1.0
+                        && f64::from(rect[3]) >= r[1]
+                        && f64::from(rect[1]) <= r[3];
+                    inside.then(|| p.get("font")?.as_str().map(str::to_owned)).flatten()
+                })
+            })
+            .unwrap_or_default();
+        let Ok(listed) = tool(&mut auto, "text_lines", json!({ "doc": doc, "page": page })) else { return "not listed".to_owned() };
+        let hits: Vec<String> = listed
+            .get("lines")
+            .and_then(Value::as_array)
+            .map(|all| {
+                all.iter()
+                    .filter_map(|l| {
+                        let r: Vec<f64> = l.get("rect")?.as_array()?.iter().filter_map(Value::as_f64).collect();
+                        let (x, y) = (f64::from(rect[0] + rect[2]) / 2.0, f64::from(rect[1] + rect[3]) / 2.0);
+                        (r.len() == 4 && x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]).then_some(())?;
+                        let text = l.get("text")?.as_str()?;
+                        let mut counts: Vec<(&str, usize)> = Vec::new();
+                        for c in text.chars() {
+                            let k = if c.is_whitespace() { "blank" } else { class_of(c) };
+                            match counts.iter_mut().find(|e| e.0 == k) {
+                                Some(e) => e.1 += 1,
+                                None => counts.push((k, 1)),
+                            }
+                        }
+                        let which =
+                            if l.get("font").and_then(Value::as_str) == Some(font.as_str()) { "the paragraph's font" } else { "another font" };
+                        let size = l.get("size").and_then(Value::as_f64).unwrap_or(0.0) / f64::from(h.max(0.01));
+                        let kinds: Vec<String> = counts.iter().map(|(k, n)| format!("{k} {n}")).collect();
+                        let edge = |v: f64| (v - f64::from(rect[0])) / f64::from(h.max(0.01));
+                        Some(format!(
+                            "a line of {} ({}), {which}, size {size:.2}, {:.2}..{:.2}",
+                            text.chars().count(),
+                            kinds.join(", "),
+                            edge(r[0]),
+                            edge(r[2])
+                        ))
+                    })
+                    .take(2)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if hits.is_empty() { "in no listed line".to_owned() } else { hits.join(" and ") }
+    };
+    format!("{kept}; edited page: {}; unedited page: {}", lines("out.pdf"), lines("in.pdf"))
 }
 
 /// The spacing the edit drew with, from the shaped runs it wrote into `out.pdf` (the content

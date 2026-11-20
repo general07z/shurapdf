@@ -1973,7 +1973,8 @@ pub(crate) fn rewrite_styled_block(
     let RewriteAnchor { lead, mut drop, start, split } = anchor;
     // Word's space after the paragraph goes with it (`trailing_blank`).
     let members: Vec<&TextLine> = block.lines.iter().filter_map(|i| lines.get(*i)).collect();
-    drop.extend(crate::text::trailing_blank_ops(&crate::text::blank_lines(doc, page).unwrap_or_default(), &members, lines));
+    let blanks = crate::text::blank_lines(doc, page).unwrap_or_default();
+    drop.extend(crate::text::trailing_blank_ops(&blanks, &members, lines));
     let o = &lead.origin;
     // What is in force where the rewrite is drawn, and what the text after it expects.
     let after = if split { &o.state } else { &o.bt_state };
@@ -2023,6 +2024,8 @@ pub(crate) fn rewrite_styled_block(
     let initial = TextState::initial();
     let drawn_from = if over { &initial } else { after };
     let mut baseline = first.origin.baseline;
+    // Each drawn row's baseline, left and right edges and size, for `blanks_under`.
+    let mut drawn_rows: Vec<[f64; 4]> = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
         let anchor = block.rows.get(row_index).and_then(|r| r.first()).and_then(|i| lines.get(*i));
         if style.line_spacing.is_none()
@@ -2068,6 +2071,7 @@ pub(crate) fn rewrite_styled_block(
                 crate::added::Align::Right => available - w,
                 _ => 0.0,
             };
+        let row_left = x;
         // Each segment's operators, to be written in reading order below.
         let mut written: Vec<(usize, Vec<Op>)> = Vec::new();
         for (pos, end, _) in row_segments(row) {
@@ -2160,6 +2164,7 @@ pub(crate) fn rewrite_styled_block(
         // looks the same, and reading it back finds the runs in the order they are read.
         written.sort_by_key(|(pos, _)| *pos);
         block_ops.extend(written.into_iter().flat_map(|(_, ops)| ops));
+        drawn_rows.push([baseline, row_left.min(x), row_left.max(x), anchor.size]);
         baseline -= row_step(style, anchor.size, source_leading);
     }
     push_whole_paragraph_marker(&mut block_ops, marked, "EMC");
@@ -2175,6 +2180,8 @@ pub(crate) fn rewrite_styled_block(
     // when the rewrite splits one, and a kept row's operators come later in the stream.
     let marker = if marked { None } else { paragraph_marker(block, lines, &ops) };
     let marker = marker.map(|(open, next, close)| (open_outside_spans(&ops, open, next.unwrap_or(close)), next, close));
+    // A blank the new rows are drawn over goes too (`blanks_under`).
+    drop.extend(crate::text::blanks_under(&blanks, &drawn_rows));
     // A dropped `'` or `"` leaves its line move and spacing, and a dropped show its advance.
     let mut advances = crate::text::dropped_advances(doc, &ops, &res, &drop);
     let split_at = split.then_some(start);

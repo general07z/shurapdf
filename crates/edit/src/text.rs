@@ -67,8 +67,8 @@ pub(crate) use lines::{
 pub use lines::{MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text_lines, text_lines};
 use lines::{page_dict, word_lines};
 pub use rewrite::{LineEdit, replace_line, rewrite_block};
+pub(crate) use rewrite::{blanks_under, paragraph_ops, reveal_ops, selectable_blocks, show_starts, trailing_blank_ops, translate_blocks};
 use rewrite::{coincident_ops, rewrite_block_from};
-pub(crate) use rewrite::{paragraph_ops, reveal_ops, selectable_blocks, show_starts, trailing_blank_ops, translate_blocks};
 #[cfg(test)]
 pub(crate) use rewrite::{replace_line_with_limit, rewrite_block_with_limit};
 
