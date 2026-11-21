@@ -552,10 +552,14 @@ pub struct BlockStyle {
     pub cover_between: Option<[f64; 2]>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct RangeStyle {
     pub range: std::ops::Range<usize>,
     pub family: Option<(crate::added::Family, bool, bool)>,
+    /// The range keeps its run's font, drawn bold by stroking its glyphs
+    /// ([`BlockStyle::synthetic_bold`]): Bold on a selection whose font has no bold face
+    /// installed. Ignored when `family` is set.
+    pub synthetic_bold: bool,
     pub resource: Option<String>,
     pub size: Option<f64>,
     pub color: Option<[f64; 3]>,
