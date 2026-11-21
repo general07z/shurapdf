@@ -8893,6 +8893,33 @@ fn a_face_loaded_after_many_edits_is_listed() {
     assert_eq!(listed.iter().filter(|f| f.bytes.len() == regular.len()).count(), aliases, "every alias is still listed");
 }
 
+/// The report: Bold on a Tajawal paragraph, with no Tajawal Bold installed, failed: it asked for a
+/// standard bold font, whose fallback (a Japanese face) has no Arabic letters. Synthetic bold keeps
+/// the paragraph's own face and strokes each glyph with its fill colour.
+#[test]
+fn synthetic_bold_keeps_the_paragraphs_face_and_strokes_its_glyphs() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = word_arabic_page("BT /F1 12 Tf 0.2 0.4 0.6 rg 500 700 Td (BA) Tj ET");
+    let text = text::text_blocks(&doc, 0).unwrap()[0].editor_text.clone();
+    let style = text::BlockStyle { face: Some(Arc::new(program)), synthetic_bold: true, ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(&text), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(content.contains("2 Tr"), "filled and stroked: {content}");
+    assert!(content.contains("0.2 0.4 0.6 RG"), "stroked in the text colour: {content}");
+    // 3% of 12 pt.
+    assert!(content.contains("0.36 w"), "a stroke 3% of the size wide: {content}");
+    let fonts = text::text_editor_fonts(&doc, 0).unwrap();
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert!(
+        lines.iter().all(|l| fonts.iter().any(|f| f.resource == l.font && f.resource.starts_with("PCFull"))),
+        "drawn in the paragraph's face, not a standard bold"
+    );
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim(), text.trim(), "reads back as before");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()

@@ -505,6 +505,11 @@ pub struct BlockStyle {
     pub family: Option<(crate::added::Family, bool, bool)>,
     /// Override weight without choosing a different family (`None` keeps the source weight).
     pub bold: Option<bool>,
+    /// Draw the paragraph in its own font, made bold by stroking each glyph with its fill colour
+    /// as well as filling it (3% of the font size, as Word and WordCraft do for a face with no
+    /// bold): Bold on a font whose bold face isn't installed, which would otherwise take a
+    /// standard bold font with no Arabic letters. Forces the styled rewrite.
+    pub synthetic_bold: bool,
     /// Font size in points (user space).
     pub size: Option<f64>,
     /// Fill colour (RGB 0–1).

@@ -13123,6 +13123,29 @@ fn text_edit_numbers_survive_edits_that_do_not_regroup() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// `text_edit` with `synthetic_bold` keeps the paragraph's text and draws it filled and stroked
+/// (`2 Tr`), the editor's Bold for a font with no bold face installed.
+#[test]
+fn text_edit_draws_a_paragraph_in_synthetic_bold() {
+    let dir = workdir("text-edit-synthetic-bold");
+    std::fs::write(dir.join("p.pdf"), three_paragraph_pdf()).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({"path":"p.pdf"}))["doc"].as_u64().unwrap();
+    ok(&mut a, "text_paragraphs", json!({"doc":doc,"page":1}));
+    ok(&mut a, "text_edit", json!({"doc":doc,"page":1,"paragraph":1,"synthetic_bold":true}));
+    ok(&mut a, "doc_save", json!({"doc":doc,"path":"out.pdf"}));
+    let saved = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(dir.join("out.pdf")).unwrap())).unwrap();
+    let mut budget = pdfcraft_cos::DecodeBudget::page();
+    let drawn = saved.object_numbers().into_iter().filter_map(|n| saved.try_get(n).ok()).any(|o| match &*o {
+        pdfcraft_cos::Object::Stream(st) => budget.decode(st).is_ok_and(|d| d.windows(4).any(|w| w == b"2 Tr")),
+        _ => false,
+    });
+    assert!(drawn, "the paragraph is filled and stroked");
+    let text = page_text(&mut a, doc).join(" ");
+    assert!(text.contains("Alpha"), "its text is kept: {text}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Where the first bookmark on `path` goes, as `bookmark_list` reports it: points from the
 /// top-left of the displayed page.
 fn bookmark_destination(a: &mut Automation, doc: u64, title: &str) -> Value {

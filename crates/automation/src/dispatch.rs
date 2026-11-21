@@ -611,6 +611,7 @@ impl Automation {
                     ranges: parse_style_ranges(a.get("ranges"))?,
                     resource: a.opt_str("font_resource")?.map(str::to_owned),
                     bold: a.opt_bool("bold")?,
+                    synthetic_bold: a.opt_bool("synthetic_bold")?.unwrap_or(false),
                     size: a.opt_num("size")?,
                     underline: a.opt_bool("underline")?,
                     line_spacing: a.opt_num("line_spacing")?,
