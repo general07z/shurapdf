@@ -60,6 +60,7 @@ $script:SignTool = Find-SignTool
 $description = if ($env:SIGN_DESCRIPTION) { $env:SIGN_DESCRIPTION } else { 'PdfCraft' }
 $moreInfo = if ($env:SIGN_URL) { $env:SIGN_URL } else { 'https://github.com/storytold/pdfcraft' }
 $common = @('sign', '/v', '/fd', 'SHA256', '/td', 'SHA256', '/d', $description, '/du', $moreInfo)
+$signer = $null
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "pdfcraft-sign-$([IO.Path]::GetRandomFileName())"
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
@@ -72,6 +73,8 @@ try {
     $signArgs = $common + @('/tr', $ts, '/f', $pfx)
     if ($env:WINDOWS_CERTIFICATE_PASSWORD) { $signArgs += @('/p', $env:WINDOWS_CERTIFICATE_PASSWORD) }
     Invoke-SignTool ($signArgs + $Files)
+    $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+    $signer = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:WINDOWS_CERTIFICATE_PASSWORD, $flags)
   }
   else {
     Write-Output "Signing with Azure Trusted Signing ($env:AZURE_SIGNING_ACCOUNT / $env:AZURE_CERT_PROFILE): $($Files -join ', ')"
@@ -99,7 +102,25 @@ try {
     $ts = if ($env:WINDOWS_TIMESTAMP_URL) { $env:WINDOWS_TIMESTAMP_URL } else { 'http://timestamp.acs.microsoft.com' }
     Invoke-SignTool ($common + @('/tr', $ts, '/dlib', $dlib.FullName, '/dmdf', $metadata) + $Files)
   }
-  Invoke-SignTool (@('verify', '/pa', '/v') + $Files)
+  if ($signer -and $signer.Subject -eq $signer.Issuer) {
+    # A self-signed (pilot) certificate: no machine trusts it until its .cer is installed, the
+    # build machine included, so `signtool verify` stops at its untrusted root. Check instead that
+    # each file is signed by exactly this certificate, unchanged and timestamped; an untrusted root
+    # is the only failure accepted (docs/code-signing.md, option 1).
+    foreach ($file in $Files) {
+      $sig = Get-AuthenticodeSignature -LiteralPath $file
+      $untrustedRoot = $sig.Status -eq 'UnknownError' -and $sig.StatusMessage -match 'root certificate which is not trusted'
+      if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $signer.Thumbprint) {
+        throw "$file is not signed by the configured certificate"
+      }
+      if (-not ($sig.Status -eq 'Valid' -or $untrustedRoot)) { throw "$file signature: $($sig.Status): $($sig.StatusMessage)" }
+      if (-not $sig.TimeStamperCertificate) { throw "$file signature has no timestamp" }
+      Write-Output "Signed by '$($signer.Subject)' (self-signed, $($signer.Thumbprint)), timestamped: $file"
+    }
+  }
+  else {
+    Invoke-SignTool (@('verify', '/pa', '/v') + $Files)
+  }
 }
 finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
