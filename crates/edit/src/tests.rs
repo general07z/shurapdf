@@ -2688,6 +2688,7 @@ fn styled_fallback_batches_keep_face_choices_and_range_styles() {
     }
     let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Original) Tj ET");
     let range = |range, family, bold| text::RangeStyle {
+        synthetic_bold: false,
         range,
         family: Some((family, bold, false)),
         resource: None,
@@ -8245,6 +8246,7 @@ fn an_ocr_rewrite_goes_on_top_of_paint_over_where_it_lands() {
     let sized = text::BlockStyle { size: Some(24.0), ..Default::default() };
     let spaced = text::BlockStyle { line_spacing: Some(3.0), ..Default::default() };
     let range = text::RangeStyle {
+        synthetic_bold: false,
         range: 0..2,
         family: None,
         resource: None,
@@ -8920,6 +8922,29 @@ fn synthetic_bold_keeps_the_paragraphs_face_and_strokes_its_glyphs() {
     assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim(), text.trim(), "reads back as before");
 }
 
+/// The owner's second report: Bold on a selected word of a Tajawal paragraph failed the same way.
+/// The selection alone is drawn bold, in its run's own font.
+#[test]
+fn synthetic_bold_on_a_selection_strokes_only_that_word() {
+    let Some(program) = static_arabic_face() else {
+        eprintln!("skipping: no static Arabic face (set PDFCRAFT_TEST_ARABIC_FONT)");
+        return;
+    };
+    let mut doc = word_arabic_page("BT /F1 12 Tf 500 700 Td (BA) Tj ET BT /F1 12 Tf 497 700 Td ( ) Tj ET BT /F1 12 Tf 485 700 Td (DE) Tj ET");
+    let text = text::text_blocks(&doc, 0).unwrap()[0].editor_text.clone();
+    let word = text.trim_end().rsplit(' ').next().unwrap().to_owned();
+    let at = text.rfind(&word).unwrap();
+    let style = text::BlockStyle {
+        face: Some(Arc::new(program)),
+        ranges: vec![text::RangeStyle { range: at..at + word.len(), synthetic_bold: true, ..Default::default() }],
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 0, Some(&text), &style).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert_eq!(content.matches("2 Tr").count(), 1, "one run, the selected word, is filled and stroked: {content}");
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].editor_text.trim(), text.trim(), "reads back as before");
+}
+
 /// How many paragraphs `content` makes on [`word_arabic_page`].
 fn fixture_lines(content: &str) -> usize {
     text::text_blocks(&word_arabic_page(content), 0).unwrap().len()
@@ -9332,6 +9357,7 @@ fn disjoint_style_ranges_preserve_unselected_runs_and_validate_utf8_atomically()
     let style = BlockStyle {
         ranges: vec![
             RangeStyle {
+                synthetic_bold: false,
                 range: a..a + 5,
                 family: None,
                 resource: None,
@@ -9342,6 +9368,7 @@ fn disjoint_style_ranges_preserve_unselected_runs_and_validate_utf8_atomically()
                 scale: None,
             },
             RangeStyle {
+                synthetic_bold: false,
                 range: b..b + 4,
                 family: Some((Family::Courier, false, true)),
                 resource: None,
@@ -9371,6 +9398,7 @@ fn disjoint_style_ranges_preserve_unselected_runs_and_validate_utf8_atomically()
     let before = pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap();
     let invalid = BlockStyle {
         ranges: vec![RangeStyle {
+            synthetic_bold: false,
             range: 1..2,
             family: None,
             resource: None,
@@ -9793,6 +9821,7 @@ fn turned_paragraph_keeps_its_line_breaks_when_a_word_is_added() {
     // Formatting part of turned text isn't laid out yet: refused, not drawn along the page's x axis.
     let mut doc = text_page("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (Only line) Tj ET");
     let range = text::RangeStyle {
+        synthetic_bold: false,
         range: 0..4,
         family: None,
         resource: None,
@@ -10066,6 +10095,7 @@ fn rows_the_edit_does_not_reach_keep_their_source_operators() {
     let draft = text::text_blocks(&doc, 0).unwrap()[block].editor_text.clone();
     let at = draft.find("line").unwrap();
     let range = text::RangeStyle {
+        synthetic_bold: false,
         range: at..at + 4,
         family: None,
         resource: None,
@@ -12815,6 +12845,7 @@ fn a_lone_carriage_return_breaks_an_edited_paragraph() {
 fn carriage_returns_break_rows_on_the_styled_path() {
     let draft = "one\r\ntwo\rthree";
     let red = text::RangeStyle {
+        synthetic_bold: false,
         range: 0..3,
         family: None,
         resource: None,
@@ -12919,6 +12950,7 @@ fn spaces_and_indents_in_a_subset_without_a_space_glyph_round_trip_across_edits(
     let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
     let style = text::BlockStyle {
         ranges: vec![text::RangeStyle {
+            synthetic_bold: false,
             range: 2..5,
             family: None,
             resource: None,
@@ -12942,6 +12974,7 @@ fn a_reassigned_subset_space_keeps_its_own_underline() {
     let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
     let style = text::BlockStyle {
         ranges: vec![text::RangeStyle {
+            synthetic_bold: false,
             range: 2..5,
             family: None,
             resource: None,
@@ -15175,6 +15208,7 @@ fn explicit_builtin_thai_replaces_an_unavailable_source_without_installing_a_fon
     let mut selected = text_page("BT /F1 16 Tf 50 700 Td (Ab) Tj ET");
     let style = text::BlockStyle {
         ranges: vec![text::RangeStyle {
+            synthetic_bold: false,
             range: 0..1,
             resource: Some("builtin:thai".into()),
             family: None,
@@ -16286,6 +16320,7 @@ fn editing_legacy_thai_keeps_the_embedded_face_weight_size_spacing_and_paint_aft
 #[test]
 fn unicode_row_breaks_break_the_row_instead_of_needing_a_glyph() {
     let red = text::RangeStyle {
+        synthetic_bold: false,
         range: 0..3,
         family: None,
         resource: None,
@@ -16364,6 +16399,7 @@ fn bolding_one_word_keeps_the_line_one_row() {
     let mut doc = text_page("BT /F1 24 Tf 20 150 Td (Page 1) Tj ET");
     let style = text::BlockStyle {
         ranges: vec![text::RangeStyle {
+            synthetic_bold: false,
             range: 5..6,
             family: Some((crate::added::Family::Helvetica, true, false)),
             resource: None,

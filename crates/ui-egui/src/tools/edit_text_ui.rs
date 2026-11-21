@@ -418,20 +418,23 @@ impl LineEditor {
         // Bold alone on an Arabic paragraph whose font has no installed bold face: the paragraph
         // keeps its font and is drawn bold by stroking its glyphs, as Word does. A standard bold
         // font has no Arabic letters, and its fallback refused the edit.
-        let synthetic_bold = l.bold
+        let bold_without_face = l.bold
             && !o.bold
             && weight_face.is_none()
             && l.family == o.family
             && !self.family_chosen
             && l.italic == o.italic
             && self.font_resource.is_none()
-            && self.selection.as_ref().is_none_or(|r| r.start == 0 && r.end >= self.text.len())
             && self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic);
+        // On the whole paragraph, or on the selected part of it.
+        let whole = self.selection.as_ref().is_none_or(|r| r.start == 0 && r.end >= self.text.len());
+        let synthetic_bold = bold_without_face && whole;
+        let synthetic_range = bold_without_face && !whole;
         let mut style = pdfcraft_engine::BlockStyle {
             resource: self.font_resource.clone(),
             family: (l.family != o.family
                 || self.family_chosen
-                || (l.bold != o.bold && weight_face.is_none() && !synthetic_bold)
+                || (l.bold != o.bold && weight_face.is_none() && !bold_without_face)
                 || l.italic != o.italic)
                 .then_some((l.family, l.bold, l.italic)),
             synthetic_bold,
@@ -467,6 +470,7 @@ impl LineEditor {
         }
         if let Some(range) = &self.selection
             && (style.family.is_some()
+                || synthetic_range
                 || style.resource.is_some()
                 || style.size.is_some()
                 || style.color.is_some()
@@ -477,6 +481,7 @@ impl LineEditor {
             style.ranges.push(pdfcraft_engine::RangeStyle {
                 range: range.clone(),
                 family: style.family.take(),
+                synthetic_bold: synthetic_range,
                 resource: style.resource.take(),
                 size: style.size.take(),
                 color: style.color.take(),
@@ -1845,10 +1850,13 @@ C", &picked
         assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
         ed.fonts.bold_faces.insert(font, Arc::new(b"stand-in for an installed bold face".to_vec()));
         assert!(!ed.style().synthetic_bold, "an installed bold face draws it instead");
-        // Bold on part of the paragraph is not synthetic bold for all of it.
+        // Bold on part of the paragraph (the owner's second report): that part only, in its font.
         ed.fonts.bold_faces.clear();
         ed.selection = Some(0..4);
-        assert!(!ed.style().synthetic_bold);
+        let style = ed.style();
+        assert!(!style.synthetic_bold, "not the whole paragraph");
+        assert_eq!(style.ranges.len(), 1);
+        assert!(style.ranges[0].synthetic_bold && style.ranges[0].family.is_none(), "the selection, in its own font: {style:?}");
     }
 
     /// Bold off a paragraph Word set in bold draws it in the installed regular face of its font,

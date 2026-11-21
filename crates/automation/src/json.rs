@@ -73,6 +73,7 @@ pub(crate) fn parse_style_ranges(value: Option<&Value>) -> Result<Vec<pdfcraft_e
             Ok(pdfcraft_engine::RangeStyle {
                 range: start..end,
                 family,
+                synthetic_bold: a.opt_bool("synthetic_bold")?.unwrap_or(false),
                 resource: a.opt_str("font_resource")?.map(str::to_owned),
                 size: a.opt_num("size")?,
                 color: a.opt_str("color")?.map(comments::parse_color).transpose()?,

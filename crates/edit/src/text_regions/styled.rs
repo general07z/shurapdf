@@ -969,6 +969,7 @@ fn apply_range_styles<'a>(
                 let default_range = RangeStyle {
                     range: start..end,
                     family: None,
+                    synthetic_bold: false,
                     resource: None,
                     size: None,
                     color: None,
@@ -2109,7 +2110,7 @@ pub(crate) fn rewrite_styled_block(
             }
             let inverse = Matrix(o.ctm).invert().ok_or_else(|| EditError::Invalid("the paragraph has a singular transform".into()))?;
             let mut tm = Matrix(source.origin.tm).then(&Matrix(source.origin.ctm)).then(&inverse).0;
-            if style.synthetic_bold {
+            if style.synthetic_bold || overrides.get(&item.1).is_some_and(|r| r.synthetic_bold && r.family.is_none()) {
                 synthesize_bold(&mut state, size_of(source, item.1), tm);
             }
             let (ax, ay) = back.apply(x - source.origin.x, baseline - source.origin.baseline);
