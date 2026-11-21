@@ -415,10 +415,26 @@ impl LineEditor {
             .then(|| self.source_font().and_then(|font| self.fonts.regular_faces.get(&font).cloned()))
             .flatten();
         let weight_face = bold_face.or(regular_face);
+        // Bold alone on an Arabic paragraph whose font has no installed bold face: the paragraph
+        // keeps its font and is drawn bold by stroking its glyphs, as Word does. A standard bold
+        // font has no Arabic letters, and its fallback refused the edit.
+        let synthetic_bold = l.bold
+            && !o.bold
+            && weight_face.is_none()
+            && l.family == o.family
+            && !self.family_chosen
+            && l.italic == o.italic
+            && self.font_resource.is_none()
+            && self.selection.as_ref().is_none_or(|r| r.start == 0 && r.end >= self.text.len())
+            && self.text.chars().any(pdfcraft_fonts::visual_line::is_arabic);
         let mut style = pdfcraft_engine::BlockStyle {
             resource: self.font_resource.clone(),
-            family: (l.family != o.family || self.family_chosen || (l.bold != o.bold && weight_face.is_none()) || l.italic != o.italic)
+            family: (l.family != o.family
+                || self.family_chosen
+                || (l.bold != o.bold && weight_face.is_none() && !synthetic_bold)
+                || l.italic != o.italic)
                 .then_some((l.family, l.bold, l.italic)),
+            synthetic_bold,
             size: (self.size_chosen || l.size != o.size).then_some(l.size),
             color: (l.color != o.color).then_some(l.color),
             // The whole paragraph's alignment when it was picked, or when the rows' own were
@@ -1804,9 +1820,35 @@ C", &picked
         assert!(style.family.is_none(), "no standard family is asked for");
         assert!(style.face.is_some_and(|f| Arc::ptr_eq(&f, &bold)), "the installed bold face draws it");
         assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
-        // No installed bold face: the standard bold, as before.
+        // No installed bold face: the paragraph's own font made bold (a standard bold font has no
+        // Arabic letters).
         ed.fonts.bold_faces.clear();
-        assert!(ed.style().family.is_some());
+        assert!(ed.style().family.is_none() && ed.style().synthetic_bold);
+    }
+
+    /// The report: Bold on a Tajawal paragraph with no Tajawal Bold installed failed (a standard
+    /// bold font was asked for, whose fallback has no Arabic letters). It keeps the paragraph's
+    /// font and asks for synthetic bold; with a bold face installed, that face draws it, as before.
+    #[test]
+    fn bold_without_a_bold_face_keeps_the_font_and_is_synthetic() {
+        let (app, mut ed) = preview_app();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        let (block, lines) = (doc.text_blocks(0).remove(0), doc.text_lines(0));
+        let font = lines[0].font.clone();
+        ed.source = Some((block, lines));
+        ed.original = "الموضوع: طلب".into();
+        ed.text = ed.original.clone();
+        ed.look.bold = true;
+        let style = ed.style();
+        assert!(style.family.is_none(), "no standard bold font is asked for");
+        assert!(style.synthetic_bold, "the paragraph's font is made bold");
+        assert!(finished_edit(ed.clone()).is_some(), "bold alone is an edit");
+        ed.fonts.bold_faces.insert(font, Arc::new(b"stand-in for an installed bold face".to_vec()));
+        assert!(!ed.style().synthetic_bold, "an installed bold face draws it instead");
+        // Bold on part of the paragraph is not synthetic bold for all of it.
+        ed.fonts.bold_faces.clear();
+        ed.selection = Some(0..4);
+        assert!(!ed.style().synthetic_bold);
     }
 
     /// Bold off a paragraph Word set in bold draws it in the installed regular face of its font,

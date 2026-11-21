@@ -1749,6 +1749,7 @@ pub fn tools() -> Vec<ToolDef> {
                     "text": { "type": "string" },
                     "font": { "type": "string", "enum": ["helvetica", "times", "courier"] },
                     "bold": { "type": "boolean" },
+                    "synthetic_bold": { "type": "boolean", "description": "Paragraph only: keep its own font and draw it bold by stroking each glyph in its colour (3% of the size), for a font with no bold face installed." },
                     "italic": { "type": "boolean" },
                     "size": { "type": "number", "exclusiveMinimum": 0 },
                     "color": { "type": "string", "description": "#rrggbb" },

@@ -1241,6 +1241,18 @@ fn thai_clusters(text: &str) -> Vec<&str> {
     starts.windows(2).filter_map(|w| text.get(*w.first()?..*w.get(1)?)).collect()
 }
 
+/// Make `state` draw its text bold in its own font ([`crate::text::BlockStyle::synthetic_bold`]):
+/// a stroke 3% of the font size wide (`pdfcraft_fonts::shaped_text::SYNTHETIC_BOLD_STROKE`),
+/// measured where the line width applies, in the run's user space: the font size times the text
+/// matrix `tm`'s scale.
+fn synthesize_bold(state: &mut TextState, size: f64, tm: [f64; 6]) {
+    let scale = (tm[0] * tm[3] - tm[1] * tm[2]).abs().sqrt();
+    let width = size * scale * pdfcraft_fonts::shaped_text::SYNTHETIC_BOLD_STROKE / 1000.0;
+    if width.is_finite() && width > 0.0 {
+        state.stroke_with_fill(width);
+    }
+}
+
 /// Whether the approved Thai face can replace this source, whose embedded subset cannot
 /// shape the replacement. A usable complete source program always takes precedence.
 fn matching_thai_outline(doc: &Document, fonts: &Dict, source: &TextLine, span: &str) -> bool {
@@ -2097,6 +2109,9 @@ pub(crate) fn rewrite_styled_block(
             }
             let inverse = Matrix(o.ctm).invert().ok_or_else(|| EditError::Invalid("the paragraph has a singular transform".into()))?;
             let mut tm = Matrix(source.origin.tm).then(&Matrix(source.origin.ctm)).then(&inverse).0;
+            if style.synthetic_bold {
+                synthesize_bold(&mut state, size_of(source, item.1), tm);
+            }
             let (ax, ay) = back.apply(x - source.origin.x, baseline - source.origin.baseline);
             tm[4] += ax;
             tm[5] += ay;

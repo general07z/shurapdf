@@ -127,6 +127,31 @@ impl TextState {
         v
     }
 
+    /// Fill and stroke the text (`2 Tr`) with a line `width` wide in the fill's colour: synthetic
+    /// bold. The fill's operators become their stroking twins (`rg` → `RG`, `cs`/`scn` →
+    /// `CS`/`SCN`); the initial fill, black, strokes black.
+    pub(crate) fn stroke_with_fill(&mut self, width: f64) {
+        let stroke: Vec<Op> = self
+            .fill
+            .iter()
+            .filter_map(|op| {
+                let name = match op.op.as_slice() {
+                    b"g" => "G",
+                    b"rg" => "RG",
+                    b"k" => "K",
+                    b"cs" => "CS",
+                    b"sc" => "SC",
+                    b"scn" => "SCN",
+                    _ => return None,
+                };
+                Some(Op::new(name, op.operands.clone()))
+            })
+            .collect();
+        self.stroke = if stroke.is_empty() { vec![Op::new("G", vec![pdfcraft_content::num(0.0)])] } else { stroke };
+        self.line_width = Some(width);
+        self.render_mode = 2;
+    }
+
     /// Operators that set this state (inside a text object).
     pub(crate) fn ops(&self) -> Vec<Op> {
         let n = pdfcraft_content::num;
