@@ -1,6 +1,6 @@
 use super::options::{
-    COMBINE_OPTIONS, EXTRACT_OPTIONS, INFO_OPTIONS, RENDER_OPTIONS, SPLIT_OPTIONS, TEXT_OPTIONS, can_be_path_value, flag, needs_value, positional,
-    validate_options,
+    COMBINE_OPTIONS, EXTRACT_OPTIONS, INFO_OPTIONS, OptionSpec, RENDER_OPTIONS, SPLIT_OPTIONS, TEXT_OPTIONS, can_be_path_value, flag, needs_value,
+    positional, validate_options,
 };
 use super::{Arc, CliError, ImageFormat, PageRenderer, Path, PathBuf, RenderConfig, RenderRequest, RequestKind, Write, inspect, stdout_line};
 
@@ -318,6 +318,17 @@ pub(crate) fn combine(args: &[String]) -> Result<(), CliError> {
         inputs.iter().map(|p| Ok((file_stem(p), session.as_pdf(p, &read(p)?).map_err(|e| e.to_string())?))).collect::<Result<Vec<_>, String>>()?;
     let bytes = session.combine(&sources).map_err(|e| e.to_string())?;
     write_pdf(Path::new(out), &bytes)
+}
+
+/// `word-addin --out FILE`: the Word template the Windows installer puts in Office's startup folder
+/// (`pdfcraft_word_import::word_addin`), its tab named after this build's product.
+pub(crate) fn word_addin(args: &[String]) -> Result<(), CliError> {
+    validate_options("word-addin", args, &[OptionSpec { name: "--out", takes_value: true }])?;
+    let out = flag(args, "--out").ok_or("word-addin: missing --out")?;
+    let product = option_env!("PDFCRAFT_PRODUCT_NAME").filter(|n| !n.is_empty()).unwrap_or("PdfCraft");
+    let bytes = pdfcraft_engine::word_addin::template(product)?;
+    use pdfcraft_platform::staging::{StagingName, write_atomically};
+    write_atomically(Path::new(out), &bytes, StagingName::SuffixThenTag).map_err(|e| format!("{out}: {e}").into())
 }
 
 pub(crate) fn extract(args: &[String]) -> Result<(), CliError> {

@@ -173,6 +173,13 @@ if ($env:CRAFT_FONTS_DIR) {
 }
 # ---- end font notices for the MSI --------------------------------------------------------------
 
+# ---- Word's PDF tab ----------------------------------------------------------------------------
+# The template the MSI puts in Word's startup folder (crates/word-import/src/word_addin.rs), written
+# by the signed pdfcraft-cli just staged, so the tab carries this build's product name.
+$WordTemplate = Join-Path $Stage 'word-pdf-tab.dotx'
+Invoke-Native 'pdfcraft-cli word-addin' { & (Join-Path $Stage 'pdfcraft-cli.exe') word-addin --out $WordTemplate }
+if (-not (Test-Path -LiteralPath $WordTemplate)) { throw "pdfcraft-cli word-addin wrote no $WordTemplate" }
+
 # ---- MSI ---------------------------------------------------------------------------------------
 # A build's own product name, manufacturer and upgrade identity (a fork such as ShuraPDF); unset,
 # the installer is PdfCraft's.
@@ -188,7 +195,7 @@ Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "ModelsDir=$Models" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
-    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" @Brand `
+    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" -d "WordTemplate=$WordTemplate" @Brand `
     -o $Msi
 }
 # Inspect the built MSI, not just the XML, before signing/publishing it. In a child process, so

@@ -147,7 +147,7 @@ pub use pdfcraft_redact::user_regex::{UserRegex as RedactRegex, VALIDATORS as RE
 pub use pdfcraft_redact::{Claim as RedactionClaim, Identification as RedactionIdentification};
 pub use pdfcraft_sign as sign;
 pub use pdfcraft_sign::{SignOptions, SignatureInfo, Status as SignatureStatus, StatusCaptions, TrustStore};
-pub use pdfcraft_word_import::{WordEngine, engine as word_engine, set_engine as set_word_engine};
+pub use pdfcraft_word_import::{WordEngine, engine as word_engine, set_engine as set_word_engine, word_addin};
 pub use pdfcraft_xfdf::Format as DataFormat;
 pub use pdfcraft_xfdf::{Outline as CommentOutline, comment_count, comment_outlines, comments_bounds, is_xfdf_comments};
 
