@@ -267,6 +267,19 @@ foreach ($value in @(@('Icon', '"[#PdfcraftExe]",0'), @('MultiSelectModel', 'Doc
 $combineCommand = Read-Row ('SELECT `Value`, `Component_` FROM `Registry` WHERE `Key` = ''' + $combineKey + '\command''') 2
 Assert-Equal $combineCommand[0] '"[#PdfcraftExe]" --combine "%1"' 'Combine verb command'
 Assert-Equal $combineCommand[1] 'PdfcraftPdfContextMenu' 'Combine verb command component'
+# "Convert to PDF with ShuraPDF" on Word documents (apps/pdfcraft/src/convert.rs): its own
+# component on the PDF menu's switch. Each selected file starts `pdfcraft --convert-to-pdf "<file>"`.
+$wordComponent = Read-Row 'SELECT `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordContextMenu''' 1
+Assert-Equal $wordComponent[0] 'INSTALLPDFCONTEXTMENU = 1' 'Word context menu condition'
+foreach ($ext in @('.docx', '.doc', '.docm')) {
+  $wordKey = 'Software\Classes\SystemFileAssociations\' + $ext + '\shell\PdfCraft.ConvertToPdf'
+  $wordMenu = Read-Row ('SELECT `Value`, `Component_`, `Root` FROM `Registry` WHERE `Key` = ''' + $wordKey + ''' AND `Name` IS NULL') 3
+  Assert-Equal $wordMenu[0] "Convert to PDF with $Product" "Convert to PDF label ($ext)"
+  Assert-Equal $wordMenu[1] 'PdfcraftWordContextMenu' "Convert to PDF component ($ext)"
+  Assert-Equal $wordMenu[2] '-1' "Convert to PDF context-sensitive root ($ext)"
+  $wordCommand = Read-Row ('SELECT `Value` FROM `Registry` WHERE `Key` = ''' + $wordKey + '\command''') 1
+  Assert-Equal $wordCommand[0] '"[#PdfcraftExe]" --convert-to-pdf "%1"' "Convert to PDF command ($ext)"
+}
 
 # Install folder (#1139): the welcome dialog's "Install to" row (a PathEdit, and Browse… into a
 # native folder browser) changes the folder install-policy.wxi chose for the scope. Its secure

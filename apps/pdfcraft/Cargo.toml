@@ -44,6 +44,8 @@ wayland-protocols = { version = "0.32", features = ["client"] }
 raw-window-handle = "0.6"
 
 [dev-dependencies]
+# A synthetic .docx for the Convert to PDF test (src/convert.rs).
+pdfcraft-word-import = { workspace = true, features = ["test-support"] }
 # Waits for wgpu's adapter, device and error-scope futures in tests (already in the tree through wgpu).
 pollster = "1.0"
 

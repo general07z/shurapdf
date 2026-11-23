@@ -41,6 +41,14 @@ PR numbers are `general07z/shurapdf` pull requests.
   (`docs/code-signing.md`). SignPath Foundation signing is wired but inactive: SignPath declined
   the application (#49).
 
+### Word documents in File Explorer
+- Right-click a Word document (`.docx`, `.doc`, `.docm`) ▸ "Convert to PDF with ShuraPDF": the PDF
+  is written beside it (same name; `Name (2).pdf` when taken, never overwritten) and opened, in the
+  running app when there is one. Microsoft Word converts when it is installed, else the built-in
+  engine. A file that can't be converted there (a password, an error) opens as it would on a
+  double-click. On the installer's PDF context-menu switch (`apps/pdfcraft/src/convert.rs`,
+  `--convert-to-pdf`, this PR). On Windows 11 it is under "Show more options".
+
 ### Diagnostic log
 - Preferences ▸ General ▸ Diagnostic log: Off (default), Without document text, With document
   text, kept in the settings (`diagnostic_log`, also a `set_option`). It writes to the app's log

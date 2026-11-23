@@ -37,6 +37,7 @@ use pdfcraft_ui_egui::PdfCraftApp;
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod compositor_gpu;
+mod convert;
 mod decorations;
 mod logging;
 #[cfg(target_os = "windows")]
@@ -72,6 +73,7 @@ Options:
   --new-window                open a window of its own instead of passing the files to a running PdfCraft
   --create-images [images…]   put the images in one PDF and ask for the page DPI
   --combine files…            add the files to the Combine files tab, of a running PdfCraft if there is one
+  --convert-to-pdf files…     convert Word documents to PDFs beside them, then open those
   --control <file>            enable the UI control channel (pdfcraft-cli ui --control <file> …)
   --page N, --zoom 150, --layout continuous, --theme dark, …
                               view settings applied once the files are open
@@ -244,6 +246,10 @@ fn main() -> eframe::Result {
         return print_and_exit(USAGE);
     }
     startup.files = rejoin_split_paths(startup.files, |p| std::path::Path::new(p).is_file());
+    // The Word files become PDFs beside them before anything opens; those are what open (`convert`).
+    if startup.convert_to_pdf {
+        startup.files = convert::word_files_to_pdf(&startup.files);
+    }
     let may_hand_off = startup.may_hand_off();
     let startup::Arguments { files, options, control_file, create_images, combine, two_paged, .. } = startup;
     let integrated = cfg!(target_os = "macos");

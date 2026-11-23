@@ -180,6 +180,26 @@
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine\command" Value="&quot;[#PdfcraftExe]&quot; --combine &quot;%1&quot;" Type="string" />
       </Component>
 
+      <!-- Word context menu: "Convert to PDF with ShuraPDF" writes the PDF beside each selected
+           Word document and opens it (apps/pdfcraft/src/convert.rs), leaving Word's own file
+           defaults alone. One launch per selected file, each handing its PDF to the running app
+           (single_instance). On the PDF menu's switch: INSTALLPDFCONTEXTMENU=0 leaves it out too.
+           Its own component with an HKLM key path, so uninstall removes it. -->
+      <Component Id="PdfcraftWordContextMenu" Guid="89A2E020-7CF0-4F0E-962A-E9AD98998008" Condition="INSTALLPDFCONTEXTMENU = 1">
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.ConvertToPdf" Value="Convert to PDF with $(var.ProductName)" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.ConvertToPdf" Name="Icon" Value="&quot;[#PdfcraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.ConvertToPdf" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.ConvertToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-to-pdf &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.doc\shell\PdfCraft.ConvertToPdf" Value="Convert to PDF with $(var.ProductName)" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.doc\shell\PdfCraft.ConvertToPdf" Name="Icon" Value="&quot;[#PdfcraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.doc\shell\PdfCraft.ConvertToPdf" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.doc\shell\PdfCraft.ConvertToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-to-pdf &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.ConvertToPdf" Value="Convert to PDF with $(var.ProductName)" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.ConvertToPdf" Name="Icon" Value="&quot;[#PdfcraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.ConvertToPdf" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.ConvertToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-to-pdf &quot;%1&quot;" Type="string" />
+      </Component>
+
       <!-- Image context menu (#190): "Create PDF with PdfCraft…" opens the DPI chooser, without
            changing image file defaults. Its own component with an HKLM key path, so
            INSTALLIMAGECONTEXTMENU=0 leaves it out and uninstall removes it. These rows were in
