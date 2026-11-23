@@ -344,9 +344,9 @@ pub const PUBLISHER: Option<&str> = match option_env!("PDFCRAFT_MANUFACTURER") {
     _ => None,
 };
 
-/// A build under its own name (an organisation's fork) leaves out the upstream community prompts:
-/// the home screen's ArtCraft community card and the title bar's Discord button. Help ▸ the
-/// community links stay.
+/// A build under its own name (an organisation's fork) leaves out the upstream's community prompts
+/// and own wording: the home screen's tagline, ArtCraft community card and privacy note, the title
+/// bar's Discord button, and Help's and About's community links.
 pub const COMMUNITY_PROMPTS: bool = !matches!(option_env!("PDFCRAFT_PRODUCT_NAME"), Some(name) if !name.is_empty());
 
 pub struct PdfCraftApp {

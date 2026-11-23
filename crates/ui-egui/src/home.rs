@@ -77,11 +77,14 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 36, right: 36, top: 28, bottom: 28 }).show(ui, |ui| {
             ui.label(egui::RichText::new(tl!("Welcome to PdfCraft").replace("PdfCraft", crate::PRODUCT_NAME)).font(theme::semibold(24.0)));
-            ui.label(
-                egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
-                    .color(t.text_muted)
-                    .font(theme::regular(14.0)),
-            );
+            // The upstream's own wording, left out of a build under its own name.
+            if crate::COMMUNITY_PROMPTS {
+                ui.label(
+                    egui::RichText::new(tl!("An open-source PDF workbench — local, private, and scriptable."))
+                        .color(t.text_muted)
+                        .font(theme::regular(14.0)),
+                );
+            }
             ui.add_space(14.0);
             if crate::COMMUNITY_PROMPTS && !app.community_card_closed {
                 egui::Frame::NONE
@@ -293,12 +296,14 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             if clear {
                 app.execute("file.clear_recent");
             }
-            ui.add_space(20.0);
-            widgets::section_title(ui, tl!("Privacy"));
-            ui.label(
-                egui::RichText::new(tl!("PdfCraft works offline. No telemetry, no account, and no cloud processing unless you add a provider."))
-                    .color(t.text_muted),
-            );
+            if crate::COMMUNITY_PROMPTS {
+                ui.add_space(20.0);
+                widgets::section_title(ui, tl!("Privacy"));
+                ui.label(
+                    egui::RichText::new(tl!("PdfCraft works offline. No telemetry, no account, and no cloud processing unless you add a provider."))
+                        .color(t.text_muted),
+                );
+            }
         });
     });
 }
