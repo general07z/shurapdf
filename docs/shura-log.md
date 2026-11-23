@@ -36,7 +36,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   branded Help menu (#7, #12, #13, #17).
 - The branded build leaves out the upstream's home tagline ("An open-source PDF workbench…"),
   its privacy note ("PdfCraft works offline…") and the title bar's Discord button, at the
-  owner's request (this PR). The constant meant to hide that button (`COMMUNITY_PROMPTS`) was
+  owner's request (#77). The constant meant to hide that button (`COMMUNITY_PROMPTS`) was
   never checked there.
 - High compression preset for Compress a PDF (#16).
 - A signature image loses its paper background whatever its colour (#33).
