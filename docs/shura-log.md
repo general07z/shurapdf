@@ -47,7 +47,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   running app when there is one. Microsoft Word converts when it is installed, else the built-in
   engine. A file that can't be converted there (a password, an error) opens as it would on a
   double-click. On the installer's PDF context-menu switch (`apps/pdfcraft/src/convert.rs`,
-  `--convert-to-pdf`, this PR). On Windows 11 it is under "Show more options".
+  `--convert-to-pdf`, #79). On Windows 11 it is under "Show more options".
 
 ### Diagnostic log
 - Preferences ▸ General ▸ Diagnostic log: Off (default), Without document text, With document
