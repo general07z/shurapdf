@@ -59,7 +59,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   (`idMso="FileSaveAsPdfOrXps"`), no macro, so no macro policy blocks it. Found from Word's
   install root (Microsoft 365 Click-to-Run, else MSI Office, 64- or 32-bit); left out without
   Word or in a per-user install; uninstall removes it (`crates/word-import/src/word_addin.rs`,
-  `pdfcraft-cli word-addin`, this PR). Next: a second button that converts beside the document
+  `pdfcraft-cli word-addin`, #80). Next: a second button that converts beside the document
   and opens it in ShuraPDF without a dialog (needs a small VBA macro).
 
 ### Diagnostic log
