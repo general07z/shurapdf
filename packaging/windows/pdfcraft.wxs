@@ -77,7 +77,26 @@
     <SetProperty Id="INSTALLIMAGECONTEXTMENU" Value="1" After="CraftLoadOption2U" Sequence="first" Condition="NOT INSTALLIMAGECONTEXTMENU AND (NOT IMAGECONTEXTMENURELEASE OR EXISTINGIMAGECONTEXTMENU)" />
     <UIRef Id="PdfcraftInstallerUI" />
 
+    <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): a template with no macro in Word's
+         own startup folder, which Word loads for every user of the PC and Office trusts by default.
+         Found from Word's install root: Click-to-Run (Microsoft 365), else an MSI Office, 64- or
+         32-bit. No Word, or a per-user install (which can't write there): left out. -->
+    <Property Id="WORDROOTC2R">
+      <RegistrySearch Id="CraftWordRootC2R" Root="HKLM" Key="SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="WORDROOTMSI">
+      <RegistrySearch Id="CraftWordRootMsi" Root="HKLM" Key="SOFTWARE\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="WORDROOTMSI32">
+      <RegistrySearch Id="CraftWordRootMsi32" Root="HKLM" Key="SOFTWARE\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always32" />
+    </Property>
+    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupMsi32" Value="[WORDROOTMSI32]STARTUP" Condition="WORDROOTMSI32" Sequence="both" />
+    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupMsi" Value="[WORDROOTMSI]STARTUP" Condition="WORDROOTMSI" Sequence="both" />
+    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupC2R" Value="[WORDROOTC2R]STARTUP" Condition="WORDROOTC2R" Sequence="both" />
+
     <StandardDirectory Id="ProgramFiles6432Folder">
+      <!-- Word's startup folder, set above when Word is found; this default is never used. -->
+      <Directory Id="WORDSTARTUP" Name="WordStartup" />
       <Directory Id="CraftSuiteFolder" Name="ArtCraft">
         <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)">
         <Directory Id="ModelsFolder" Name="models" />
@@ -236,6 +255,10 @@
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf" Value="Create PDF with $(var.ProductName)…" Type="string" />
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
+      </Component>
+
+      <Component Id="PdfcraftWordTemplate" Directory="WORDSTARTUP" Guid="6853C76E-6A1B-455A-A886-5ED92FB7A442" Condition="(WORDROOTC2R OR WORDROOTMSI OR WORDROOTMSI32) AND ALLUSERS = 1">
+        <File Id="PdfcraftWordTemplateFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotx" KeyPath="yes" />
       </Component>
 
       <Component Id="PdfcraftCli">

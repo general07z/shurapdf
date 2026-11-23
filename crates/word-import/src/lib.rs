@@ -77,6 +77,7 @@ pub fn engine() -> WordEngine {
 }
 
 mod office;
+pub mod word_addin;
 pub use office::{OfficeError, working_folder};
 
 impl From<wordcraft_docx::DocxError> for WordImportError {

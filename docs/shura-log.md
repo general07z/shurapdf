@@ -53,6 +53,15 @@ PR numbers are `general07z/shurapdf` pull requests.
   double-click. On the installer's PDF context-menu switch (`apps/pdfcraft/src/convert.rs`,
   `--convert-to-pdf`, #79). On Windows 11 it is under "Show more options".
 
+### Word's PDF tab
+- The Windows installer puts a template in Word's own startup folder, so Word shows a tab named
+  after the product with one button, "تحويل إلى PDF": Word's own Save as PDF or XPS command
+  (`idMso="FileSaveAsPdfOrXps"`), no macro, so no macro policy blocks it. Found from Word's
+  install root (Microsoft 365 Click-to-Run, else MSI Office, 64- or 32-bit); left out without
+  Word or in a per-user install; uninstall removes it (`crates/word-import/src/word_addin.rs`,
+  `pdfcraft-cli word-addin`, #80). Next: a second button that converts beside the document
+  and opens it in ShuraPDF without a dialog (needs a small VBA macro).
+
 ### Diagnostic log
 - Preferences ▸ General ▸ Diagnostic log: Off (default), Without document text, With document
   text, kept in the settings (`diagnostic_log`, also a `set_option`). It writes to the app's log

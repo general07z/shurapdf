@@ -280,6 +280,12 @@ foreach ($ext in @('.docx', '.doc', '.docm')) {
   $wordCommand = Read-Row ('SELECT `Value` FROM `Registry` WHERE `Key` = ''' + $wordKey + '\command''') 1
   Assert-Equal $wordCommand[0] '"[#PdfcraftExe]" --convert-to-pdf "%1"' "Convert to PDF command ($ext)"
 }
+# Word's PDF tab: a template in Word's startup folder, only where Word is found and per machine.
+$wordTemplate = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordTemplate''' 2
+Assert-Equal $wordTemplate[0] 'WORDSTARTUP' 'Word template folder'
+Assert-Equal $wordTemplate[1] '(WORDROOTC2R OR WORDROOTMSI OR WORDROOTMSI32) AND ALLUSERS = 1' 'Word template condition'
+$wordTemplateFile = Read-Row 'SELECT `FileName` FROM `File` WHERE `File` = ''PdfcraftWordTemplateFile''' 1
+if ($wordTemplateFile[0] -notmatch [regex]::Escape("$Product.dotx")) { throw "Word template file name: '$($wordTemplateFile[0])'" }
 
 # Install folder (#1139): the welcome dialog's "Install to" row (a PathEdit, and Browse… into a
 # native folder browser) changes the folder install-policy.wxi chose for the scope. Its secure
