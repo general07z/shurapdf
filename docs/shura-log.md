@@ -67,14 +67,18 @@ PR numbers are `general07z/shurapdf` pull requests.
     comment. Registration uses safe WinRT calls. The rest of the workspace keeps `forbid`.
 
 ### Word's PDF tab
-- The Windows installer puts a template in Word's startup folder: Office's own for a per-machine
-  install (Word found from its install root: Microsoft 365 Click-to-Run, else MSI Office, 64- or
-  32-bit), the user's own (`%APPDATA%\Microsoft\Word\STARTUP`) for a per-user one; uninstall
-  removes it (#80, #81). Word shows a tab named after the product with two buttons:
+- The template is copied into each user's own Word startup folder (`%APPDATA%\Microsoft\Word\STARTUP`),
+  which Word trusts by default: the installer puts it beside `pdfcraft.exe` and copies it for the
+  user who installs (`--register-user`), every start copies it for a user who lacks it or has an
+  older one, and uninstall removes it for the user who uninstalls (other users' copies stay until
+  removed by hand). A per-user install also puts it there itself (#80, #81, #85). Office's own
+  startup folder is not trusted by default, so a template there kept its macro disabled.
+  Word shows a tab named after the product with two buttons:
   - "تحويل إلى PDF": a small VBA macro, written from the specification ([MS-OVBA],
     `crates/word-import/src/vba.rs`), saves `Name.pdf` beside the document with Word's own
     `ExportAsFixedFormat` (`Name (2).pdf` … when taken) and opens it in ShuraPDF. Runs from
     Word's trusted startup folder unless a policy forbids macros there.
+    Its module is `ShuraPDFMacros`, not the project's name `ShuraPDF`, which VBA refuses (#85).
   - "حفظ PDF…": Word's own Save as PDF or XPS command, no macro, as the fallback.
 
 ### Diagnostic log
@@ -125,6 +129,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 | #78 | Every PR's gate failed on `cargo deny`: RUSTSEC-2026-0592, a stack overflow in `url` 2.5.8's `Url::origin()` on nested `blob:` URLs | the advisory was published against the locked `url`; the lock now takes 2.5.9, as upstream did (storytold/pdfcraft#8093) | `cargo deny check` in the gate |
 | #83 | While typing in an Arabic paragraph, the typing box drew words cut or jumbled ("المطل وب"); the saved edit was right (owner's diagnostic log, Dubai) | each font resource had its own joining family, so a word typed across two of a face's subsets (Word splits a face; letters typed into a word take the piece they replace) was two sections, which egui shapes apart. Subsets of one face now share one family | `subsets_of_one_face_share_a_joining_family`, `pieces_in_one_format_are_one_section` |
 | #84 | An Arabic paragraph in Arial came back in Noto Sans Arabic after an edit (owner's diagnostic log; Arial installed) | a regression from #83: only a face's first subset got the face's installed copy, so a paragraph in another subset of Arial was retyped in the fallback face. Every subset now gets it (looked up once per face). And a paragraph whose font nobody changed that comes back in another family now shows a notice (and a `font changed` line in the diagnostic log), whatever the cause | `every_subset_of_a_face_gets_its_installed_copy`, `a_paragraph_that_lost_its_font_is_announced` |
+| #85 | Word's "تحويل إلى PDF" button: "The macro can't be found or has been disabled" (owner's Word; the VBA editor listed no ShuraPDF project) | the macro module had the project's own name (`ShuraPDF`), which VBA refuses, so Word dropped the project; and a per-machine install put the template in Office's own startup folder, which Word does not trust by default (the owner's Trusted Locations list it nowhere). The module is now `ShuraPDFMacros` (the writer refuses a module named as its project), the project a version 3 compound file as Office writes, and the template goes to each user's own trusted startup folder | `non_ascii_source_and_bad_names_are_refused`, `the_project_holds_the_module_source`, `the_template_is_copied_to_the_user_folder_and_kept_current`, test-msi (template beside the app, no Office folder, the per-user actions) |
 
 ## Known problems
 

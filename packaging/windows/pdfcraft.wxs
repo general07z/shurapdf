@@ -79,40 +79,22 @@
       </Property>
     <SetProperty Id="INSTALLIMAGECONTEXTMENU" Value="1" After="CraftLoadOption2U" Sequence="first" Condition="NOT INSTALLIMAGECONTEXTMENU AND (NOT IMAGECONTEXTMENURELEASE OR EXISTINGIMAGECONTEXTMENU)" />
     <UIRef Id="PdfcraftInstallerUI" />
-    <?if $(var.HasShellMenu) = 1 ?>
-    <!-- Windows 11's first-level menu (crates/shell-menu): its sparse package is registered per
-         user, so the installer registers it for the user who installs, as that user (impersonated),
-         once the files are in place, and removes it on uninstall (not on an update, which registers
-         the new one). Other users of a per-machine install get it on their first start of the app.
-         A failure is ignored: the classic entry under "Show more options" is there anyway. -->
-    <CustomAction Id="CraftRegisterShellMenu" FileRef="PdfcraftExe" ExeCommand="--register-shell-menu" Execute="deferred" Impersonate="yes" Return="ignore" />
-    <CustomAction Id="CraftUnregisterShellMenu" FileRef="PdfcraftExe" ExeCommand="--unregister-shell-menu" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <!-- Per-user parts, which Windows and Word keep per user: Windows 11's first-level menu
+         (crates/shell-menu, its sparse package) and Word's PDF tab (the template copied into the
+         user's own Word startup folder, which Word trusts by default; Office's own startup folder is
+         not trusted by default, so a template there kept its macro disabled). The installer sets
+         them up for the user who installs, as that user (impersonated), once the files are in place,
+         and removes them on uninstall (not on an update, which sets up the new ones). Other users of
+         a per-machine install get them on their first start of the app. A failure is ignored: the
+         classic menu entry and Word's own Save as PDF are there anyway. -->
+    <CustomAction Id="CraftRegisterUser" FileRef="PdfcraftExe" ExeCommand="--register-user" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="CraftUnregisterUser" FileRef="PdfcraftExe" ExeCommand="--unregister-user" Execute="deferred" Impersonate="yes" Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="CraftRegisterShellMenu" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot; AND INSTALLPDFCONTEXTMENU = 1" />
-      <Custom Action="CraftUnregisterShellMenu" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="CraftRegisterUser" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="CraftUnregisterUser" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
-    <?endif?>
-
-    <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): a template in Word's own startup
-         folder, which Word loads for every user of the PC and Office trusts by default. Found from
-         Word's install root: Click-to-Run (Microsoft 365), else an MSI Office, 64- or 32-bit. A
-         per-user install puts it in the user's own startup folder instead (below). -->
-    <Property Id="WORDROOTC2R">
-      <RegistrySearch Id="CraftWordRootC2R" Root="HKLM" Key="SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always64" />
-    </Property>
-    <Property Id="WORDROOTMSI">
-      <RegistrySearch Id="CraftWordRootMsi" Root="HKLM" Key="SOFTWARE\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always64" />
-    </Property>
-    <Property Id="WORDROOTMSI32">
-      <RegistrySearch Id="CraftWordRootMsi32" Root="HKLM" Key="SOFTWARE\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always32" />
-    </Property>
-    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupMsi32" Value="[WORDROOTMSI32]STARTUP" Condition="WORDROOTMSI32" Sequence="both" />
-    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupMsi" Value="[WORDROOTMSI]STARTUP" Condition="WORDROOTMSI" Sequence="both" />
-    <SetDirectory Id="WORDSTARTUP" Action="CraftWordStartupC2R" Value="[WORDROOTC2R]STARTUP" Condition="WORDROOTC2R" Sequence="both" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <!-- Word's startup folder, set above when Word is found; this default is never used. -->
-      <Directory Id="WORDSTARTUP" Name="WordStartup" />
       <Directory Id="CraftSuiteFolder" Name="ArtCraft">
         <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)">
         <Directory Id="ModelsFolder" Name="models" />
@@ -245,7 +227,7 @@
 
       <?if $(var.HasShellMenu) = 1 ?>
       <!-- The same entry in Windows 11's first-level menu: the COM server and its sparse package
-           (registered by CraftRegisterShellMenu), on the PDF menu's switch like the classic one. -->
+           (registered by CraftRegisterUser), on the PDF menu's switch like the classic one. -->
       <Component Id="PdfcraftShellMenu" Guid="2CA2EA12-113E-47AC-9C7A-2D0BE27BE390" Condition="INSTALLPDFCONTEXTMENU = 1">
         <File Id="PdfcraftShellMenuDll" Source="$(var.BinDir)\pdfcraft_shell_menu.dll" KeyPath="yes" />
         <File Id="PdfcraftShellMenuPackage" Source="$(var.BinDir)\shell-menu.msix" />
@@ -289,12 +271,16 @@
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
       </Component>
 
-      <Component Id="PdfcraftWordTemplate" Directory="WORDSTARTUP" Guid="6853C76E-6A1B-455A-A886-5ED92FB7A442" Condition="(WORDROOTC2R OR WORDROOTMSI OR WORDROOTMSI32) AND ALLUSERS = 1">
+      <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): the template beside pdfcraft.exe,
+           which the app copies into each user's own Word startup folder (apps/pdfcraft/src/word_tab.rs,
+           CraftRegisterUser). A new component: up to #81 the template went to Office's own startup
+           folder, which Word does not trust by default; MajorUpgrade removes that copy. -->
+      <Component Id="PdfcraftWordTemplateSource" Guid="43E01235-AB07-4DB0-93E9-4A51CD035F6D">
         <File Id="PdfcraftWordTemplateFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" KeyPath="yes" />
       </Component>
-      <!-- A per-user install can't write to Office's folder: the template goes to the user's own Word
-           startup folder, which Word loads and trusts the same way. A per-user component keeps an HKMU
-           key path and removes the folders it made, if empty, on uninstall. -->
+      <!-- A per-user install also puts it in the user's own Word startup folder itself, so uninstall
+           removes it there. A per-user component keeps an HKMU key path and removes the folders it
+           made, if empty, on uninstall. -->
       <Component Id="PdfcraftWordTemplateUser" Directory="WORDUSERSTARTUP" Guid="D994887F-CCE7-417B-9C06-CD2C80175509" Condition="ALLUSERS &lt;&gt; 1">
         <File Id="PdfcraftWordTemplateUserFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" />
         <RegistryValue Root="HKMU" Key="Software\PdfCraft\WordTemplate" Name="Installed" Type="integer" Value="1" KeyPath="yes" />

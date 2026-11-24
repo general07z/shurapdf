@@ -51,6 +51,7 @@ mod text_scale;
 #[cfg(test)]
 #[path = "windows_manifest.rs"]
 mod windows_manifest;
+mod word_tab;
 
 /// Freedesktop app id: the `.desktop` file name and the hicolor icon name.
 const APP_ID: &str = "ai.storyteller.pdfcraft";
@@ -274,7 +275,7 @@ fn main() -> eframe::Result {
             Err(e) => log::warn!("no log file: {e}"),
         }
     }
-    // Each user of a per-machine install gets the Windows 11 menu entry on their first start.
+    // Each user of a per-machine install gets the Windows 11 menu entry and Word's PDF tab on their first start.
     shell_menu::ensure_in_background();
     // Windows, Linux and the BSDs: a launch that only names files (an Outlook attachment, an
     // Explorer double-click, a file manager or `xdg-open`) hands them to the PdfCraft already

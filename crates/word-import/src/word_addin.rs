@@ -60,7 +60,8 @@ End Sub
 
 /// The template, a macro-enabled `.dotm` package, with a ribbon tab named `product`.
 pub fn template(product: &str) -> Result<Vec<u8>, String> {
-    let project = crate::vba::project("ShuraPDF", "ShuraPDF", MACRO)?;
+    // The module's name differs from the project's: VBA refuses a module named as its project.
+    let project = crate::vba::project("ShuraPDF", "ShuraPDFMacros", MACRO)?;
     let product = xml_escape(product);
     let parts: [(&str, String); 6] = [
         (
