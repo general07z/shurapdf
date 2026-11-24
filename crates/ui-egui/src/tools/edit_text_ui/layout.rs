@@ -205,6 +205,7 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
     definitions.families.retain(|family, _| !matches!(family, FontFamily::Name(name) if name.starts_with("pdf-source-")));
     let interface = definitions.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut out = SourceFonts::default();
+    let joining_names = joining_families(programs.iter().map(|p| p.face.as_str()));
     for (index, program) in programs.iter().enumerate() {
         let name = format!("pdf-source-{index}");
         definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
@@ -212,6 +213,9 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
     }
     for (index, program) in programs.iter().enumerate() {
         let Some(name) = out.fonts.get(&program.resource) else { continue };
+        let Some(joining_name) = joining_names.get(index).cloned() else { continue };
+        // A face's later subsets share its first one's joining family (see [`joining_families`]).
+        let shared = definitions.families.contains_key(&FontFamily::Name(joining_name.clone().into()));
         // Word-created PDFs often split one face into several subsets. Use all of the
         // document's matching subsets before falling back for newly inserted characters.
         let mut stack = vec![name.clone()];
@@ -231,7 +235,9 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         // A complete face (an earlier edit embedded it) draws; a Word subset never does, even if it
         // has joining rules: it holds only the glyphs the page used, and a letter it lacks would
         // show as an empty box in the typing box.
-        let joining = if joins_arabic(&program.bytes) && program.resource.starts_with("PCFull") {
+        let joining = if shared {
+            Vec::new()
+        } else if joins_arabic(&program.bytes) && program.resource.starts_with("PCFull") {
             stack
         } else if let Some(bytes) = installed_face(ctx, &program.face) {
             let installed = format!("pdf-source-{index}-installed");
@@ -251,14 +257,32 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         if let Some(regular) = installed_regular_face(ctx, &program.face) {
             out.regular_faces.insert(program.resource.clone(), Arc::new(regular));
         }
-        let joining_name = format!("pdf-source-{index}-joining");
-        definitions.families.insert(FontFamily::Name(joining_name.clone().into()), joining);
+        if !shared {
+            definitions.families.insert(FontFamily::Name(joining_name.clone().into()), joining);
+        }
         out.joining.insert(program.resource.clone(), joining_name);
     }
     if !out.fonts.is_empty() {
         ctx.set_fonts(definitions);
     }
     out
+}
+
+/// The joining family of each program, by its face: every subset of one face (Word splits a face
+/// into several, and an edit adds its own) shares one family. Text the editor gives to two of them
+/// (typing in a word moves its letters between the source pieces they came from) is then one
+/// section of one format, which egui shapes as one run, so the word stays joined while typed. With
+/// a family each, a word typed across two pieces was cut in two in the typing box ("المطل وب"),
+/// though the edit, shaped whole, was right.
+fn joining_families<'a>(faces: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut first: BTreeMap<String, usize> = BTreeMap::new();
+    faces
+        .enumerate()
+        .map(|(index, face)| {
+            let owner = *first.entry(pdfcraft_fonts::embedding::face_key(face)).or_insert(index);
+            format!("pdf-source-{owner}-joining")
+        })
+        .collect()
 }
 
 pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32, width: f32) -> egui::text::LayoutJob {
@@ -632,6 +656,18 @@ mod tests {
         assert_eq!(job.text, "الموضوع: طلب");
         assert_eq!(job.sections.len(), 2);
         assert_eq!(job.sections[0].byte_range.end.0, "الموضوع: ".len());
+    }
+
+    /// Two subsets of one face (and the full face an edit embedded) share one joining family, so a
+    /// word typed across them is one section; another face keeps its own.
+    #[test]
+    fn subsets_of_one_face_share_a_joining_family() {
+        let names = super::joining_families(["BCDJEE+Dubai-Bold", "BCDMEE+Dubai-Regular", "XYZABC+Dubai-Bold", "Dubai-Bold", "Tajawal"].into_iter());
+        assert_eq!(names[0], names[2], "two Word subsets of Dubai Bold");
+        assert_eq!(names[0], names[3], "the full face an edit embedded");
+        assert_ne!(names[0], names[1], "Dubai Regular is another face");
+        assert_ne!(names[0], names[4]);
+        assert!(names.iter().all(|n| n.starts_with("pdf-source-") && n.ends_with("-joining")));
     }
 
     /// A program with glyph substitutions joins Arabic itself; Word's embedded subsets have none.
