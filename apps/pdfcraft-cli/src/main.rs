@@ -79,6 +79,8 @@ pdfcraft-cli edit   <in.pdf> --out out.pdf [--rotate 1,3:90] [--delete 2,4] [--m
                       (options run in order; page numbers refer to the document after the earlier options)
 pdfcraft-cli combine <a.pdf> <b.docx> … --out combined.pdf  (PDFs, images, .txt and Word .docx)
 pdfcraft-cli word-addin --out ShuraPDF.dotm               the Word template with a PDF tab (the Windows installer's)
+pdfcraft-cli shell-menu-manifest --publisher SUBJECT --arch x64 --out AppxManifest.xml
+                                                          the Windows 11 menu package's manifest (the installer's)
 pdfcraft-cli extract <in.pdf> --pages 1,3,5-8 --out out.pdf    (pages and ranges, in the order given)
 pdfcraft-cli split   <in.pdf> (--every N | --before 3,7) [--out-dir DIR]
 pdfcraft-cli check  <files or dirs…> [--timeout 20] [--dpi 36] [--json out.json]
@@ -140,6 +142,7 @@ fn main() -> ExitCode {
         Some("extract") => extract(&args[1..]),
         Some("split") => split(&args[1..]),
         Some("word-addin") => commands::word_addin(&args[1..]),
+        Some("shell-menu-manifest") => commands::shell_menu_manifest(&args[1..]),
         Some("check") => check(&args[1..]),
         Some("check-one") => check_one(&args[1..]),
         Some("audit") => audit(&args[1..]),

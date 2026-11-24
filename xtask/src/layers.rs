@@ -93,6 +93,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("ocr-worker", Class::Exempt),
+    ("shell-menu", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
 

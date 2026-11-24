@@ -52,6 +52,19 @@ PR numbers are `general07z/shurapdf` pull requests.
   engine. A file that can't be converted there (a password, an error) opens as it would on a
   double-click. On the installer's PDF context-menu switch (`apps/pdfcraft/src/convert.rs`,
   `--convert-to-pdf`, #79). On Windows 11 it is under "Show more options".
+- Windows 11's first-level menu has the same entry (this PR): a COM server (`IExplorerCommand`,
+  `crates/shell-menu`) in a DLL beside `pdfcraft.exe`, and a sparse package (`shell-menu.msix`,
+  manifest from `pdfcraft-cli shell-menu-manifest`, signed with the Council's certificate, whose
+  subject is its publisher) that names it for `.docx`, `.doc` and `.docm`. Packages are per user:
+  the installer registers it as the installing user (`pdfcraft.exe --register-shell-menu`,
+  deferred and impersonated, a failure ignored) and removes it on uninstall; each other user of a
+  per-machine install gets it the first time they start ShuraPDF. Built only for x64 and arm64,
+  and only with `WINDOWS_CERTIFICATE`: Windows registers a package only when it trusts its signer
+  (the Council's certificate installed, docs/code-signing.md). Not before Windows 11.
+  - `unsafe` exception: the owner approved `unsafe` in `crates/shell-menu` alone (2026-11-24),
+    which a COM server needs for its exports (`DllGetClassObject`) and shell calls; the crate
+    sets `unsafe_code = "deny"` and allows it only in `src/server.rs`, each block with a SAFETY
+    comment. Registration uses safe WinRT calls. The rest of the workspace keeps `forbid`.
 
 ### Word's PDF tab
 - The Windows installer puts a template in Word's startup folder: Office's own for a per-machine
@@ -134,6 +147,9 @@ PR numbers are `general07z/shurapdf` pull requests.
     words' characters, not in a row (run 44714354245); not reproduced with open faces. The second
     edit (same paragraph, own font) not yet diagnosed.
 - After an edit that fails, each later press on the page sends the same failing edit again (owner's diagnostic log, #75): the paragraph editor keeps the edit it could not apply. Not yet fixed.
+- Windows 11 menu, to check on a Council PC: the entry in the first-level menu, the entry not
+  shown twice under "Show more options" (packaged entries can appear there beside the classic one),
+  and a second user's entry after their first start. Not yet observed on a real machine.
 - The runner lacks Simplified Arabic and Traditional Arabic, so they are not measured.
 - Not yet: kashida justification, joining across a style change inside a word, reflow of the
   paragraphs below an edit.

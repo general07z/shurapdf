@@ -22,6 +22,8 @@ pdfcraft-preflight = { workspace = true }
 pdfcraft-automation = { workspace = true }
 pdfcraft-platform = { workspace = true }
 base64 = "0.23"
+# `shell-menu-manifest`: the Windows 11 menu package's manifest (packaging/windows/package.ps1).
+pdfcraft-shell-menu = { workspace = true }
 
 [dev-dependencies]
 # Decodes `render` output in tests/it/owner_password.rs; already a dependency of the engine.

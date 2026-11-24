@@ -331,6 +331,27 @@ pub(crate) fn word_addin(args: &[String]) -> Result<(), CliError> {
     write_atomically(Path::new(out), &bytes, StagingName::SuffixThenTag).map_err(|e| format!("{out}: {e}").into())
 }
 
+/// `shell-menu-manifest --publisher SUBJECT --arch ARCH --out FILE`: the manifest of the sparse
+/// package that puts "Convert to PDF" in Windows 11's first-level File Explorer menu
+/// (`pdfcraft_shell_menu::manifest`). SUBJECT is the signing certificate's subject.
+pub(crate) fn shell_menu_manifest(args: &[String]) -> Result<(), CliError> {
+    let options = [
+        OptionSpec { name: "--publisher", takes_value: true },
+        OptionSpec { name: "--arch", takes_value: true },
+        OptionSpec { name: "--out", takes_value: true },
+    ];
+    validate_options("shell-menu-manifest", args, &options)?;
+    let publisher = flag(args, "--publisher").ok_or("shell-menu-manifest: missing --publisher (the signing certificate's subject)")?;
+    let arch = flag(args, "--arch").ok_or("shell-menu-manifest: missing --arch (x64 or arm64)")?;
+    if !["x64", "arm64"].contains(&arch) {
+        return Err(format!("shell-menu-manifest: --arch {arch}: use x64 or arm64, the architectures File Explorer runs as").into());
+    }
+    let out = flag(args, "--out").ok_or("shell-menu-manifest: missing --out")?;
+    let xml = pdfcraft_shell_menu::manifest(publisher, arch);
+    use pdfcraft_platform::staging::{StagingName, write_atomically};
+    write_atomically(Path::new(out), xml.as_bytes(), StagingName::SuffixThenTag).map_err(|e| format!("{out}: {e}").into())
+}
+
 pub(crate) fn extract(args: &[String]) -> Result<(), CliError> {
     validate_options("extract", args, EXTRACT_OPTIONS)?;
     let path = *positional(args, EXTRACT_OPTIONS).first().ok_or("extract: missing file")?;

@@ -90,6 +90,11 @@ if (-not $SkipBuild) {
   # Fail the build (rather than warn) if the icon/VERSIONINFO can't be embedded.
   $env:PDFCRAFT_REQUIRE_WINRES = '1'
   Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p pdfcraft -p pdfcraft-cli --target $Target }
+  # The Windows 11 menu's COM server (crates/shell-menu), on its own so only the DLL exports it.
+  # File Explorer is x64 or arm64; an x86 build has no such menu.
+  if ($Arch -ne 'x86') {
+    Invoke-Native "cargo build shell menu ($Target)" { cargo build --release --locked -p pdfcraft-shell-menu --features server --target $Target }
+  }
 }
 
 $Bin = Join-Path $TargetDir "$Target\release"
@@ -180,6 +185,47 @@ $WordTemplate = Join-Path $Stage 'word-pdf-tab.dotm'
 Invoke-Native 'pdfcraft-cli word-addin' { & (Join-Path $Stage 'pdfcraft-cli.exe') word-addin --out $WordTemplate }
 if (-not (Test-Path -LiteralPath $WordTemplate)) { throw "pdfcraft-cli word-addin wrote no $WordTemplate" }
 
+# ---- Windows 11 menu ---------------------------------------------------------------------------
+# "Convert to PDF with ..." in Windows 11's first-level File Explorer menu: a sparse package
+# (crates/shell-menu) whose COM server is the DLL beside pdfcraft.exe. Windows registers a package
+# only when it is signed by a certificate it trusts, with the certificate's subject as publisher, so
+# it is built only with WINDOWS_CERTIFICATE (the Council's own; docs/code-signing.md). The installer
+# registers it per user (pdfcraft.exe --register-shell-menu); the classic entry stays either way.
+$HasShellMenu = 0
+if ($Arch -ne 'x86' -and $Phase -eq 'All' -and $env:WINDOWS_CERTIFICATE) {
+  $Dll = Join-Path $Bin 'pdfcraft_shell_menu.dll'
+  if (-not (Test-Path -LiteralPath $Dll)) { throw "the shell menu DLL is missing: $Dll" }
+  if ((Get-PeHeader $Dll).Machine -ne $Machine) { throw "pdfcraft_shell_menu.dll is not for $Arch" }
+  Copy-Item -LiteralPath $Dll -Destination $Stage
+  $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+  $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($env:WINDOWS_CERTIFICATE), $env:WINDOWS_CERTIFICATE_PASSWORD, $flags)
+  $Publisher = $cert.Subject
+  $cert.Dispose()
+  $MenuDir = Join-Path $TargetDir "windows-package\shell-menu-$Arch"
+  Remove-Item -Recurse -Force $MenuDir -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path (Join-Path $MenuDir 'Assets') | Out-Null
+  # The package's logos are the app's own icon (assets/app-icon).
+  $Icons = Join-Path $Root 'assets\app-icon\hicolor'
+  Copy-Item (Join-Path $Icons '48x48\apps\ai.storyteller.pdfcraft.png') (Join-Path $MenuDir 'Assets\logo44.png')
+  Copy-Item (Join-Path $Icons '64x64\apps\ai.storyteller.pdfcraft.png') (Join-Path $MenuDir 'Assets\logo50.png')
+  Copy-Item (Join-Path $Icons '256x256\apps\ai.storyteller.pdfcraft.png') (Join-Path $MenuDir 'Assets\logo150.png')
+  Invoke-Native 'pdfcraft-cli shell-menu-manifest' {
+    & (Join-Path $Stage 'pdfcraft-cli.exe') shell-menu-manifest --publisher $Publisher --arch $Arch --out (Join-Path $MenuDir 'AppxManifest.xml')
+  }
+  $MakeAppx = Get-ChildItem -Path (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin') -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match '\\x64\\makeappx\.exe$' } | Sort-Object FullName -Descending | Select-Object -First 1
+  if (-not $MakeAppx) { throw 'makeappx.exe not found (install the Windows SDK)' }
+  $MenuPackage = Join-Path $Stage 'shell-menu.msix'
+  # /nv: a sparse package names files outside itself (its external location), which the packing
+  # validation would look for inside it.
+  Invoke-Native 'makeappx pack' { & $MakeAppx.FullName pack /d $MenuDir /p $MenuPackage /nv /o }
+  & (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'pdfcraft_shell_menu.dll') $MenuPackage
+  $HasShellMenu = 1
+  Write-Output "ok Windows 11 menu package for '$Publisher'"
+} elseif ($Arch -ne 'x86') {
+  Write-Output "skipping the Windows 11 menu package: it needs WINDOWS_CERTIFICATE (the classic menu entry is installed)"
+}
+
 # ---- MSI ---------------------------------------------------------------------------------------
 # A build's own product name, manufacturer and upgrade identity (a fork such as ShuraPDF); unset,
 # the installer is PdfCraft's.
@@ -195,14 +241,14 @@ Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "ModelsDir=$Models" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
-    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" -d "WordTemplate=$WordTemplate" @Brand `
+    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" -d "WordTemplate=$WordTemplate" -d "HasShellMenu=$HasShellMenu" @Brand `
     -o $Msi
 }
 # Inspect the built MSI, not just the XML, before signing/publishing it. In a child process, so
 # its Windows Installer database handle is gone before signtool opens the MSI.
 Invoke-Native 'test-msi' {
   & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'test-msi.ps1') $Msi `
-    -CraftFontLicences $HasCraftFontLicences -ExpectedFontNoticesDirectory $Docs
+    -CraftFontLicences $HasCraftFontLicences -ExpectedFontNoticesDirectory $Docs -ShellMenu $HasShellMenu
 }
 # Check the compiled scope, path and registration contract before signing.
 & (Join-Path $PSScriptRoot 'check-install-policy.ps1') -MsiPath $Msi
