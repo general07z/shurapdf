@@ -198,7 +198,7 @@ fn word_tab(work: &Path) -> (bool, String) {
     }
     // AutomationSecurity 1: macros run in this Word started for the test (as they do from the user's
     // trusted startup folder), whatever the machine's own setting.
-    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  $pdf = $w.Run('ShuraPDF_Export', $d)\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  $pdf = $w.Run('ShuraPDF_Export', [ref]$d)\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let before = word_pids();
     let child = Command::new("powershell.exe")
