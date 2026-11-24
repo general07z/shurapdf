@@ -70,13 +70,6 @@ pub fn template(product: &str) -> Result<Vec<u8>, String> {
     template_with(product, crate::vba::Layout::default())
 }
 
-/// [`template`] with its VBA project laid out as `layout` says: the Council runner loads such
-/// variations in real Word to find what it refuses.
-#[cfg(feature = "test-support")]
-pub fn template_variant(product: &str, layout: crate::vba::Layout) -> Result<Vec<u8>, String> {
-    template_with(product, layout)
-}
-
 fn template_with(product: &str, layout: crate::vba::Layout) -> Result<Vec<u8>, String> {
     // The module's name differs from the project's: VBA refuses a module named as its project.
     let project = crate::vba::project_with("ShuraPDF", "ShuraPDFMacros", MACRO, layout)?;

@@ -41,8 +41,9 @@ const THIS_DOCUMENT: &str = "Attribute VB_Name = \"ThisDocument\"\r\nAttribute V
 Attribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = True\r\n\
 Attribute VB_Exposed = True\r\nAttribute VB_TemplateDerived = True\r\nAttribute VB_Customizable = True\r\n";
 
-/// How a project is laid out: what the template uses ([`Layout::default`]), and the variations the
-/// Council runner's check loads in real Word to find what it refuses (test support only).
+/// How a project is laid out: what the template uses ([`Layout::default`]). The other layouts are
+/// the variations the Council runner loaded in real Word to find what it refused (#87); the tests
+/// keep them buildable.
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
     /// `PROJECTSYSKIND`: 1 (32-bit Windows) or 3 (64-bit).

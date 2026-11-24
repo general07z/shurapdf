@@ -176,16 +176,6 @@ pub fn run(work: &Path) -> Vec<Check> {
     checks.push(check("Word's PDF tab: its macro compiles and saves a PDF beside the document", || {
         word_tab(work, "tab", pdfcraft_word_import::word_addin::template("ShuraPDF"))
     }));
-    // The same macro in projects laid out otherwise, one change each, to find what Word refuses
-    // while the template above fails.
-    use pdfcraft_word_import::vba::Layout;
-    let base = Layout::default();
-    for (name, label, layout) in [
-        ("no-base", "Word's PDF tab, variant: ThisDocument without VB_Base", Layout { vb_base: false, ..base }),
-        ("no-document", "Word's PDF tab, variant: no ThisDocument module", Layout { this_document: false, ..base }),
-    ] {
-        checks.push(check(label, || word_tab(work, name, pdfcraft_word_import::word_addin::template_variant("ShuraPDF", layout))));
-    }
     set_engine(WordEngine::Auto);
     checks
 }
@@ -210,7 +200,7 @@ fn word_tab(work: &Path, name: &str, template: Result<Vec<u8>, String>) -> (bool
     }
     // AutomationSecurity 1: macros run in this Word started for the test (as they do from the user's
     // trusted startup folder), whatever the machine's own setting.
-    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  try { $pdf = $w.Run('ShuraPDF_Export', [ref]$d) } catch { $pdf = $w.Run('ShuraPDF.ShuraPDFMacros.ShuraPDF_Export', [ref]$d); 'qualified name only' }\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  $pdf = $w.Run('ShuraPDF_Export', [ref]$d)\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let before = word_pids();
     let child = Command::new("powershell.exe")
