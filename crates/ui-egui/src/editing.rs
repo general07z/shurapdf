@@ -214,6 +214,31 @@ fn font_change_notice(before: &str, after: &str) -> Option<String> {
 }
 
 impl PdfCraftApp {
+    /// `edit` applied, with its diagnostic-log records and the notice of a paragraph's lost font.
+    fn apply_recorded(&mut self, id: pdfcraft_engine::DocId, edit: &Edit) -> Result<(), pdfcraft_engine::EditError> {
+        let diag = crate::diag::on().then(|| (web_time::Instant::now(), self.diag_edit_before(id, edit)));
+        let font_before = self.session.get(id).and_then(|doc| kept_font(doc, edit));
+        let applied = self.session.apply(id, edit.clone());
+        if applied.is_ok() {
+            self.announce_font_change(id, edit, font_before.as_deref());
+        }
+        if let Some((started, before)) = diag {
+            self.diag_edit_after(id, edit, &applied, started, before);
+        }
+        applied
+    }
+
+    /// A paragraph whose font no one changed must not come back in another one unannounced: say
+    /// so, whatever made the engine fall back (a face not installed, a letter it lacks).
+    fn announce_font_change(&mut self, id: pdfcraft_engine::DocId, edit: &Edit, before: Option<&str>) {
+        let (Some(before), Edit::EditTextBlock { page, text, .. }) = (before, edit) else { return };
+        let Some(after) = self.session.get(id).and_then(|doc| font_of_text(doc, *page, text)) else { return };
+        if let Some(notice) = font_change_notice(before, &after) {
+            crate::diag::diag!("  font changed: {} → {}", before, after);
+            self.notify(notice);
+        }
+    }
+
     /// The diagnostic log's record of `edit` before it runs, and the paragraphs of the page it
     /// changes, when it edits text ([`crate::diag`]).
     fn diag_edit_before(&self, id: pdfcraft_engine::DocId, edit: &Edit) -> Option<(usize, Vec<String>)> {
@@ -325,22 +350,7 @@ impl PdfCraftApp {
             }
             _ => Vec::new(),
         };
-        let diag = crate::diag::on().then(|| (web_time::Instant::now(), self.diag_edit_before(id, &edit)));
-        let font_before = self.session.get(id).and_then(|doc| kept_font(doc, &edit));
-        let applied = self.session.apply(id, edit.clone());
-        // A paragraph whose font no one changed must not come back in another one unannounced:
-        // say so, whatever made the engine fall back (a face not installed, a letter it lacks).
-        if applied.is_ok()
-            && let (Some(before), Edit::EditTextBlock { page, text, .. }) = (&font_before, &edit)
-            && let Some(after) = self.session.get(id).and_then(|doc| font_of_text(doc, *page, text))
-            && let Some(notice) = font_change_notice(before, &after)
-        {
-            crate::diag::diag!("  font changed: {} → {}", before, after);
-            self.notify(notice);
-        }
-        if let Some((started, before)) = diag {
-            self.diag_edit_after(id, &edit, &applied, started, before);
-        }
+        let applied = self.apply_recorded(id, &edit);
         match applied {
             Ok(()) => {
                 let Some(doc) = self.session.get(id) else { return true };
