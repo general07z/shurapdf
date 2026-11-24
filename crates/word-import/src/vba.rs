@@ -33,7 +33,11 @@ const REFERENCES: [(&str, &str); 3] = [
 ];
 
 /// The document module every Word project has, as Word writes it for a template.
-const THIS_DOCUMENT: &str = "Attribute VB_Name = \"ThisDocument\"\r\nAttribute VB_Base = \"1Normal.ThisDocument\"\r\n\
+///
+/// Its base class is Word's Document class by its GUID (`0{…}`). `1Normal.ThisDocument` (a class of
+/// the Normal project) is a document's, which references Normal; a template has no such reference,
+/// and real Word stopped on it with "Can't find project or library" (the Council runner, #87).
+const THIS_DOCUMENT: &str = "Attribute VB_Name = \"ThisDocument\"\r\nAttribute VB_Base = \"0{00020906-0000-0000-C000-000000000046}\"\r\n\
 Attribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = True\r\n\
 Attribute VB_Exposed = True\r\nAttribute VB_TemplateDerived = True\r\nAttribute VB_Customizable = True\r\n";
 
@@ -83,8 +87,11 @@ pub(crate) fn project_with(project: &str, module: &str, source: &str, layout: La
     }
     let code = format!("Attribute VB_Name = \"{module}\"\r\n{}", source.replace("\r\n", "\n").replace('\n', "\r\n"));
     let module_stream = compress(code.as_bytes())?;
-    let this_document: String =
-        if layout.vb_base { THIS_DOCUMENT.to_owned() } else { THIS_DOCUMENT.replace("Attribute VB_Base = \"1Normal.ThisDocument\"\r\n", "") };
+    let this_document: String = if layout.vb_base {
+        THIS_DOCUMENT.to_owned()
+    } else {
+        THIS_DOCUMENT.replace("Attribute VB_Base = \"0{00020906-0000-0000-C000-000000000046}\"\r\n", "")
+    };
     let document_stream = compress(this_document.as_bytes())?;
     let dir = compress(&dir_stream(project, module, layout))?;
     let id = "{9E394C0B-697E-4AEE-9FA6-446F51FB30DC}";
@@ -340,7 +347,7 @@ mod tests {
                 && project_text.contains("Document=ThisDocument/&H00000000\r\n"),
             "{project_text}"
         );
-        assert!(String::from_utf8(decompress(&read("/VBA/ThisDocument"))).unwrap().contains("VB_Base = \"1Normal.ThisDocument\""));
+        assert!(String::from_utf8(decompress(&read("/VBA/ThisDocument"))).unwrap().contains("VB_Base = \"0{00020906-0000-0000-C000-000000000046}\""));
     }
 
     #[test]

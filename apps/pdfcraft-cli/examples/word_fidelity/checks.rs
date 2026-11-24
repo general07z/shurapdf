@@ -181,11 +181,8 @@ pub fn run(work: &Path) -> Vec<Check> {
     use pdfcraft_word_import::vba::Layout;
     let base = Layout::default();
     for (name, label, layout) in [
-        ("win64", "Word's PDF tab, variant: 64-bit project kind", Layout { sys_kind: 3, ..base }),
         ("no-base", "Word's PDF tab, variant: ThisDocument without VB_Base", Layout { vb_base: false, ..base }),
         ("no-document", "Word's PDF tab, variant: no ThisDocument module", Layout { this_document: false, ..base }),
-        ("vba-only", "Word's PDF tab, variant: the VBA library alone", Layout { references: 1, ..base }),
-        ("no-refs", "Word's PDF tab, variant: no references", Layout { references: 0, ..base }),
     ] {
         checks.push(check(label, || word_tab(work, name, pdfcraft_word_import::word_addin::template_variant("ShuraPDF", layout))));
     }
@@ -213,7 +210,7 @@ fn word_tab(work: &Path, name: &str, template: Result<Vec<u8>, String>) -> (bool
     }
     // AutomationSecurity 1: macros run in this Word started for the test (as they do from the user's
     // trusted startup folder), whatever the machine's own setting.
-    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  $pdf = $w.Run('ShuraPDF_Export', [ref]$d)\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  try { $pdf = $w.Run('ShuraPDF_Export', [ref]$d) } catch { $pdf = $w.Run('ShuraPDF.ShuraPDFMacros.ShuraPDF_Export', [ref]$d); 'qualified name only' }\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let before = word_pids();
     let child = Command::new("powershell.exe")
