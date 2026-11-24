@@ -9,7 +9,9 @@ param(
   # 1 when package.ps1 staged craft-fonts OFL notices, 0 when the binaries embed no craft-fonts.
   # -1 (the default) skips the check when the MSI is inspected by hand.
   [int] $CraftFontLicences = -1,
-  [string] $ExpectedFontNoticesDirectory
+  [string] $ExpectedFontNoticesDirectory,
+  # 1 when package.ps1 built the Windows 11 menu package, 0 when not; -1 skips the check.
+  [int] $ShellMenu = -1
 )
 $ErrorActionPreference = 'Stop'
 # A branded build (PDFCRAFT_PRODUCT_NAME, passed to WiX by package.ps1) shows its own name in shortcuts and menus.
@@ -289,6 +291,31 @@ if ($wordTemplateFile[0] -notmatch [regex]::Escape("$Product.dotm")) { throw "Wo
 $wordUser = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordTemplateUser''' 2
 Assert-Equal $wordUser[0] 'WORDUSERSTARTUP' 'per-user Word template folder'
 Assert-Equal $wordUser[1] 'ALLUSERS <> 1' 'per-user Word template condition'
+
+# Windows 11's first-level menu: the DLL and its package beside pdfcraft.exe, registered as the
+# installing user (deferred, impersonated, failure ignored) and removed only on a real uninstall.
+if ($ShellMenu -eq 1) {
+  $menu = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftShellMenu''' 2
+  Assert-Equal $menu[0] 'INSTALLFOLDER' 'Windows 11 menu folder'
+  Assert-Equal $menu[1] 'INSTALLPDFCONTEXTMENU = 1' 'Windows 11 menu condition'
+  foreach ($file in @(@('PdfcraftShellMenuDll', 'pdfcraft_shell_menu.dll'), @('PdfcraftShellMenuPackage', 'shell-menu.msix'))) {
+    $name = Read-Row ('SELECT `FileName` FROM `File` WHERE `File` = ''' + $file[0] + '''') 1
+    if ($name[0] -notmatch [regex]::Escape($file[1])) { throw "Windows 11 menu file: '$($name[0])'" }
+  }
+  foreach ($action in @(@('CraftRegisterShellMenu', '--register-shell-menu', 'NOT REMOVE~="ALL" AND INSTALLPDFCONTEXTMENU = 1'), @('CraftUnregisterShellMenu', '--unregister-shell-menu', 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE'))) {
+    $row = Read-Row ('SELECT `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action` = ''' + $action[0] + '''') 3
+    $type = [int] $row[0]
+    # 18 runs an installed file; 64 ignores its exit code; 1024 defers it; 2048 would run it as SYSTEM.
+    if (($type -band 63) -ne 18 -or -not ($type -band 64) -or -not ($type -band 1024) -or ($type -band 2048)) { throw "$($action[0]) type $type" }
+    Assert-Equal $row[1] 'PdfcraftExe' "$($action[0]) file"
+    Assert-Equal $row[2] $action[1] "$($action[0]) arguments"
+    $sequence = Read-Row ('SELECT `Condition` FROM `InstallExecuteSequence` WHERE `Action` = ''' + $action[0] + '''') 1
+    Assert-Equal $sequence[0] $action[2] "$($action[0]) condition"
+  }
+} elseif ($ShellMenu -eq 0) {
+  Assert-NoRow 'SELECT `Component` FROM `Component` WHERE `Component` = ''PdfcraftShellMenu''' 'Windows 11 menu without its package'
+  Assert-NoRow 'SELECT `Action` FROM `CustomAction` WHERE `Action` = ''CraftRegisterShellMenu''' 'Windows 11 menu registration without its package'
+}
 
 # Install folder (#1139): the welcome dialog's "Install to" row (a PathEdit, and Browse… into a
 # native folder browser) changes the folder install-policy.wxi chose for the scope. Its secure

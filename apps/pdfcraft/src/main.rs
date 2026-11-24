@@ -44,6 +44,7 @@ mod logging;
 mod motion;
 mod reopen;
 mod settings;
+mod shell_menu;
 mod single_instance;
 mod startup;
 mod text_scale;
@@ -245,6 +246,11 @@ fn main() -> eframe::Result {
     if startup.help {
         return print_and_exit(USAGE);
     }
+    // The installer's call: add or remove the Windows 11 menu entry for this user, and nothing else.
+    if let Some(add) = startup.shell_menu {
+        shell_menu::run(add);
+        return Ok(());
+    }
     startup.files = rejoin_split_paths(startup.files, |p| std::path::Path::new(p).is_file());
     // The Word files become PDFs beside them before anything opens; those are what open (`convert`).
     if startup.convert_to_pdf {
@@ -268,6 +274,8 @@ fn main() -> eframe::Result {
             Err(e) => log::warn!("no log file: {e}"),
         }
     }
+    // Each user of a per-machine install gets the Windows 11 menu entry on their first start.
+    shell_menu::ensure_in_background();
     // Windows, Linux and the BSDs: a launch that only names files (an Outlook attachment, an
     // Explorer double-click, a file manager or `xdg-open`) hands them to the PdfCraft already
     // running and exits (#282, #317, #1726). Any option means the caller wants this launch's own

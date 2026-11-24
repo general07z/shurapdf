@@ -4667,6 +4667,7 @@ dependencies = [
  "log",
  "pdfcraft-engine",
  "pdfcraft-platform",
+ "pdfcraft-shell-menu",
  "pdfcraft-ui-egui",
  "pdfcraft-word-import",
  "pollster 1.0.1",
@@ -4756,6 +4757,7 @@ dependencies = [
  "pdfcraft-platform",
  "pdfcraft-preflight",
  "pdfcraft-render",
+ "pdfcraft-shell-menu",
  "pdfcraft-ui-egui",
  "pdfcraft-word-import",
  "png 0.18.1",
@@ -5111,6 +5113,14 @@ dependencies = [
  "thiserror 2.0.21",
  "unicode-bidi",
  "url",
+]
+
+[[package]]
+name = "pdfcraft-shell-menu"
+version = "0.21.1"
+dependencies = [
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

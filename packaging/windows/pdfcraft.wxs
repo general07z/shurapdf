@@ -15,6 +15,9 @@
   <?ifndef HasCraftFontLicences ?>
   <?define HasCraftFontLicences=0 ?>
   <?endif?>
+  <?ifndef HasShellMenu ?>
+  <?define HasShellMenu=0 ?>
+  <?endif?>
   <Package Name="$(var.ProductName)" Manufacturer="$(var.Manufacturer)" Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Scope="perUserOrMachine" Compressed="yes" Language="1033">
     <SummaryInformation Description="$(var.ProductName) PDF workbench" Manufacturer="$(var.Manufacturer)" />
     <?include $(sys.SOURCEFILEDIR)install-policy.wxi?>
@@ -76,6 +79,19 @@
       </Property>
     <SetProperty Id="INSTALLIMAGECONTEXTMENU" Value="1" After="CraftLoadOption2U" Sequence="first" Condition="NOT INSTALLIMAGECONTEXTMENU AND (NOT IMAGECONTEXTMENURELEASE OR EXISTINGIMAGECONTEXTMENU)" />
     <UIRef Id="PdfcraftInstallerUI" />
+    <?if $(var.HasShellMenu) = 1 ?>
+    <!-- Windows 11's first-level menu (crates/shell-menu): its sparse package is registered per
+         user, so the installer registers it for the user who installs, as that user (impersonated),
+         once the files are in place, and removes it on uninstall (not on an update, which registers
+         the new one). Other users of a per-machine install get it on their first start of the app.
+         A failure is ignored: the classic entry under "Show more options" is there anyway. -->
+    <CustomAction Id="CraftRegisterShellMenu" FileRef="PdfcraftExe" ExeCommand="--register-shell-menu" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="CraftUnregisterShellMenu" FileRef="PdfcraftExe" ExeCommand="--unregister-shell-menu" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="CraftRegisterShellMenu" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot; AND INSTALLPDFCONTEXTMENU = 1" />
+      <Custom Action="CraftUnregisterShellMenu" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+    <?endif?>
 
     <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): a template in Word's own startup
          folder, which Word loads for every user of the PC and Office trusts by default. Found from
@@ -227,6 +243,14 @@
         <RegistryValue Root="HKMU" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.ConvertToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-to-pdf &quot;%1&quot;" Type="string" />
       </Component>
 
+      <?if $(var.HasShellMenu) = 1 ?>
+      <!-- The same entry in Windows 11's first-level menu: the COM server and its sparse package
+           (registered by CraftRegisterShellMenu), on the PDF menu's switch like the classic one. -->
+      <Component Id="PdfcraftShellMenu" Guid="2CA2EA12-113E-47AC-9C7A-2D0BE27BE390" Condition="INSTALLPDFCONTEXTMENU = 1">
+        <File Id="PdfcraftShellMenuDll" Source="$(var.BinDir)\pdfcraft_shell_menu.dll" KeyPath="yes" />
+        <File Id="PdfcraftShellMenuPackage" Source="$(var.BinDir)\shell-menu.msix" />
+      </Component>
+      <?endif?>
       <!-- Image context menu (#190): "Create PDF with PdfCraft…" opens the DPI chooser, without
            changing image file defaults. Its own component with an HKLM key path, so
            INSTALLIMAGECONTEXTMENU=0 leaves it out and uninstall removes it. These rows were in

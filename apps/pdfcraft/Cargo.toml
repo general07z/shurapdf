@@ -77,3 +77,6 @@ winresource = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 craft-update = { workspace = true }
+# Windows 11's first-level File Explorer menu (crates/shell-menu): the installer runs
+# `--register-shell-menu`, and each later user's first start registers the package for them.
+pdfcraft-shell-menu = { workspace = true }
