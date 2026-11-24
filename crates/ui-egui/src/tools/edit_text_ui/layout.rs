@@ -206,6 +206,10 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
     let interface = definitions.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut out = SourceFonts::default();
     let joining_names = joining_families(programs.iter().map(|p| p.face.as_str()));
+    let installed_copies =
+        installed_copies(programs.iter().map(|p| (p.face.as_str(), joins_arabic(&p.bytes) && p.resource.starts_with("PCFull"))), |face| {
+            installed_face(ctx, face)
+        });
     for (index, program) in programs.iter().enumerate() {
         let name = format!("pdf-source-{index}");
         definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
@@ -235,16 +239,21 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         // A complete face (an earlier edit embedded it) draws; a Word subset never does, even if it
         // has joining rules: it holds only the glyphs the page used, and a letter it lacks would
         // show as an empty box in the typing box.
+        // Every subset's own entry, shared family or not: an edit takes the face of the paragraph's
+        // own resource (`SourceFonts::faces`).
+        let installed = installed_copies.get(index).cloned().flatten();
+        if let Some(bytes) = &installed
+            && pdfcraft_fonts::embedding::validate_document_input(bytes).is_ok()
+        {
+            out.faces.insert(program.resource.clone(), bytes.clone());
+        }
         let joining = if shared {
             Vec::new()
         } else if joins_arabic(&program.bytes) && program.resource.starts_with("PCFull") {
             stack
-        } else if let Some(bytes) = installed_face(ctx, &program.face) {
+        } else if let Some(bytes) = installed {
             let installed = format!("pdf-source-{index}-installed");
-            if pdfcraft_fonts::embedding::validate_document_input(&bytes).is_ok() {
-                out.faces.insert(program.resource.clone(), Arc::new(bytes.clone()));
-            }
-            definitions.font_data.insert(installed.clone(), Arc::new(egui::FontData::from_owned(bytes)));
+            definitions.font_data.insert(installed.clone(), Arc::new(egui::FontData::from_owned(bytes.as_ref().clone())));
             std::iter::once(installed).chain(interface.iter().cloned()).collect()
         } else {
             interface.clone()
@@ -266,6 +275,26 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         ctx.set_fonts(definitions);
     }
     out
+}
+
+/// The installed copy of each program's face, looked up once per face (`lookup`), for each program
+/// that needs one: all but a complete face an earlier edit embedded (`complete`). Every Word subset
+/// of a face gets it: when the face's later subsets shared its first one's joining family (#83),
+/// only the first got its copy, and a paragraph drawn in another subset of Arial was retyped in the
+/// fallback face (Noto Sans Arabic) instead of Arial.
+fn installed_copies<'a>(
+    programs: impl Iterator<Item = (&'a str, bool)>,
+    mut lookup: impl FnMut(&str) -> Option<Vec<u8>>,
+) -> Vec<Option<Arc<Vec<u8>>>> {
+    let mut found: BTreeMap<String, Option<Arc<Vec<u8>>>> = BTreeMap::new();
+    programs
+        .map(|(face, complete)| {
+            if complete {
+                return None;
+            }
+            found.entry(pdfcraft_fonts::embedding::face_key(face)).or_insert_with(|| lookup(face).map(Arc::new)).clone()
+        })
+        .collect()
 }
 
 /// The joining family of each program, by its face: every subset of one face (Word splits a face
@@ -668,6 +697,26 @@ mod tests {
         assert_ne!(names[0], names[1], "Dubai Regular is another face");
         assert_ne!(names[0], names[4]);
         assert!(names.iter().all(|n| n.starts_with("pdf-source-") && n.ends_with("-joining")));
+    }
+
+    /// Every Word subset of a face gets the face's installed copy, looked up once; a complete face
+    /// an edit embedded needs none. Before, a later subset of Arial had none and its paragraph was
+    /// retyped in the fallback face.
+    #[test]
+    fn every_subset_of_a_face_gets_its_installed_copy() {
+        let mut lookups = Vec::new();
+        let copies = super::installed_copies(
+            [("BCDEEE+ArialMT", false), ("BCDFEE+ArialMT", false), ("Dubai-Bold", true), ("BCDGEE+Tajawal-Regular", false)].into_iter(),
+            |face| {
+                lookups.push(face.to_owned());
+                face.contains("Arial").then(|| b"arial".to_vec())
+            },
+        );
+        assert_eq!(
+            copies.iter().map(|c| c.as_deref().map(Vec::as_slice)).collect::<Vec<_>>(),
+            [Some(&b"arial"[..]), Some(&b"arial"[..]), None, None]
+        );
+        assert_eq!(lookups, ["BCDEEE+ArialMT", "BCDGEE+Tajawal-Regular"], "once per face, none for the complete one");
     }
 
     /// A program with glyph substitutions joins Arabic itself; Word's embedded subsets have none.
