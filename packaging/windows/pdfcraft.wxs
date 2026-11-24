@@ -269,11 +269,11 @@
         <File Id="PdfcraftWordTemplateFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" KeyPath="yes" />
       </Component>
       <!-- A per-user install can't write to Office's folder: the template goes to the user's own Word
-           startup folder, which Word loads and trusts the same way. A per-user component keeps an HKCU
+           startup folder, which Word loads and trusts the same way. A per-user component keeps an HKMU
            key path and removes the folders it made, if empty, on uninstall. -->
       <Component Id="PdfcraftWordTemplateUser" Directory="WORDUSERSTARTUP" Guid="D994887F-CCE7-417B-9C06-CD2C80175509" Condition="ALLUSERS &lt;&gt; 1">
         <File Id="PdfcraftWordTemplateUserFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" />
-        <RegistryValue Root="HKCU" Key="Software\PdfCraft\WordTemplate" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKMU" Key="Software\PdfCraft\WordTemplate" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="RemoveWordUserStartup" Directory="WORDUSERSTARTUP" On="uninstall" />
         <RemoveFolder Id="RemoveWordUserWord" Directory="WordUserWord" On="uninstall" />
         <RemoveFolder Id="RemoveWordUserMicrosoft" Directory="WordUserMicrosoft" On="uninstall" />
