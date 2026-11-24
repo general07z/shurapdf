@@ -57,7 +57,7 @@ PR numbers are `general07z/shurapdf` pull requests.
 - The Windows installer puts a template in Word's startup folder: Office's own for a per-machine
   install (Word found from its install root: Microsoft 365 Click-to-Run, else MSI Office, 64- or
   32-bit), the user's own (`%APPDATA%\Microsoft\Word\STARTUP`) for a per-user one; uninstall
-  removes it (#80, this PR). Word shows a tab named after the product with two buttons:
+  removes it (#80, #81). Word shows a tab named after the product with two buttons:
   - "تحويل إلى PDF": a small VBA macro, written from the specification ([MS-OVBA],
     `crates/word-import/src/vba.rs`), saves `Name.pdf` beside the document with Word's own
     `ExportAsFixedFormat` (`Name (2).pdf` … when taken) and opens it in ShuraPDF. Runs from
