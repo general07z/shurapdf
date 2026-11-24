@@ -116,7 +116,7 @@ fn style_names(name: &str) -> impl Iterator<Item = String> {
 }
 
 /// The font name's key without any style or `MT` ending: `Arial-BoldMT` → `arial`.
-fn family_key(name: &str) -> String {
+pub(crate) fn family_key(name: &str) -> String {
     let key = pdfcraft_fonts::embedding::face_key(name);
     let mut base = key.as_str();
     while let Some(shorter) =
