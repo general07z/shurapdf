@@ -77,10 +77,10 @@
     <SetProperty Id="INSTALLIMAGECONTEXTMENU" Value="1" After="CraftLoadOption2U" Sequence="first" Condition="NOT INSTALLIMAGECONTEXTMENU AND (NOT IMAGECONTEXTMENURELEASE OR EXISTINGIMAGECONTEXTMENU)" />
     <UIRef Id="PdfcraftInstallerUI" />
 
-    <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): a template with no macro in Word's
-         own startup folder, which Word loads for every user of the PC and Office trusts by default.
-         Found from Word's install root: Click-to-Run (Microsoft 365), else an MSI Office, 64- or
-         32-bit. No Word, or a per-user install (which can't write there): left out. -->
+    <!-- Word's PDF tab (crates/word-import/src/word_addin.rs): a template in Word's own startup
+         folder, which Word loads for every user of the PC and Office trusts by default. Found from
+         Word's install root: Click-to-Run (Microsoft 365), else an MSI Office, 64- or 32-bit. A
+         per-user install puts it in the user's own startup folder instead (below). -->
     <Property Id="WORDROOTC2R">
       <RegistrySearch Id="CraftWordRootC2R" Root="HKLM" Key="SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\16.0\Word\InstallRoot" Name="Path" Type="raw" Bitness="always64" />
     </Property>
@@ -101,6 +101,14 @@
         <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)">
         <Directory Id="ModelsFolder" Name="models" />
       </Directory>
+      </Directory>
+    </StandardDirectory>
+    <!-- The user's own Word startup folder, for a per-user install (PdfcraftWordTemplateUser). -->
+    <StandardDirectory Id="AppDataFolder">
+      <Directory Id="WordUserMicrosoft" Name="Microsoft">
+        <Directory Id="WordUserWord" Name="Word">
+          <Directory Id="WORDUSERSTARTUP" Name="STARTUP" />
+        </Directory>
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
@@ -258,7 +266,17 @@
       </Component>
 
       <Component Id="PdfcraftWordTemplate" Directory="WORDSTARTUP" Guid="6853C76E-6A1B-455A-A886-5ED92FB7A442" Condition="(WORDROOTC2R OR WORDROOTMSI OR WORDROOTMSI32) AND ALLUSERS = 1">
-        <File Id="PdfcraftWordTemplateFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotx" KeyPath="yes" />
+        <File Id="PdfcraftWordTemplateFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" KeyPath="yes" />
+      </Component>
+      <!-- A per-user install can't write to Office's folder: the template goes to the user's own Word
+           startup folder, which Word loads and trusts the same way. A per-user component keeps an HKMU
+           key path and removes the folders it made, if empty, on uninstall. -->
+      <Component Id="PdfcraftWordTemplateUser" Directory="WORDUSERSTARTUP" Guid="D994887F-CCE7-417B-9C06-CD2C80175509" Condition="ALLUSERS &lt;&gt; 1">
+        <File Id="PdfcraftWordTemplateUserFile" Source="$(var.WordTemplate)" Name="$(var.ProductName).dotm" />
+        <RegistryValue Root="HKMU" Key="Software\PdfCraft\WordTemplate" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RemoveWordUserStartup" Directory="WORDUSERSTARTUP" On="uninstall" />
+        <RemoveFolder Id="RemoveWordUserWord" Directory="WordUserWord" On="uninstall" />
+        <RemoveFolder Id="RemoveWordUserMicrosoft" Directory="WordUserMicrosoft" On="uninstall" />
       </Component>
 
       <Component Id="PdfcraftCli">
