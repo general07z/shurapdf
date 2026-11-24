@@ -15,8 +15,8 @@ pub(super) struct Arguments {
     pub two_paged: bool,
     pub version: bool,
     pub help: bool,
-    /// `--register-shell-menu` / `--unregister-shell-menu`: the installer adds or removes the
-    /// Windows 11 menu entry for the installing user, then the app exits (`shell_menu`).
+    /// `--register-user` / `--unregister-user`: the installer adds or removes the Windows 11 menu
+    /// entry and Word's PDF tab for the installing user, then the app exits (`shell_menu`).
     pub shell_menu: Option<bool>,
 }
 
@@ -45,8 +45,9 @@ impl Arguments {
                 "--combine" => parsed.combine = true,
                 // File Explorer's "Convert to PDF with ShuraPDF" on a Word document.
                 "--convert-to-pdf" => parsed.convert_to_pdf = true,
-                "--register-shell-menu" => parsed.shell_menu = Some(true),
-                "--unregister-shell-menu" => parsed.shell_menu = Some(false),
+                // `--register-shell-menu`: what installers before the Word tab's move ran.
+                "--register-user" | "--register-shell-menu" => parsed.shell_menu = Some(true),
+                "--unregister-user" | "--unregister-shell-menu" => parsed.shell_menu = Some(false),
                 "--new-window" => parsed.new_window = true,
                 "--two-paged" => parsed.two_paged = true,
                 flag if flag.starts_with("--two-paged=") => {
@@ -85,10 +86,11 @@ mod tests {
 
     #[test]
     fn the_installer_flags_register_or_remove_the_menu_entry_without_taking_a_file() {
-        let add = parse(&["--register-shell-menu"]);
+        let add = parse(&["--register-user"]);
         assert_eq!(add.shell_menu, Some(true));
         assert!(add.files.is_empty() && add.options.is_empty(), "not a file, not a view option");
-        assert_eq!(parse(&["--unregister-shell-menu"]).shell_menu, Some(false));
+        assert_eq!(parse(&["--unregister-user"]).shell_menu, Some(false));
+        assert_eq!(parse(&["--register-shell-menu"]).shell_menu, Some(true), "the earlier installers' name");
         assert_eq!(parse(&["first.pdf"]).shell_menu, None);
     }
 

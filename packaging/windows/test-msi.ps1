@@ -283,9 +283,12 @@ foreach ($ext in @('.docx', '.doc', '.docm')) {
   Assert-Equal $wordCommand[0] '"[#PdfcraftExe]" --convert-to-pdf "%1"' "Convert to PDF command ($ext)"
 }
 # Word's PDF tab: a template in Word's startup folder, only where Word is found and per machine.
-$wordTemplate = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordTemplate''' 2
-Assert-Equal $wordTemplate[0] 'WORDSTARTUP' 'Word template folder'
-Assert-Equal $wordTemplate[1] '(WORDROOTC2R OR WORDROOTMSI OR WORDROOTMSI32) AND ALLUSERS = 1' 'Word template condition'
+# Beside pdfcraft.exe, for the app to copy into each user's own (trusted) Word startup folder;
+# never in Office's own startup folder, which Word does not trust by default.
+$wordTemplate = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordTemplateSource''' 2
+Assert-Equal $wordTemplate[0] 'INSTALLFOLDER' 'Word template folder'
+Assert-Equal $wordTemplate[1] '' 'Word template condition'
+Assert-NoRow 'SELECT `Directory` FROM `Directory` WHERE `Directory` = ''WORDSTARTUP''' "Office's own startup folder"
 $wordTemplateFile = Read-Row 'SELECT `FileName` FROM `File` WHERE `File` = ''PdfcraftWordTemplateFile''' 1
 if ($wordTemplateFile[0] -notmatch [regex]::Escape("$Product.dotm")) { throw "Word template file name: '$($wordTemplateFile[0])'" }
 $wordUser = Read-Row 'SELECT `Directory_`, `Condition` FROM `Component` WHERE `Component` = ''PdfcraftWordTemplateUser''' 2
@@ -302,7 +305,10 @@ if ($ShellMenu -eq 1) {
     $name = Read-Row ('SELECT `FileName` FROM `File` WHERE `File` = ''' + $file[0] + '''') 1
     if ($name[0] -notmatch [regex]::Escape($file[1])) { throw "Windows 11 menu file: '$($name[0])'" }
   }
-  foreach ($action in @(@('CraftRegisterShellMenu', '--register-shell-menu', 'NOT REMOVE~="ALL" AND INSTALLPDFCONTEXTMENU = 1'), @('CraftUnregisterShellMenu', '--unregister-shell-menu', 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE'))) {
+}
+# The per-user parts (Windows 11 menu, Word tab): set up as the installing user (deferred,
+# impersonated, failure ignored) and removed only on a real uninstall.
+foreach ($action in @(@('CraftRegisterUser', '--register-user', 'NOT REMOVE~="ALL"'), @('CraftUnregisterUser', '--unregister-user', 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE'))) {
     $row = Read-Row ('SELECT `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action` = ''' + $action[0] + '''') 3
     $type = [int] $row[0]
     # 18 runs an installed file; 64 ignores its exit code; 1024 defers it; 2048 would run it as SYSTEM.
@@ -311,10 +317,9 @@ if ($ShellMenu -eq 1) {
     Assert-Equal $row[2] $action[1] "$($action[0]) arguments"
     $sequence = Read-Row ('SELECT `Condition` FROM `InstallExecuteSequence` WHERE `Action` = ''' + $action[0] + '''') 1
     Assert-Equal $sequence[0] $action[2] "$($action[0]) condition"
-  }
-} elseif ($ShellMenu -eq 0) {
+}
+if ($ShellMenu -eq 0) {
   Assert-NoRow 'SELECT `Component` FROM `Component` WHERE `Component` = ''PdfcraftShellMenu''' 'Windows 11 menu without its package'
-  Assert-NoRow 'SELECT `Action` FROM `CustomAction` WHERE `Action` = ''CraftRegisterShellMenu''' 'Windows 11 menu registration without its package'
 }
 
 # Install folder (#1139): the welcome dialog's "Install to" row (a PathEdit, and Browse… into a

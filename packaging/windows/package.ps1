@@ -190,7 +190,7 @@ if (-not (Test-Path -LiteralPath $WordTemplate)) { throw "pdfcraft-cli word-addi
 # (crates/shell-menu) whose COM server is the DLL beside pdfcraft.exe. Windows registers a package
 # only when it is signed by a certificate it trusts, with the certificate's subject as publisher, so
 # it is built only with WINDOWS_CERTIFICATE (the Council's own; docs/code-signing.md). The installer
-# registers it per user (pdfcraft.exe --register-shell-menu); the classic entry stays either way.
+# registers it per user (pdfcraft.exe --register-user); the classic entry stays either way.
 $HasShellMenu = 0
 if ($Arch -ne 'x86' -and $Phase -eq 'All' -and $env:WINDOWS_CERTIFICATE) {
   $Dll = Join-Path $Bin 'pdfcraft_shell_menu.dll'

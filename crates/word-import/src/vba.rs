@@ -31,6 +31,12 @@ pub(crate) fn project(project: &str, module: &str, source: &str) -> Result<Vec<u
     {
         return Err("VBA names are 1 to 31 letters, digits or underscores".into());
     }
+    // VBA refuses a module named as its project ("Name conflicts with existing module, project,
+    // or object library"): Word then drops the whole project, and a button calling its macro
+    // reports it can't be found (the owner's Word, with the template named after both).
+    if project.eq_ignore_ascii_case(module) {
+        return Err("a VBA module can't have its project's name".into());
+    }
     let code = format!("Attribute VB_Name = \"{module}\"\r\n{}", source.replace("\r\n", "\n").replace('\n', "\r\n"));
     let module_stream = compress(code.as_bytes())?;
     let document_stream = compress(THIS_DOCUMENT.as_bytes())?;
@@ -39,7 +45,8 @@ pub(crate) fn project(project: &str, module: &str, source: &str) -> Result<Vec<u
     let project_stream = project_stream(id, project, module);
     let names = project_wm(module);
 
-    let mut file = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).map_err(|e| e.to_string())?;
+    // Version 3 (512-byte sectors), the version Office writes its VBA projects in.
+    let mut file = cfb::CompoundFile::create_with_version(cfb::Version::V3, std::io::Cursor::new(Vec::new())).map_err(|e| e.to_string())?;
     file.create_storage("/VBA").map_err(|e| e.to_string())?;
     let mut write = |path: &str, bytes: &[u8]| -> Result<(), String> {
         let mut stream = file.create_stream(path).map_err(|e| e.to_string())?;
@@ -238,20 +245,26 @@ mod tests {
 
     #[test]
     fn the_project_holds_the_module_source() {
-        let bin = project("ShuraPDF", "ShuraPDF", "Sub Hello()\nEnd Sub\n").unwrap();
+        let bin = project("ShuraPDF", "ShuraPDFMacros", "Sub Hello()\nEnd Sub\n").unwrap();
         let mut file = cfb::CompoundFile::open(std::io::Cursor::new(bin)).unwrap();
+        assert_eq!(file.version(), cfb::Version::V3, "Office's own version");
         let mut read = |p: &str| {
             let mut v = Vec::new();
             file.open_stream(p).unwrap().read_to_end(&mut v).unwrap();
             v
         };
-        let source = String::from_utf8(decompress(&read("/VBA/ShuraPDF"))).unwrap();
-        assert_eq!(source, "Attribute VB_Name = \"ShuraPDF\"\r\nSub Hello()\r\nEnd Sub\r\n");
+        let source = String::from_utf8(decompress(&read("/VBA/ShuraPDFMacros"))).unwrap();
+        assert_eq!(source, "Attribute VB_Name = \"ShuraPDFMacros\"\r\nSub Hello()\r\nEnd Sub\r\n");
         let dir = decompress(&read("/VBA/dir"));
         assert!(dir.windows(8).any(|w| w == b"ShuraPDF"), "the module is named in dir");
         assert_eq!(read("/VBA/_VBA_PROJECT"), [0xCC, 0x61, 0xFF, 0xFF, 0, 0, 0]);
         let project_text = String::from_utf8(read("/PROJECT")).unwrap();
-        assert!(project_text.contains("Module=ShuraPDF\r\n") && project_text.contains("Document=ThisDocument/&H00000000\r\n"), "{project_text}");
+        assert!(
+            project_text.contains("Module=ShuraPDFMacros\r\n")
+                && project_text.contains("Name=\"ShuraPDF\"\r\n")
+                && project_text.contains("Document=ThisDocument/&H00000000\r\n"),
+            "{project_text}"
+        );
         assert!(String::from_utf8(decompress(&read("/VBA/ThisDocument"))).unwrap().contains("VB_Base = \"1Normal.ThisDocument\""));
     }
 
@@ -259,5 +272,8 @@ mod tests {
     fn non_ascii_source_and_bad_names_are_refused() {
         assert!(project("P", "M", "' تحويل").is_err());
         assert!(project("P", "Bad Name", "").is_err());
+        // VBA refuses it, and Word drops the whole project (the owner's report).
+        assert!(project("ShuraPDF", "ShuraPDF", "").is_err());
+        assert!(project("ShuraPDF", "shurapdf", "").is_err());
     }
 }
