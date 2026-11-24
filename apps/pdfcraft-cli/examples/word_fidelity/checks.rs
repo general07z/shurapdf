@@ -173,8 +173,57 @@ pub fn run(work: &Path) -> Vec<Check> {
             format!("{}; user's Word {}", outcome(&r), if still_open { "still open" } else { "was closed!" }),
         )
     }));
+    checks.push(check("Word's PDF tab: its macro compiles and saves a PDF beside the document", || word_tab(work)));
     set_engine(WordEngine::Auto);
     checks
+}
+
+/// The Word tab's template (`pdfcraft_word_import::word_addin`) loaded in real Word as an add-in,
+/// its macro run on a synthetic document: it must compile (every library it calls referenced) and
+/// write the PDF beside the document. Word's own error text is the detail when it fails. A Word
+/// that stops on a dialog is ended after two minutes.
+fn word_tab(work: &Path) -> (bool, String) {
+    let dir = work.join("word-tab");
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return (false, format!("{}: {e}", dir.display()));
+    }
+    let template = match pdfcraft_word_import::word_addin::template("ShuraPDF") {
+        Ok(t) => t,
+        Err(e) => return (false, format!("template: {e}")),
+    };
+    let (dotm, docx) = (dir.join("ShuraPDF.dotm"), dir.join("tab test.docx"));
+    if std::fs::write(&dotm, template).and_then(|()| std::fs::write(&docx, synthetic_docx())).is_err() {
+        return (false, "couldn't write the fixture".into());
+    }
+    // AutomationSecurity 1: macros run in this Word started for the test (as they do from the user's
+    // trusted startup folder), whatever the machine's own setting.
+    let script = "$ErrorActionPreference = 'Stop'\n$w = New-Object -ComObject Word.Application\ntry {\n  $w.Visible = $false\n  $w.DisplayAlerts = 0\n  $w.AutomationSecurity = 1\n  [void]$w.AddIns.Add($env:TAB_TEMPLATE, $true)\n  $d = $w.Documents.Open($env:TAB_DOC)\n  $pdf = $w.Run('ShuraPDF_Export', $d)\n  \"PDF=$pdf\"\n  $d.Close([ref]0)\n} catch { \"ERROR=\" + $_.Exception.Message } finally { $w.Quit([ref]0) }\n";
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let before = word_pids();
+    let child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &base64(&utf16)])
+        .env("TAB_TEMPLATE", &dotm)
+        .env("TAB_DOC", &docx)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else { return (false, "couldn't start PowerShell".into()) };
+    if !wait_for(|| child.try_wait().is_ok_and(|s| s.is_some()), Duration::from_secs(120)) {
+        let _ = child.kill();
+        end(&word_pids().into_iter().filter(|p| !before.contains(p)).collect::<Vec<_>>());
+        return (false, "Word didn't finish in two minutes (a dialog, such as a compile error)".into());
+    }
+    let mut said = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        use std::io::Read as _;
+        let _ = out.read_to_string(&mut said);
+    }
+    let said = said.trim().to_owned();
+    let pdf = dir.join("tab test.pdf");
+    let made = std::fs::read(&pdf).is_ok_and(|b| made_by_word(&b));
+    (made && said.starts_with("PDF="), if made { format!("PDF beside the document ({said})") } else { format!("no PDF: {said}") })
 }
 
 /// `docx` saved by Word as a Word 97-2003 `.doc` (in `work`), or `None` when Word can't.

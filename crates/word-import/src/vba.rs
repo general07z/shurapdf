@@ -1,8 +1,9 @@
 //! A VBA project (`vbaProject.bin`) holding one standard module given as source text, written from
 //! the public specification ([MS-OVBA]) so the Word template's button can run a few lines of
 //! macro code. Only what Word needs to compile the source is written: the project information,
-//! no references (Word supplies its own and the VBA library), and the module's compressed source
-//! with no compiled cache (`_VBA_PROJECT` version 0xFFFF), so Word compiles it on first use.
+//! its references (the VBA library, OLE Automation and Word's object library, [`REFERENCES`]), and
+//! the module's compressed source with no compiled cache (`_VBA_PROJECT` version 0xFFFF), so Word
+//! compiles it on first use.
 //!
 //! The source must be ASCII: it is stored in the project's code page (1252) and nothing here
 //! converts it. Output is deterministic: the protection fields use fixed, not random, bytes.
@@ -13,6 +14,23 @@ use std::io::Write as _;
 const CODE_PAGE: u16 = 1252;
 /// Largest stream compressed here: one chunk of literals ([`compress`]).
 const MAX_COMPRESSED_INPUT: usize = 3640;
+
+/// The type libraries every Word project references, by name and registered library id
+/// ([MS-OVBA] 2.1.1.8): VBA's own (`MsgBox`, `Chr$`, `Len`, `CreateObject`, `vbObjectError`…),
+/// OLE Automation, and Word's object library. Without them Word loads the project but stops at
+/// the first such call with "Can't find project or library" (the owner's Word, #85). Windows finds
+/// each library by its GUID and version; the path is only a hint.
+const REFERENCES: [(&str, &str); 3] = [
+    (
+        "VBA",
+        "*\\G{000204EF-0000-0000-C000-000000000046}#4.2#9#C:\\Program Files\\Common Files\\Microsoft Shared\\VBA\\VBA7.1\\VBE7.DLL#Visual Basic For Applications",
+    ),
+    (
+        "Word",
+        "*\\G{00020905-0000-0000-C000-000000000046}#8.7#0#C:\\Program Files\\Microsoft Office\\root\\Office16\\MSWORD.OLB#Microsoft Word 16.0 Object Library",
+    ),
+    ("stdole", "*\\G{00020430-0000-0000-C000-000000000046}#2.0#0#C:\\Windows\\System32\\stdole2.tlb#OLE Automation"),
+];
 
 /// The document module every Word project has, as Word writes it for a template.
 const THIS_DOCUMENT: &str = "Attribute VB_Name = \"ThisDocument\"\r\nAttribute VB_Base = \"1Normal.ThisDocument\"\r\n\
@@ -120,6 +138,21 @@ fn dir_stream(project: &str, module: &str) -> Vec<u8> {
     d.extend_from_slice(&0u16.to_le_bytes());
     record(&mut d, 0x000C, &[]); // PROJECTCONSTANTS
     record(&mut d, 0x003C, &[]); //   ... Unicode
+    // PROJECTREFERENCES: each a REFERENCENAME (with its Unicode form after the reserved 0x003E)
+    // and a REFERENCEREGISTERED (Size, SizeOfLibid, Libid, Reserved1 u32, Reserved2 u16).
+    for (name, libid) in REFERENCES {
+        record(&mut d, 0x0016, name.as_bytes());
+        d.extend_from_slice(&0x003Eu16.to_le_bytes());
+        let unicode = utf16(name);
+        d.extend_from_slice(&u32::try_from(unicode.len()).unwrap_or(0).to_le_bytes());
+        d.extend_from_slice(&unicode);
+        let mut registered = Vec::new();
+        registered.extend_from_slice(&u32::try_from(libid.len()).unwrap_or(0).to_le_bytes());
+        registered.extend_from_slice(libid.as_bytes());
+        registered.extend_from_slice(&0u32.to_le_bytes());
+        registered.extend_from_slice(&0u16.to_le_bytes());
+        record(&mut d, 0x000D, &registered);
+    }
     // PROJECTMODULES: Id, Size (2), Count; PROJECTCOOKIE: Id, Size (2), 0xFFFF.
     d.extend_from_slice(&0x000Fu16.to_le_bytes());
     d.extend_from_slice(&2u32.to_le_bytes());
@@ -257,6 +290,17 @@ mod tests {
         assert_eq!(source, "Attribute VB_Name = \"ShuraPDFMacros\"\r\nSub Hello()\r\nEnd Sub\r\n");
         let dir = decompress(&read("/VBA/dir"));
         assert!(dir.windows(8).any(|w| w == b"ShuraPDF"), "the module is named in dir");
+        // The VBA library is referenced, else Word stops at MsgBox with "Can't find project or
+        // library" (the owner's Word), and its record says how long its library id is.
+        let vba = b"*\\G{000204EF-0000-0000-C000-000000000046}";
+        let at = dir.windows(vba.len()).position(|w| w == vba).expect("the VBA library is referenced");
+        let size = u32::from_le_bytes(dir[at - 4..at].try_into().unwrap()) as usize;
+        assert!(dir[at..at + size].ends_with(b"#Visual Basic For Applications"));
+        assert_eq!(u16::from_le_bytes([dir[at - 10], dir[at - 9]]), 0x000D, "REFERENCEREGISTERED");
+        assert_eq!(u32::from_le_bytes(dir[at - 8..at - 4].try_into().unwrap()) as usize, size + 10, "its size: length, id, reserved");
+        for library in [&b"{00020905-0000-0000-C000-000000000046}"[..], b"{00020430-0000-0000-C000-000000000046}"] {
+            assert!(dir.windows(library.len()).any(|w| w == library), "Word and OLE Automation too");
+        }
         assert_eq!(read("/VBA/_VBA_PROJECT"), [0xCC, 0x61, 0xFF, 0xFF, 0, 0, 0]);
         let project_text = String::from_utf8(read("/PROJECT")).unwrap();
         assert!(
