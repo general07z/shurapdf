@@ -35,6 +35,16 @@ Public Sub ShuraPDF_ConvertActive()
         If Application.Dialogs(84).Show <> -1 Then Exit Sub
         If Len(doc.Path) = 0 Then Exit Sub
     End If
+    Dim pdf As String
+    pdf = ShuraPDF_Export(doc)
+    CreateObject("Shell.Application").ShellExecute "pdfcraft.exe", Chr$(34) & pdf & Chr$(34), "", "open", 1
+    Exit Sub
+Failed:
+    MsgBox "ShuraPDF: " & Err.Description, vbExclamation
+End Sub
+
+' The PDF of doc, saved beside it under a free name; its path. Also what the test on Word runs.
+Public Function ShuraPDF_Export(doc As Object) As String
     Dim files As Object
     Set files = CreateObject("Scripting.FileSystemObject")
     Dim base As String
@@ -51,17 +61,18 @@ Public Sub ShuraPDF_ConvertActive()
     ' wdExportFormatPDF = 17, wdExportOptimizeForPrint = 0, wdExportAllDocument = 0,
     ' wdExportDocumentContent = 0, wdExportCreateHeadingBookmarks = 1.
     doc.ExportAsFixedFormat pdf, 17, False, 0, 0, 1, 1, 0, True, True, 1, True, True, False
-    CreateObject("Shell.Application").ShellExecute "pdfcraft.exe", Chr$(34) & pdf & Chr$(34), "", "open", 1
-    Exit Sub
-Failed:
-    MsgBox "ShuraPDF: " & Err.Description, vbExclamation
-End Sub
+    ShuraPDF_Export = pdf
+End Function
 "#;
 
 /// The template, a macro-enabled `.dotm` package, with a ribbon tab named `product`.
 pub fn template(product: &str) -> Result<Vec<u8>, String> {
+    template_with(product, crate::vba::Layout::default())
+}
+
+fn template_with(product: &str, layout: crate::vba::Layout) -> Result<Vec<u8>, String> {
     // The module's name differs from the project's: VBA refuses a module named as its project.
-    let project = crate::vba::project("ShuraPDF", "ShuraPDFMacros", MACRO)?;
+    let project = crate::vba::project_with("ShuraPDF", "ShuraPDFMacros", MACRO, layout)?;
     let product = xml_escape(product);
     let parts: [(&str, String); 6] = [
         (
