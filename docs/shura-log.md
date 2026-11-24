@@ -52,7 +52,7 @@ PR numbers are `general07z/shurapdf` pull requests.
   engine. A file that can't be converted there (a password, an error) opens as it would on a
   double-click. On the installer's PDF context-menu switch (`apps/pdfcraft/src/convert.rs`,
   `--convert-to-pdf`, #79). On Windows 11 it is under "Show more options".
-- Windows 11's first-level menu has the same entry (this PR): a COM server (`IExplorerCommand`,
+- Windows 11's first-level menu has the same entry (#82): a COM server (`IExplorerCommand`,
   `crates/shell-menu`) in a DLL beside `pdfcraft.exe`, and a sparse package (`shell-menu.msix`,
   manifest from `pdfcraft-cli shell-menu-manifest`, signed with the Council's certificate, whose
   subject is its publisher) that names it for `.docx`, `.doc` and `.docm`. Packages are per user:
