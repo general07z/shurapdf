@@ -212,8 +212,11 @@ fn word_tab(work: &Path) -> (bool, String) {
     let Ok(mut child) = child else { return (false, "couldn't start PowerShell".into()) };
     if !wait_for(|| child.try_wait().is_ok_and(|s| s.is_some()), Duration::from_secs(120)) {
         let _ = child.kill();
-        end(&word_pids().into_iter().filter(|p| !before.contains(p)).collect::<Vec<_>>());
-        return (false, "Word didn't finish in two minutes (a dialog, such as a compile error)".into());
+        let stuck: Vec<u32> = word_pids().into_iter().filter(|p| !before.contains(p)).collect();
+        // What Word stopped on, read off its windows before they go: the dialog's title and text.
+        let shown = window_texts(&stuck);
+        end(&stuck);
+        return (false, format!("Word didn't finish in two minutes; its windows: {shown}"));
     }
     let mut said = String::new();
     if let Some(mut out) = child.stdout.take() {
@@ -246,6 +249,23 @@ fn saved_as_doc(work: &Path, docx: &[u8]) -> Option<Vec<u8>> {
     let bytes = status.success().then(|| std::fs::read(&output).ok()).flatten();
     let _ = std::fs::remove_dir_all(&dir);
     bytes
+}
+
+/// The titles and texts of the top-level windows of the processes `pids` (UI Automation), at most
+/// 600 characters: a dialog Word stopped on, such as a VBA compile error, as the user would read it.
+fn window_texts(pids: &[u32]) -> String {
+    let script = "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n$ids = $env:WINDOW_PIDS -split ','\n$A = [System.Windows.Automation.AutomationElement]\n$all = [System.Windows.Automation.Condition]::TrueCondition\nforeach ($w in $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $all)) {\n  if ($ids -contains [string]$w.Current.ProcessId) {\n    $names = @($w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $all) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })\n    '[' + $w.Current.Name + '] ' + ($names -join ' | ')\n  }\n}\n";
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let ids = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let out = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &base64(&utf16)])
+        .env("WINDOW_PIDS", ids)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+    let text: String = text.chars().take(600).collect();
+    if text.is_empty() { "none readable".into() } else { text }
 }
 
 /// Standard base64 with padding (PowerShell's `-EncodedCommand`).
