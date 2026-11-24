@@ -178,7 +178,67 @@ fn diag_text_page(edit: &Edit) -> Option<usize> {
     }
 }
 
+/// The font of the paragraph `edit` retypes, when the edit leaves the choice of font to the
+/// paragraph (no family or font resource chosen): the font it should keep.
+fn kept_font(doc: &pdfcraft_engine::Document, edit: &Edit) -> Option<String> {
+    let Edit::EditTextBlock { page, block, style, .. } = edit else { return None };
+    if style.family.is_some() || style.resource.is_some() {
+        return None;
+    }
+    let blocks = doc.text_blocks(*page);
+    let lines = doc.text_lines(*page);
+    blocks.get(*block)?.lines.first().and_then(|i| lines.get(*i)).map(|l| l.base_font.clone())
+}
+
+/// The font of the paragraph on `page` that now reads `text` (the edited one).
+fn font_of_text(doc: &pdfcraft_engine::Document, page: usize, text: &str) -> Option<String> {
+    let lines = doc.text_lines(page);
+    let wanted = text.trim();
+    doc.text_blocks(page)
+        .into_iter()
+        .find(|b| b.editor_text.trim() == wanted)
+        .and_then(|b| b.lines.first().and_then(|i| lines.get(*i)).map(|l| l.base_font.clone()))
+}
+
+/// The notice for a paragraph drawn in `after` that was in `before` and was meant to stay in it,
+/// when they are different families (a subset tag, a style or `MT` is the same family).
+fn font_change_notice(before: &str, after: &str) -> Option<String> {
+    let (b, a) = (crate::edit_text_ui::family_key(before), crate::edit_text_ui::family_key(after));
+    (b != a).then(|| {
+        let name = |n: &str| n.rsplit('+').next().unwrap_or(n).to_owned();
+        crate::i18n::fmt(
+            tl!("The paragraph's font {before} could not be used (not installed, or a letter it lacks), so it is now in {after}. Undo to keep the original."),
+            &[("before", &name(before)), ("after", &name(after))],
+        )
+    })
+}
+
 impl PdfCraftApp {
+    /// `edit` applied, with its diagnostic-log records and the notice of a paragraph's lost font.
+    fn apply_recorded(&mut self, id: pdfcraft_engine::DocId, edit: &Edit) -> Result<(), pdfcraft_engine::EditError> {
+        let diag = crate::diag::on().then(|| (web_time::Instant::now(), self.diag_edit_before(id, edit)));
+        let font_before = self.session.get(id).and_then(|doc| kept_font(doc, edit));
+        let applied = self.session.apply(id, edit.clone());
+        if applied.is_ok() {
+            self.announce_font_change(id, edit, font_before.as_deref());
+        }
+        if let Some((started, before)) = diag {
+            self.diag_edit_after(id, edit, &applied, started, before);
+        }
+        applied
+    }
+
+    /// A paragraph whose font no one changed must not come back in another one unannounced: say
+    /// so, whatever made the engine fall back (a face not installed, a letter it lacks).
+    fn announce_font_change(&mut self, id: pdfcraft_engine::DocId, edit: &Edit, before: Option<&str>) {
+        let (Some(before), Edit::EditTextBlock { page, text, .. }) = (before, edit) else { return };
+        let Some(after) = self.session.get(id).and_then(|doc| font_of_text(doc, *page, text)) else { return };
+        if let Some(notice) = font_change_notice(before, &after) {
+            crate::diag::diag!("  font changed: {} → {}", before, after);
+            self.notify(notice);
+        }
+    }
+
     /// The diagnostic log's record of `edit` before it runs, and the paragraphs of the page it
     /// changes, when it edits text ([`crate::diag`]).
     fn diag_edit_before(&self, id: pdfcraft_engine::DocId, edit: &Edit) -> Option<(usize, Vec<String>)> {
@@ -290,11 +350,7 @@ impl PdfCraftApp {
             }
             _ => Vec::new(),
         };
-        let diag = crate::diag::on().then(|| (web_time::Instant::now(), self.diag_edit_before(id, &edit)));
-        let applied = self.session.apply(id, edit.clone());
-        if let Some((started, before)) = diag {
-            self.diag_edit_after(id, &edit, &applied, started, before);
-        }
+        let applied = self.apply_recorded(id, &edit);
         match applied {
             Ok(()) => {
                 let Some(doc) = self.session.get(id) else { return true };
@@ -1895,5 +1951,22 @@ mod attention_tests {
         app.close_and_continue(&ctx, 0, CloseRequest::Quit);
         assert_eq!(app.close_request, Some(CloseRequest::Tab(c)), "the newer question stands");
         assert!(attend(&mut app, &ctx, false).is_empty(), "the user has seen it");
+    }
+}
+
+#[cfg(test)]
+mod font_change_tests {
+    use super::font_change_notice;
+
+    /// The owner's report: a paragraph in Arial came back in Noto Sans Arabic with no word. A
+    /// change of family is announced; another subset, style or `MT` of the same family is not.
+    #[test]
+    fn a_paragraph_that_lost_its_font_is_announced() {
+        let notice = font_change_notice("BCDFEE+ArialMT", "NotoSansArabic").expect("Arial to Noto is announced");
+        assert!(notice.contains("ArialMT") && notice.contains("NotoSansArabic"), "{notice}");
+        assert!(!notice.contains("BCDFEE"), "the subset tag is not shown: {notice}");
+        for same in ["ArialMT", "BCDEEE+ArialMT", "Arial-BoldMT", "PCFull3+ArialMT"] {
+            assert_eq!(font_change_notice("BCDFEE+ArialMT", same), None, "{same}");
+        }
     }
 }
