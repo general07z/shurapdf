@@ -210,13 +210,16 @@ jobs:
           $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:WINDOWS_CERTIFICATE_PASSWORD)
           [IO.File]::WriteAllBytes((Join-Path $env:DIST 'shurapdf-signing.cer'), $cert.Export('Cert'))
           Get-AuthenticodeSignature (Get-ChildItem $env:DIST -Filter *.msi).FullName | Format-List Status, StatusMessage
+      # A test build's artifact is what testers install: the MSI (and the certificate to trust it).
+      # The portable zip, half the download, comes with a tagged build only; its release, below,
+      # publishes both from dist/ either way.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ShuraPDF-windows-x64
           path: |
             dist/*.msi
-            dist/*.zip
             dist/*.cer
+            ${{ startsWith(github.ref, 'refs/tags/v') && 'dist/*.zip' || '!dist/*.zip' }}
           if-no-files-found: error
           retention-days: 30
       - name: Release (tags only)

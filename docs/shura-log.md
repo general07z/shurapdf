@@ -45,6 +45,10 @@ PR numbers are `general07z/shurapdf` pull requests.
   (`docs/code-signing.md`). SignPath Foundation signing is wired but inactive: SignPath declined
   the application (#49).
 
+### Windows builds
+- A test build's artifact holds the MSI and the signing certificate only; the portable zip comes
+  with tagged builds and their releases (owner's request, #86).
+
 ### Word documents in File Explorer
 - Right-click a Word document (`.docx`, `.doc`, `.docm`) ▸ "Convert to PDF with ShuraPDF": the PDF
   is written beside it (same name; `Name (2).pdf` when taken, never overwritten) and opened, in the
