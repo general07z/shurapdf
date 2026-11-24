@@ -10,13 +10,13 @@ workspace = true
 
 [features]
 # A synthetic .docx for other crates' tests.
-test-support = ["dep:cfb"]
+test-support = []
 
 [dependencies]
 # Reads a package's content types, so Word gets a .docm or a template under the name it needs.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 # Synthetic .doc fixtures (compound files); already in the graph through wordcraft-docbin.
-cfb = { version = "0.15", optional = true }
+cfb = "0.15"
 # WordCraft crates (pinned in the root Cargo.toml). They inherit their own workspace's
 # settings, so they build exactly as they do in WordCraft.
 wordcraft-docx = { workspace = true }

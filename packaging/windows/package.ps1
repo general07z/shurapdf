@@ -176,7 +176,7 @@ if ($env:CRAFT_FONTS_DIR) {
 # ---- Word's PDF tab ----------------------------------------------------------------------------
 # The template the MSI puts in Word's startup folder (crates/word-import/src/word_addin.rs), written
 # by the signed pdfcraft-cli just staged, so the tab carries this build's product name.
-$WordTemplate = Join-Path $Stage 'word-pdf-tab.dotx'
+$WordTemplate = Join-Path $Stage 'word-pdf-tab.dotm'
 Invoke-Native 'pdfcraft-cli word-addin' { & (Join-Path $Stage 'pdfcraft-cli.exe') word-addin --out $WordTemplate }
 if (-not (Test-Path -LiteralPath $WordTemplate)) { throw "pdfcraft-cli word-addin wrote no $WordTemplate" }
 

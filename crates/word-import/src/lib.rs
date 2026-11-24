@@ -77,6 +77,7 @@ pub fn engine() -> WordEngine {
 }
 
 mod office;
+mod vba;
 pub mod word_addin;
 pub use office::{OfficeError, working_folder};
 
