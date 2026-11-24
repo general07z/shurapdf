@@ -37,10 +37,36 @@ const THIS_DOCUMENT: &str = "Attribute VB_Name = \"ThisDocument\"\r\nAttribute V
 Attribute VB_GlobalNameSpace = False\r\nAttribute VB_Creatable = False\r\nAttribute VB_PredeclaredId = True\r\n\
 Attribute VB_Exposed = True\r\nAttribute VB_TemplateDerived = True\r\nAttribute VB_Customizable = True\r\n";
 
+/// How a project is laid out: what the template uses ([`Layout::default`]), and the variations the
+/// Council runner's check loads in real Word to find what it refuses (test support only).
+#[derive(Clone, Copy, Debug)]
+pub struct Layout {
+    /// `PROJECTSYSKIND`: 1 (32-bit Windows) or 3 (64-bit).
+    pub sys_kind: u32,
+    /// How many of [`REFERENCES`] to write, in order (VBA first).
+    pub references: usize,
+    /// Whether the project has Word's `ThisDocument` module.
+    pub this_document: bool,
+    /// Whether `ThisDocument` names its base class (`VB_Base`).
+    pub vb_base: bool,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self { sys_kind: 1, references: REFERENCES.len(), this_document: true, vb_base: true }
+    }
+}
+
 /// The `vbaProject.bin` compound file for a project `project` with Word's `ThisDocument` module and
 /// one standard module `module` whose source is `source` (without its `Attribute VB_Name` line,
 /// which this adds).
+#[cfg(test)]
 pub(crate) fn project(project: &str, module: &str, source: &str) -> Result<Vec<u8>, String> {
+    project_with(project, module, source, Layout::default())
+}
+
+/// [`project`] laid out as `layout` says.
+pub(crate) fn project_with(project: &str, module: &str, source: &str, layout: Layout) -> Result<Vec<u8>, String> {
     if ![project, module, source].iter().all(|s| s.is_ascii()) {
         return Err("VBA names and source must be ASCII".into());
     }
@@ -57,11 +83,13 @@ pub(crate) fn project(project: &str, module: &str, source: &str) -> Result<Vec<u
     }
     let code = format!("Attribute VB_Name = \"{module}\"\r\n{}", source.replace("\r\n", "\n").replace('\n', "\r\n"));
     let module_stream = compress(code.as_bytes())?;
-    let document_stream = compress(THIS_DOCUMENT.as_bytes())?;
-    let dir = compress(&dir_stream(project, module))?;
+    let this_document: String =
+        if layout.vb_base { THIS_DOCUMENT.to_owned() } else { THIS_DOCUMENT.replace("Attribute VB_Base = \"1Normal.ThisDocument\"\r\n", "") };
+    let document_stream = compress(this_document.as_bytes())?;
+    let dir = compress(&dir_stream(project, module, layout))?;
     let id = "{9E394C0B-697E-4AEE-9FA6-446F51FB30DC}";
-    let project_stream = project_stream(id, project, module);
-    let names = project_wm(module);
+    let project_stream = project_stream(id, project, module, layout.this_document);
+    let names = project_wm(module, layout.this_document);
 
     // Version 3 (512-byte sectors), the version Office writes its VBA projects in.
     let mut file = cfb::CompoundFile::create_with_version(cfb::Version::V3, std::io::Cursor::new(Vec::new())).map_err(|e| e.to_string())?;
@@ -74,7 +102,9 @@ pub(crate) fn project(project: &str, module: &str, source: &str) -> Result<Vec<u
     // reserved 0x00, reserved 0x0000.
     write("/VBA/_VBA_PROJECT", &[0xCC, 0x61, 0xFF, 0xFF, 0x00, 0x00, 0x00])?;
     write("/VBA/dir", &dir)?;
-    write("/VBA/ThisDocument", &document_stream)?;
+    if layout.this_document {
+        write("/VBA/ThisDocument", &document_stream)?;
+    }
     write(&format!("/VBA/{module}"), &module_stream)?;
     write("/PROJECT", project_stream.as_bytes())?;
     write("/PROJECTwm", &names)?;
@@ -118,9 +148,9 @@ fn utf16(s: &str) -> Vec<u8> {
 
 /// The decompressed `dir` stream ([MS-OVBA] 2.3.4.2): project information, no references, one
 /// procedural module whose source starts at offset 0 of its stream.
-fn dir_stream(project: &str, module: &str) -> Vec<u8> {
+fn dir_stream(project: &str, module: &str, layout: Layout) -> Vec<u8> {
     let mut d = Vec::new();
-    record(&mut d, 0x0001, &1u32.to_le_bytes()); // PROJECTSYSKIND: Win32
+    record(&mut d, 0x0001, &layout.sys_kind.to_le_bytes()); // PROJECTSYSKIND
     record(&mut d, 0x0002, &0x0409u32.to_le_bytes()); // PROJECTLCID
     record(&mut d, 0x0014, &0x0409u32.to_le_bytes()); // PROJECTLCIDINVOKE
     record(&mut d, 0x0003, &CODE_PAGE.to_le_bytes()); // PROJECTCODEPAGE
@@ -140,7 +170,7 @@ fn dir_stream(project: &str, module: &str) -> Vec<u8> {
     record(&mut d, 0x003C, &[]); //   ... Unicode
     // PROJECTREFERENCES: each a REFERENCENAME (with its Unicode form after the reserved 0x003E)
     // and a REFERENCEREGISTERED (Size, SizeOfLibid, Libid, Reserved1 u32, Reserved2 u16).
-    for (name, libid) in REFERENCES {
+    for (name, libid) in REFERENCES.iter().take(layout.references) {
         record(&mut d, 0x0016, name.as_bytes());
         d.extend_from_slice(&0x003Eu16.to_le_bytes());
         let unicode = utf16(name);
@@ -156,12 +186,12 @@ fn dir_stream(project: &str, module: &str) -> Vec<u8> {
     // PROJECTMODULES: Id, Size (2), Count; PROJECTCOOKIE: Id, Size (2), 0xFFFF.
     d.extend_from_slice(&0x000Fu16.to_le_bytes());
     d.extend_from_slice(&2u32.to_le_bytes());
-    d.extend_from_slice(&2u16.to_le_bytes());
+    d.extend_from_slice(&(if layout.this_document { 2u16 } else { 1 }).to_le_bytes());
     d.extend_from_slice(&0x0013u16.to_le_bytes());
     d.extend_from_slice(&2u32.to_le_bytes());
     d.extend_from_slice(&0xFFFFu16.to_le_bytes());
     // Word's document module, then the standard one.
-    for (name, document) in [("ThisDocument", true), (module, false)] {
+    for (name, document) in [("ThisDocument", true), (module, false)].into_iter().filter(|(_, document)| layout.this_document || !document) {
         record(&mut d, 0x0019, name.as_bytes()); // MODULENAME
         record(&mut d, 0x0047, &utf16(name)); // MODULENAMEUNICODE
         record(&mut d, 0x001A, name.as_bytes()); // MODULESTREAMNAME
@@ -208,12 +238,13 @@ fn encrypt(project_id: &str, seed: u8, data: &[u8]) -> String {
 
 /// The `PROJECT` stream ([MS-OVBA] 2.3.1): the project's id, its module, name, and no protection
 /// (state 0), no password (one zero byte) and visible (0xFF).
-fn project_stream(id: &str, project: &str, module: &str) -> String {
+fn project_stream(id: &str, project: &str, module: &str, this_document: bool) -> String {
+    let (document, workspace) = if this_document { ("Document=ThisDocument/&H00000000\r\n", "ThisDocument=0, 0, 0, 0, C\r\n") } else { ("", "") };
     format!(
-        "ID=\"{id}\"\r\nDocument=ThisDocument/&H00000000\r\nModule={module}\r\nName=\"{project}\"\r\nHelpContextID=\"0\"\r\nVersionCompatible32=\"393222000\"\r\n\
+        "ID=\"{id}\"\r\n{document}Module={module}\r\nName=\"{project}\"\r\nHelpContextID=\"0\"\r\nVersionCompatible32=\"393222000\"\r\n\
          CMG=\"{cmg}\"\r\nDPB=\"{dpb}\"\r\nGC=\"{gc}\"\r\n\r\n\
          [Host Extender Info]\r\n&H00000001={{3832D640-CF90-11CF-8E43-00A0C911005A}};VBE;&H00000000\r\n\r\n\
-         [Workspace]\r\nThisDocument=0, 0, 0, 0, C\r\n{module}=0, 0, 0, 0, C\r\n",
+         [Workspace]\r\n{workspace}{module}=0, 0, 0, 0, C\r\n",
         cmg = encrypt(id, 0x33, &0u32.to_le_bytes()),
         dpb = encrypt(id, 0x35, &[0x00]),
         gc = encrypt(id, 0x37, &[0xFF]),
@@ -221,9 +252,9 @@ fn project_stream(id: &str, project: &str, module: &str) -> String {
 }
 
 /// The `PROJECTwm` stream ([MS-OVBA] 2.3.3): each module's name in the code page and in UTF-16.
-fn project_wm(module: &str) -> Vec<u8> {
+fn project_wm(module: &str, this_document: bool) -> Vec<u8> {
     let mut out = Vec::new();
-    for name in ["ThisDocument", module] {
+    for name in ["ThisDocument", module].into_iter().filter(|n| this_document || *n != "ThisDocument") {
         out.extend_from_slice(name.as_bytes());
         out.push(0);
         out.extend_from_slice(&utf16(name));

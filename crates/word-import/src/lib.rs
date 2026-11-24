@@ -77,6 +77,9 @@ pub fn engine() -> WordEngine {
 }
 
 mod office;
+#[cfg(feature = "test-support")]
+pub mod vba;
+#[cfg(not(feature = "test-support"))]
 mod vba;
 pub mod word_addin;
 pub use office::{OfficeError, working_folder};

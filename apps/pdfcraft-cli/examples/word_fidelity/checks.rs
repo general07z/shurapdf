@@ -173,7 +173,22 @@ pub fn run(work: &Path) -> Vec<Check> {
             format!("{}; user's Word {}", outcome(&r), if still_open { "still open" } else { "was closed!" }),
         )
     }));
-    checks.push(check("Word's PDF tab: its macro compiles and saves a PDF beside the document", || word_tab(work)));
+    checks.push(check("Word's PDF tab: its macro compiles and saves a PDF beside the document", || {
+        word_tab(work, "tab", pdfcraft_word_import::word_addin::template("ShuraPDF"))
+    }));
+    // The same macro in projects laid out otherwise, one change each, to find what Word refuses
+    // while the template above fails.
+    use pdfcraft_word_import::vba::Layout;
+    let base = Layout::default();
+    for (name, label, layout) in [
+        ("win64", "Word's PDF tab, variant: 64-bit project kind", Layout { sys_kind: 3, ..base }),
+        ("no-base", "Word's PDF tab, variant: ThisDocument without VB_Base", Layout { vb_base: false, ..base }),
+        ("no-document", "Word's PDF tab, variant: no ThisDocument module", Layout { this_document: false, ..base }),
+        ("vba-only", "Word's PDF tab, variant: the VBA library alone", Layout { references: 1, ..base }),
+        ("no-refs", "Word's PDF tab, variant: no references", Layout { references: 0, ..base }),
+    ] {
+        checks.push(check(label, || word_tab(work, name, pdfcraft_word_import::word_addin::template_variant("ShuraPDF", layout))));
+    }
     set_engine(WordEngine::Auto);
     checks
 }
@@ -181,14 +196,14 @@ pub fn run(work: &Path) -> Vec<Check> {
 /// The Word tab's template (`pdfcraft_word_import::word_addin`) loaded in real Word as an add-in,
 /// its macro run on a synthetic document: it must compile (every library it calls referenced) and
 /// write the PDF beside the document. Word's own error text is the detail when it fails. A Word
-/// that stops on a dialog is ended after two minutes.
-fn word_tab(work: &Path) -> (bool, String) {
-    let dir = work.join("word-tab");
+/// that stops on a dialog is ended after a minute, with what the dialog said.
+fn word_tab(work: &Path, name: &str, template: Result<Vec<u8>, String>) -> (bool, String) {
+    let dir = work.join("word-tab").join(name);
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return (false, format!("{}: {e}", dir.display()));
     }
-    let template = match pdfcraft_word_import::word_addin::template("ShuraPDF") {
+    let template = match template {
         Ok(t) => t,
         Err(e) => return (false, format!("template: {e}")),
     };
@@ -210,13 +225,13 @@ fn word_tab(work: &Path) -> (bool, String) {
         .stderr(Stdio::null())
         .spawn();
     let Ok(mut child) = child else { return (false, "couldn't start PowerShell".into()) };
-    if !wait_for(|| child.try_wait().is_ok_and(|s| s.is_some()), Duration::from_secs(120)) {
+    if !wait_for(|| child.try_wait().is_ok_and(|s| s.is_some()), Duration::from_secs(60)) {
         let _ = child.kill();
         let stuck: Vec<u32> = word_pids().into_iter().filter(|p| !before.contains(p)).collect();
         // What Word stopped on, read off its windows before they go: the dialog's title and text.
         let shown = window_texts(&stuck);
         end(&stuck);
-        return (false, format!("Word didn't finish in two minutes; its windows: {shown}"));
+        return (false, format!("Word didn't finish in a minute; its windows: {shown}"));
     }
     let mut said = String::new();
     if let Some(mut out) = child.stdout.take() {
